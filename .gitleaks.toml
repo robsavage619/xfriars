@@ -1,0 +1,24 @@
+# Gitleaks configuration — extends built-in ruleset with project-specific patterns.
+# See https://github.com/gitleaks/gitleaks for rule format.
+
+title = "padres-analytics gitleaks config"
+
+[extend]
+# Keep all built-in detectors (AWS, GH tokens, generic API keys, etc.)
+useDefault = true
+
+[[rules]]
+description = "Anthropic API key"
+id = "anthropic-api-key"
+regex = '''sk-ant-[a-zA-Z0-9_\-]{20,}'''
+tags = ["api-key", "anthropic"]
+
+[[rules]]
+description = "X/Twitter bearer or access token"
+id = "twitter-token"
+regex = '''(?i)(x_bearer_token|x_access_token|x_api_secret)\s*=\s*[A-Za-z0-9%_\-]{20,}'''
+tags = ["api-key", "twitter"]
+
+[allowlist]
+description = "Allow placeholder examples in env.example"
+paths = ['''env\.example''']
