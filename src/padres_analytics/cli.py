@@ -1,0 +1,363 @@
+"""pad — Padres analytics CLI."""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from datetime import date
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import typer
+
+from padres_analytics.config import CARDS_DIR, DUCKDB_PATH, configure_logging
+
+app = typer.Typer(
+    name="pad",
+    help="Padres analytics engine — detect, draft, render, approve, post.",
+    no_args_is_help=True,
+)
+detect_app = typer.Typer(help="Run and list stat candidates.")
+draft_app = typer.Typer(help="Manage tweet drafts.")
+app.add_typer(detect_app, name="detect")
+app.add_typer(draft_app, name="draft")
+
+logger = logging.getLogger(__name__)
+
+_TZ = ZoneInfo("America/Los_Angeles")
+
+# Exit codes: 0=ok, 1=error, 2=gate-blocked
+OK = 0
+ERR = 1
+GATE = 2
+
+
+def _la_today() -> date:
+    from datetime import datetime
+
+    return datetime.now(_TZ).date()
+
+
+# ── pad init ───────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def init() -> None:
+    """Create padres.db, initialize schema, and verify hist attachment."""
+    configure_logging()
+    from padres_analytics.storage.db import (
+        TradesDbNotFoundError,
+        attach_trades,
+        connect,
+    )
+    from padres_analytics.storage.schemas import initialize
+
+    typer.echo(f"Initializing padres.db at {DUCKDB_PATH} …")
+    with connect() as conn:
+        initialize(conn)
+
+    typer.echo("Schema initialized.")
+
+    typer.echo("Verifying hist (trades.db) attachment …")
+    try:
+        with connect() as conn:
+            attach_trades(conn)
+            result = conn.execute("SELECT COUNT(*) FROM hist.game_logs").fetchone()
+            n = result[0] if result else 0
+            typer.echo(f"hist.game_logs: {n:,} rows — OK")
+    except TradesDbNotFoundError as exc:
+        typer.echo(f"Warning: {exc}", err=True)
+        typer.echo("Set PADRES_TRADES_DB_PATH to enable hist queries.", err=True)
+
+    typer.echo("Done.")
+
+
+# ── pad detect run ─────────────────────────────────────────────────────────────
+
+
+@detect_app.command("run")
+def detect_run(
+    detector: str = typer.Argument("all", help="Detector name or 'all'."),
+    as_of: str | None = typer.Option(
+        None, "--date", help="Reference date (YYYY-MM-DD). Defaults to today LA time."
+    ),
+) -> None:
+    """Run detector(s) and emit candidates to padres.db."""
+    configure_logging()
+    # Import here to trigger detector registration
+    import padres_analytics.detect.historical  # noqa: F401
+    from padres_analytics.detect.base import all_detectors, emit, get_detector
+    from padres_analytics.storage.db import (
+        TradesDbNotFoundError,
+        attach_trades,
+        connect,
+    )
+
+    ref_date = date.fromisoformat(as_of) if as_of else _la_today()
+
+    names = all_detectors() if detector == "all" else [detector]
+    try:
+        detectors = [get_detector(n) for n in names]
+    except KeyError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    total = 0
+    with connect() as conn:
+        try:
+            attach_trades(conn)
+        except TradesDbNotFoundError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+        for det in detectors:
+            typer.echo(f"Running detector: {det.name} (as_of={ref_date})")
+            try:
+                candidates = det.run(conn, ref_date)
+            except Exception as exc:
+                typer.echo(f"Detector {det.name} failed: {exc}", err=True)
+                raise typer.Exit(ERR) from exc
+
+            n = emit(conn, candidates)
+            typer.echo(f"  {det.name}: {len(candidates)} found, {n} new")
+            total += n
+
+    typer.echo(f"Total new candidates: {total}")
+
+
+# ── pad detect list ────────────────────────────────────────────────────────────
+
+
+@detect_app.command("list")
+def detect_list(
+    status: str = typer.Option("new", "--status", help="Filter by status."),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """List stat candidates."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT candidate_id, detector, subject, as_of, payload_kind,
+                   novelty_score, status, facts_json, provenance_json
+            FROM stat_candidates
+            WHERE status = ?
+            ORDER BY novelty_score DESC
+            """,
+            [status],
+        ).fetchall()
+
+    if output_json:
+        result = [
+            {
+                "candidate_id": r[0],
+                "detector": r[1],
+                "subject": r[2],
+                "as_of": str(r[3]),
+                "payload_kind": r[4],
+                "novelty_score": r[5],
+                "status": r[6],
+                "facts_json": json.loads(r[7]) if isinstance(r[7], str) else r[7],
+                "provenance_json": json.loads(r[8]) if isinstance(r[8], str) else r[8],
+            }
+            for r in rows
+        ]
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        if not rows:
+            typer.echo(f"No candidates with status={status!r}.")
+            return
+        for r in rows:
+            typer.echo(f"{r[0]}  {r[1]:20s}  score={r[5]:.2f}  {r[4]}  {r[3]}")
+
+
+# ── pad draft ingest ───────────────────────────────────────────────────────────
+
+
+@draft_app.command("ingest")
+def draft_ingest(
+    file: Path = typer.Option(..., "--file", help="Path to inbox JSON draft file."),
+) -> None:
+    """Validate, digit-audit, render, and verify a skill draft."""
+    configure_logging()
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.storage.db import (
+        TradesDbNotFoundError,
+        attach_trades,
+        connect,
+    )
+    from padres_analytics.tweets.draft import DraftIngestError, ingest_draft
+
+    if not file.exists():
+        typer.echo(f"Error: file not found: {file}", err=True)
+        raise typer.Exit(ERR)
+
+    with connect() as conn:
+        try:
+            attach_trades(conn)
+        except TradesDbNotFoundError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+        try:
+            draft_id = ingest_draft(conn, file, CARDS_DIR)
+        except DraftIngestError as exc:
+            typer.echo(f"Ingest failed: {exc}", err=True)
+            raise typer.Exit(GATE) from exc
+        except RenderError as exc:
+            typer.echo(f"Render failed: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Draft {draft_id} ingested and verified.")
+    typer.echo(f"Card: {CARDS_DIR / (draft_id + '.png')!s}")
+    typer.echo(f"Run 'pad queue' to review, then 'pad draft approve {draft_id}'.")
+
+
+# ── pad queue ─────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def queue() -> None:
+    """Show pending/verified drafts with card path and char count."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT td.draft_id, td.status, LENGTH(td.text) AS chars,
+                   td.text, td.media_path, td.candidate_id
+            FROM tweet_drafts td
+            WHERE td.status IN ('pending', 'verified')
+            ORDER BY td.created_at
+            """
+        ).fetchall()
+
+    if not rows:
+        typer.echo("Queue is empty.")
+        return
+
+    for r in rows:
+        draft_id, status, chars, text, media_path, _cid = r
+        card_ok = "✓" if media_path and Path(media_path).exists() else "✗"
+        typer.echo(f"\n{'─' * 60}")
+        typer.echo(f"  Draft:    {draft_id}  [{status}]  {chars}/280 chars  card:{card_ok}")
+        typer.echo(f"  Card:     {media_path or 'none'}")
+        typer.echo(f"  Caption:  {text[:120]}{'…' if len(text) > 120 else ''}")
+
+
+# ── pad draft show / approve / reject ─────────────────────────────────────────
+
+
+@draft_app.command("show")
+def draft_show(draft_id: str = typer.Argument(...)) -> None:
+    """Show full details of a draft."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        row = conn.execute("SELECT * FROM tweet_drafts WHERE draft_id = ?", [draft_id]).fetchone()
+
+    if row is None:
+        typer.echo(f"Draft {draft_id!r} not found.", err=True)
+        raise typer.Exit(ERR)
+
+    cols = [
+        "draft_id",
+        "candidate_id",
+        "draft_kind",
+        "thread_id",
+        "thread_order",
+        "reply_to_url",
+        "text",
+        "media_path",
+        "is_projection",
+        "model",
+        "source",
+        "interesting_judgment",
+        "verification_json",
+        "status",
+        "created_at",
+        "posted_tweet_id",
+        "posted_at",
+    ]
+    for col, val in zip(cols, row, strict=False):
+        typer.echo(f"  {col:<24} {val}")
+
+
+@draft_app.command("approve")
+def draft_approve(draft_id: str = typer.Argument(...)) -> None:
+    """Approve a verified draft for posting."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+    from padres_analytics.tweets.draft import StateTransitionError, transition
+
+    with connect() as conn:
+        try:
+            transition(conn, draft_id, "approved")
+        except StateTransitionError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(GATE) from exc
+
+    typer.echo(f"Draft {draft_id} approved. Run 'pad post {draft_id}' to post.")
+
+
+@draft_app.command("reject")
+def draft_reject(draft_id: str = typer.Argument(...)) -> None:
+    """Reject a draft (any pre-posted state)."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+    from padres_analytics.tweets.draft import StateTransitionError, transition
+
+    with connect() as conn:
+        try:
+            transition(conn, draft_id, "rejected")
+        except StateTransitionError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(GATE) from exc
+
+    typer.echo(f"Draft {draft_id} rejected.")
+
+
+# ── pad post ──────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def post(
+    draft_id: str = typer.Argument(...),
+    live: bool = typer.Option(False, "--live", help="Post live via tweepy (Phase 3)."),
+) -> None:
+    """Post an approved draft. Default is --dry-run; pass --live for real posting."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+    from padres_analytics.tweets.post import DuplicatePostError, PostError
+    from padres_analytics.tweets.post import post as do_post
+
+    out_dir = CARDS_DIR / "out"
+    with connect() as conn:
+        try:
+            post_dir = do_post(conn, draft_id, out_dir, dry_run=not live)
+        except DuplicatePostError as exc:
+            typer.echo(f"Duplicate: {exc}", err=True)
+            raise typer.Exit(GATE) from exc
+        except PostError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    if not live:
+        typer.echo(f"[DRY RUN] Output written to: {post_dir}")
+    else:
+        typer.echo(f"Posted. Output: {post_dir}")
+
+
+def main() -> None:
+    """Entrypoint for the pad CLI."""
+    configure_logging(logging.DEBUG if "--verbose" in sys.argv else logging.INFO)
+    app()
+
+
+if __name__ == "__main__":
+    main()

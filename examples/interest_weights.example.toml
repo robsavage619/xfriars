@@ -1,0 +1,27 @@
+# Interest weights — generic example (not the tuned production values).
+# Copy to private/interest_weights.toml and tune from engagement data.
+# All weights should sum to 1.0 within a section.
+
+[weights]
+# How unusual is this stat/event relative to franchise history?
+rarity     = 0.30
+# How large or impressive is the value?
+magnitude  = 0.20
+# How relevant to the current season or recent events?
+timeliness = 0.20
+# How easily quotable / screenshot-worthy is this?
+rootability = 0.20
+# How understandable to a casual Padres fan?
+legibility  = 0.10
+
+[thresholds]
+# Candidates below this score are not emitted (filtered by emit()).
+min_novelty = 0.25
+
+[detector_bonuses]
+# Optional per-detector additive bonus (before final clamp to [0, 1]).
+# Use to prioritize detector types during initial bootstrapping.
+on_this_day  = 0.05
+leaderboard  = 0.10
+crossjoin    = 0.15
+milestone    = 0.12

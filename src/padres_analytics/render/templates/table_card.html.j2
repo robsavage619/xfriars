@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=800">
+<style>
+@font-face {
+  font-family: "Barlow Condensed";
+  src: url("file://{{ barlow_regular_ttf }}") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  src: url("file://{{ barlow_semibold_ttf }}") format("truetype");
+  font-weight: 600;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("file://{{ inter_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 800px;
+  height: 450px;
+  overflow: hidden;
+  background: {{ bg_deep }};
+}
+
+.card {
+  width: 800px;
+  height: 450px;
+  display: flex;
+  flex-direction: column;
+  background: {{ bg_deep }};
+  font-family: "Inter", sans-serif;
+  color: {{ text_primary }};
+}
+
+/* ── Header band ──────────────────────────────────────────────────── */
+.header {
+  background: {{ bg_panel }};
+  padding: 14px 20px 12px;
+  border-bottom: 3px solid {{ gold }};
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.title {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 600;
+  font-size: 34px;
+  line-height: 1.1;
+  color: {{ gold }};
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.header-right {
+  text-align: right;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.as-of {
+  font-size: 13px;
+  color: {{ text_secondary }};
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: {{ text_secondary }};
+  margin-top: 3px;
+  letter-spacing: 0.01em;
+}
+
+/* ── Table ────────────────────────────────────────────────────────── */
+.table-wrap {
+  flex: 1;
+  overflow: hidden;
+  padding: 0 16px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+thead tr {
+  border-bottom: 1px solid {{ gold_dim }};
+}
+
+th {
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: {{ text_secondary }};
+  padding: 10px 8px 6px;
+}
+
+th:first-child { text-align: left; padding-left: 12px; }
+th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+tbody tr {
+  border-bottom: 1px solid {{ row_alt }};
+}
+
+tbody tr:nth-child(even) {
+  background: {{ row_alt }};
+}
+
+/* Padre row highlight */
+tbody tr.highlight {
+  background: {{ highlight_bg }};
+  border-left: 4px solid {{ highlight_edge }};
+  font-weight: 600;
+}
+
+tbody tr.highlight td:first-child {
+  padding-left: 8px; /* compensate for 4px border */
+}
+
+td {
+  font-size: 17px;
+  padding: 8px 8px;
+  color: {{ text_primary }};
+  line-height: 1.2;
+  height: 34px;
+}
+
+td:first-child { text-align: left; padding-left: 12px; }
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────── */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  border-top: 1px solid {{ bg_panel }};
+  flex-shrink: 0;
+}
+
+.source {
+  font-size: 12px;
+  color: {{ text_secondary }};
+}
+
+.handle {
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: {{ gold_dim }};
+  letter-spacing: 0.04em;
+}
+
+{% if is_projection %}
+.projection-badge {
+  display: inline-block;
+  border: 2px solid {{ gold }};
+  color: {{ gold }};
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  text-transform: uppercase;
+  margin-left: 10px;
+  vertical-align: middle;
+}
+{% endif %}
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div class="header">
+    <div>
+      <span class="title">{{ title }}{% if is_projection %}<span class="projection-badge">Projection</span>{% endif %}</span>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for col in columns %}
+          <th{% if not loop.first %} class="num"{% endif %}>{{ col }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr{% if highlight_row is not none and loop.index0 == highlight_row %} class="highlight"{% elif loop.index0 % 2 == 1 %} class="alt"{% endif %}>
+          {% for cell in row %}
+          <td{% if not loop.first %} class="num"{% endif %}>{{ cell }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <span class="source">Source: {{ source }} · through {{ as_of }}</span>
+    <span class="handle">@xFriars</span>
+  </div>
+
+</div>
+</body>
+</html>
