@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -117,6 +117,86 @@ DDL_STATEMENTS: tuple[str, ...] = (
         root_cause          VARCHAR,
         corrected_at        TIMESTAMP
     )
+    """,
+    # ── Phase 2: current-season ingest tables ──────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS game_schedule (
+        game_pk       INTEGER PRIMARY KEY,
+        season        INTEGER NOT NULL,
+        game_date     DATE NOT NULL,
+        game_type     VARCHAR DEFAULT 'R',
+        status        VARCHAR,
+        home_team_id  INTEGER,
+        away_team_id  INTEGER,
+        home_team_abbr VARCHAR,
+        away_team_abbr VARCHAR,
+        venue_id      INTEGER,
+        venue_name    VARCHAR,
+        ingested_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS game_box (
+        game_pk       INTEGER PRIMARY KEY,
+        game_date     DATE NOT NULL,
+        home_team_id  INTEGER,
+        away_team_id  INTEGER,
+        home_score    INTEGER,
+        away_score    INTEGER,
+        innings       INTEGER,
+        winning_pitcher_id   INTEGER,
+        losing_pitcher_id    INTEGER,
+        save_pitcher_id      INTEGER,
+        ingested_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS player_game_logs (
+        game_pk       INTEGER NOT NULL,
+        player_id     INTEGER NOT NULL,
+        team_id       INTEGER NOT NULL,
+        game_date     DATE NOT NULL,
+        group_type    VARCHAR NOT NULL,
+        stats_json    JSON NOT NULL,
+        ingested_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (game_pk, player_id, group_type)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS player_season_stats (
+        player_id     INTEGER NOT NULL,
+        season        INTEGER NOT NULL,
+        team_id       INTEGER NOT NULL,
+        group_type    VARCHAR NOT NULL,
+        stats_json    JSON NOT NULL,
+        player_name   VARCHAR,
+        team_abbr     VARCHAR,
+        ingested_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (player_id, season, team_id, group_type)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_player_season_stats_team
+        ON player_season_stats(team_id, season)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS mlb_leaders (
+        season            INTEGER NOT NULL,
+        stat_group        VARCHAR NOT NULL,
+        stat_type         VARCHAR NOT NULL,
+        rank              INTEGER NOT NULL,
+        player_id         INTEGER NOT NULL,
+        player_name       VARCHAR,
+        team_id           INTEGER,
+        team_abbr         VARCHAR,
+        value             VARCHAR NOT NULL,
+        fetched_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (season, stat_type, rank, player_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_mlb_leaders_stat
+        ON mlb_leaders(season, stat_type)
     """,
 )
 

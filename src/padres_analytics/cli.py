@@ -20,8 +20,10 @@ app = typer.Typer(
 )
 detect_app = typer.Typer(help="Run and list stat candidates.")
 draft_app = typer.Typer(help="Manage tweet drafts.")
+ingest_app = typer.Typer(help="Ingest data from MLB Stats API and other sources.")
 app.add_typer(detect_app, name="detect")
 app.add_typer(draft_app, name="draft")
+app.add_typer(ingest_app, name="ingest")
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,8 @@ def detect_run(
     """Run detector(s) and emit candidates to padres.db."""
     configure_logging()
     # Import here to trigger detector registration
-    import padres_analytics.detect.historical  # noqa: F401
+    import padres_analytics.detect.historical
+    import padres_analytics.detect.leaderboards  # noqa: F401
     from padres_analytics.detect.base import all_detectors, emit, get_detector
     from padres_analytics.storage.db import (
         TradesDbNotFoundError,
@@ -351,6 +354,64 @@ def post(
         typer.echo(f"[DRY RUN] Output written to: {post_dir}")
     else:
         typer.echo(f"Posted. Output: {post_dir}")
+
+
+# ── pad ingest leaders ────────────────────────────────────────────────────────
+
+
+@ingest_app.command("leaders")
+def ingest_leaders_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    limit: int = typer.Option(25, "--limit", help="Leaders per stat type (1-100)."),
+) -> None:
+    """Fetch MLB leaderboards from the Stats API and store in mlb_leaders."""
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_leaders
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting MLB leaders for season {ref_season} (limit={limit}) …")
+
+    with connect() as conn:
+        try:
+            n = ingest_leaders(conn, ref_season, limit=limit)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} rows written to mlb_leaders.")
+
+
+# ── pad ammo ──────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def ammo(
+    query: str = typer.Argument(..., help="Search query (player name, stat, etc.)"),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+    limit: int = typer.Option(5, "--limit", help="Max results (default 5)."),
+) -> None:
+    """Search verified facts for reply use. Returns top matches by novelty x recency."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+    from padres_analytics.tweets.ammo import search_ammo
+
+    with connect(read_only=True) as conn:
+        results = search_ammo(conn, query, as_of=_la_today(), limit=limit)
+
+    if not results:
+        typer.echo(f"No results for {query!r}.")
+        return
+
+    if output_json:
+        typer.echo(json.dumps(results, indent=2))
+        return
+
+    for r in results:
+        typer.echo(f"\n{'─' * 60}")
+        typer.echo(f"  [{r['candidate_id']}]  {r['detector']}  score={r['ammo_score']:.3f}")
+        typer.echo(f"  {r['headline']}")
+        typer.echo(f"  {r['claim_scope']} · as_of={r['as_of']}")
 
 
 def main() -> None:

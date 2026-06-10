@@ -13,7 +13,12 @@ from pydantic import ValidationError
 from padres_analytics.detect.candidates import TablePayload
 from padres_analytics.render.cards import render
 from padres_analytics.tweets.models import TweetDraft
-from padres_analytics.tweets.verify import VerificationError, digit_audit, verify_path_b
+from padres_analytics.tweets.verify import (
+    VerificationError,
+    digit_audit,
+    verify_path_a,
+    verify_path_b,
+)
 
 if TYPE_CHECKING:
     import duckdb
@@ -104,9 +109,18 @@ def ingest_draft(
     else:
         raise DraftIngestError(f"Unsupported payload_kind: {payload_kind!r}")
 
-    # 5 — Path B verification
+    # 5 — Verification: Path A for leaderboard candidates, Path B otherwise
+    detector = conn.execute(
+        "SELECT detector FROM stat_candidates WHERE candidate_id = ?",
+        [draft.candidate_id],
+    ).fetchone()
+    detector_name = detector[0] if detector else ""
+
     try:
-        verification = verify_path_b(conn, draft.candidate_id, facts_json, prov_json)
+        if detector_name == "leaderboard":
+            verification = verify_path_a(conn, draft.candidate_id, facts_json)
+        else:
+            verification = verify_path_b(conn, draft.candidate_id, facts_json, prov_json)
     except VerificationError as exc:
         raise DraftIngestError(f"Verification failed: {exc}") from exc
 

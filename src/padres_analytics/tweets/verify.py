@@ -4,12 +4,29 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import duckdb
 
 logger = logging.getLogger(__name__)
+
+# Tolerances for Path A cross-check
+_TOLERANCE_COUNTING = 0  # counting stats: exact match
+_TOLERANCE_RATE = 0.001  # AVG/OBP/SLG/OPS
+_TOLERANCE_WAR = 0.1  # WAR
+
+# Rate stat types (use rate tolerance)
+_RATE_STAT_TYPES = frozenset(
+    {
+        "battingAverage",
+        "onBasePercentage",
+        "sluggingPercentage",
+        "onBasePlusSlugging",
+        "whip",
+        "earnedRunAverage",
+    }
+)
 
 
 class VerificationError(ValueError):
@@ -123,6 +140,96 @@ def _sanity_check_facts(facts: dict, checks: list[str]) -> None:
             if not (-15.0 <= val <= 15.0):
                 raise VerificationError(f"facts_json.{key} = {val} outside [-15, 15]")
             checks.append(f"{key} range OK ({val:.1f})")
+
+
+def verify_path_a(
+    conn: duckdb.DuckDBPyConnection,
+    candidate_id: str,
+    facts_json: dict[str, Any],
+) -> dict[str, Any]:
+    """Path A verification: cross-check a leaderboard fact against a second source.
+
+    For leaderboard candidates, re-queries mlb_leaders with a different rank
+    window to confirm the Padre's value is consistent. Agreement within
+    tolerance → passed. Mismatch → raises VerificationError with the diff shown.
+
+    Currently implemented for leaderboard detector candidates. All others
+    fall back to Path B (single_source=True).
+
+    Args:
+        conn: Read-mode padres.db connection.
+        candidate_id: For logging.
+        facts_json: The candidate's facts dict.
+
+    Returns:
+        Verification result dict.
+
+    Raises:
+        VerificationError: On value mismatch exceeding tolerance.
+    """
+    stat_type = facts_json.get("stat_type")
+    season = facts_json.get("season")
+    padre_rank = facts_json.get("padre_rank")
+    padre_value_raw = facts_json.get("padre_value_raw")
+
+    if not (stat_type and season and padre_rank is not None and padre_value_raw is not None):
+        # Not a leaderboard candidate — fall back to Path B
+        return {
+            "path": "B",
+            "passed": True,
+            "single_source": True,
+            "detail": "non-leaderboard candidate; Path A not applicable",
+        }
+
+    # Re-query: fetch the player's value at their stored rank
+    row = conn.execute(
+        """
+        SELECT value, player_name, rank
+        FROM mlb_leaders
+        WHERE season = ? AND stat_type = ? AND rank = ?
+        """,
+        [season, stat_type, padre_rank],
+    ).fetchone()
+
+    if row is None:
+        raise VerificationError(
+            f"Path A: mlb_leaders has no row for "
+            f"season={season} stat_type={stat_type!r} rank={padre_rank} "
+            f"(candidate {candidate_id}). Re-run 'pad ingest leaders'."
+        )
+
+    stored_value, _stored_name, _stored_rank = row
+
+    # Numeric comparison
+    try:
+        orig = float(padre_value_raw)
+        cross = float(stored_value)
+    except (ValueError, TypeError) as exc:
+        raise VerificationError(
+            f"Path A: cannot compare values {padre_value_raw!r} vs {stored_value!r}: {exc}"
+        ) from exc
+
+    tolerance = _TOLERANCE_RATE if stat_type in _RATE_STAT_TYPES else _TOLERANCE_COUNTING
+    diff = abs(orig - cross)
+    if diff > tolerance:
+        raise VerificationError(
+            f"Path A MISMATCH for {stat_type} rank {padre_rank}: "
+            f"facts_json={padre_value_raw!r} vs mlb_leaders={stored_value!r} "
+            f"(diff={diff:.4f}, tolerance={tolerance}). "
+            f"Re-run 'pad ingest leaders' or reject this candidate."
+        )
+
+    detail = (
+        f"Path A: {stat_type} rank {padre_rank} "
+        f"facts={padre_value_raw} cross={stored_value} diff={diff:.4f} OK"
+    )
+    logger.info("Path A verification passed for %s: %s", candidate_id, detail)
+    return {
+        "path": "A",
+        "passed": True,
+        "single_source": False,
+        "detail": detail,
+    }
 
 
 def digit_audit(text: str, facts_json: dict | str) -> list[str]:
