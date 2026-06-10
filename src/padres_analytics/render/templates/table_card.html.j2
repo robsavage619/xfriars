@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=800">
 <style>
 @font-face {
   font-family: "Barlow Condensed";
@@ -29,155 +28,237 @@ html, body {
   background: {{ bg_deep }};
 }
 
+/* ── Card shell ─────────────────────────────────────────────────────── */
 .card {
   width: 800px;
   height: 450px;
   display: flex;
   flex-direction: column;
   background: {{ bg_deep }};
+  background-image:
+    radial-gradient(ellipse 55% 45% at 12% 0%, rgba(255,196,37,0.07) 0%, transparent 100%),
+    radial-gradient(ellipse 40% 50% at 90% 110%, rgba(0,0,0,0.35) 0%, transparent 100%);
   font-family: "Inter", sans-serif;
   color: {{ text_primary }};
 }
 
-/* ── Header band ──────────────────────────────────────────────────── */
+/* ── Header ─────────────────────────────────────────────────────────── */
 .header {
-  background: {{ bg_panel }};
-  padding: 14px 20px 12px;
-  border-bottom: 3px solid {{ gold }};
+  position: relative;
+  background: linear-gradient(135deg, #3D2D22 0%, {{ bg_panel }} 65%);
+  padding: 13px 22px 11px 26px;
+  border-bottom: 2px solid {{ gold }};
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   flex-shrink: 0;
 }
 
+/* left gold accent bar */
+.header::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 5px;
+  background: linear-gradient(to bottom, {{ gold }}, {{ gold_dim }});
+}
+
+.header-left { min-width: 0; }
+
 .title {
   font-family: "Barlow Condensed", sans-serif;
   font-weight: 600;
-  font-size: 34px;
-  line-height: 1.1;
+  font-size: 36px;
+  line-height: 1;
   color: {{ gold }};
   letter-spacing: 0.02em;
   text-transform: uppercase;
-}
-
-.header-right {
-  text-align: right;
-  flex-shrink: 0;
-  margin-left: 12px;
-}
-
-.as-of {
-  font-size: 13px;
-  color: {{ text_secondary }};
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .subtitle {
-  font-size: 14px;
+  font-size: 12px;
   color: {{ text_secondary }};
-  margin-top: 3px;
-  letter-spacing: 0.01em;
+  margin-top: 4px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
-/* ── Table ────────────────────────────────────────────────────────── */
+.header-right {
+  flex-shrink: 0;
+  padding-top: 3px;
+  margin-left: 16px;
+}
+
+.as-of {
+  font-size: 11px;
+  color: {{ text_secondary }};
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* ── Table area ─────────────────────────────────────────────────────── */
 .table-wrap {
   flex: 1;
   overflow: hidden;
-  padding: 0 16px;
+  padding: 2px 18px 0;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
+/* column widths: rank | player | team | stat */
+col.c-rank   { width: 54px; }
+col.c-player { /* auto */ }
+col.c-team   { width: 74px; }
+col.c-stat   { width: 76px; }
+
 thead tr {
-  border-bottom: 1px solid {{ gold_dim }};
+  border-bottom: 1px solid rgba(255, 196, 37, 0.18);
 }
 
 th {
   font-family: "Barlow Condensed", sans-serif;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: {{ text_secondary }};
-  padding: 10px 8px 6px;
+  opacity: 0.8;
+  padding: 9px 6px 6px;
 }
 
-th:first-child { text-align: left; padding-left: 12px; }
-th.num { text-align: right; font-variant-numeric: tabular-nums; }
+th.c-rank   { text-align: center;  padding-left: 10px; }
+th.c-player { text-align: left; }
+th.c-team   { text-align: center; }
+th.c-stat   { text-align: right;   padding-right: 12px; }
 
+/* ── Data rows ─────────────────────────────────────────────────────── */
 tbody tr {
-  border-bottom: 1px solid {{ row_alt }};
+  border-bottom: 1px solid rgba(255, 255, 255, 0.028);
 }
 
-tbody tr:nth-child(even) {
-  background: {{ row_alt }};
-}
-
-/* Padre row highlight */
-tbody tr.highlight {
-  background: {{ highlight_bg }};
-  border-left: 4px solid {{ highlight_edge }};
-  font-weight: 600;
-}
-
-tbody tr.highlight td:first-child {
-  padding-left: 8px; /* compensate for 4px border */
+tbody tr:nth-child(odd):not(.highlight) {
+  background: rgba(0, 0, 0, 0.13);
 }
 
 td {
-  font-size: 17px;
-  padding: 8px 8px;
+  font-size: 15px;
+  padding: 0 6px;
   color: {{ text_primary }};
-  line-height: 1.2;
-  height: 34px;
+  line-height: 1;
+  height: 31px;
+  vertical-align: middle;
 }
 
-td:first-child { text-align: left; padding-left: 12px; }
-td.num {
-  text-align: right;
+td.c-rank {
+  text-align: center;
+  padding-left: 10px;
+  color: {{ text_secondary }};
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Footer ───────────────────────────────────────────────────────── */
+td.c-player { text-align: left; }
+
+td.c-team {
+  text-align: center;
+  color: {{ text_secondary }};
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+
+td.c-stat {
+  text-align: right;
+  padding-right: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* ── Highlight row (the Padre) ──────────────────────────────────────── */
+tbody tr.highlight {
+  background: linear-gradient(
+    to right,
+    rgba(255, 196, 37, 0.18) 0%,
+    rgba(255, 196, 37, 0.08) 55%,
+    transparent 100%
+  ) !important;
+  border-top: 1px solid rgba(255, 196, 37, 0.28);
+  border-bottom: 1px solid rgba(255, 196, 37, 0.28);
+}
+
+/* gold left border via inset shadow — survives border-collapse */
+tbody tr.highlight td.c-rank {
+  box-shadow: inset 5px 0 0 0 {{ gold }};
+  color: {{ text_primary }};
+  font-weight: 600;
+  font-size: 14px;
+}
+
+tbody tr.highlight td {
+  font-weight: 600;
+}
+
+tbody tr.highlight td.c-team {
+  color: {{ text_primary }};
+  font-size: 14px;
+  letter-spacing: 0.06em;
+}
+
+/* hero number: gold + larger */
+tbody tr.highlight td.c-stat {
+  color: {{ gold }};
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
 .footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 20px;
-  border-top: 1px solid {{ bg_panel }};
+  padding: 6px 22px;
+  border-top: 1px solid rgba(255, 196, 37, 0.15);
+  background: rgba(0, 0, 0, 0.18);
   flex-shrink: 0;
 }
 
 .source {
-  font-size: 12px;
+  font-size: 10px;
   color: {{ text_secondary }};
+  opacity: 0.6;
+  letter-spacing: 0.02em;
 }
 
 .handle {
   font-family: "Barlow Condensed", sans-serif;
   font-size: 14px;
   font-weight: 600;
-  color: {{ gold_dim }};
-  letter-spacing: 0.04em;
+  color: {{ gold }};
+  letter-spacing: 0.06em;
 }
 
 {% if is_projection %}
 .projection-badge {
   display: inline-block;
-  border: 2px solid {{ gold }};
+  border: 1px solid {{ gold }};
   color: {{ gold }};
   font-family: "Barlow Condensed", sans-serif;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;
-  padding: 2px 8px;
+  padding: 1px 6px;
   text-transform: uppercase;
-  margin-left: 10px;
+  margin-left: 8px;
   vertical-align: middle;
+  opacity: 0.85;
 }
 {% endif %}
 </style>
@@ -186,8 +267,8 @@ td.num {
 <div class="card">
 
   <div class="header">
-    <div>
-      <span class="title">{{ title }}{% if is_projection %}<span class="projection-badge">Projection</span>{% endif %}</span>
+    <div class="header-left">
+      <div class="title">{{ title }}{% if is_projection %}<span class="projection-badge">Projection</span>{% endif %}</div>
       {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
     </div>
     <div class="header-right">
@@ -197,18 +278,27 @@ td.num {
 
   <div class="table-wrap">
     <table>
+      <colgroup>
+        {% for col in columns %}
+          {% if loop.first %}<col class="c-rank">
+          {% elif loop.index == 2 %}<col class="c-player">
+          {% elif loop.last %}<col class="c-stat">
+          {% else %}<col class="c-team">
+          {% endif %}
+        {% endfor %}
+      </colgroup>
       <thead>
         <tr>
           {% for col in columns %}
-          <th{% if not loop.first %} class="num"{% endif %}>{{ col }}</th>
+          <th class="{% if loop.first %}c-rank{% elif loop.index == 2 %}c-player{% elif loop.last %}c-stat{% else %}c-team{% endif %}">{{ col }}</th>
           {% endfor %}
         </tr>
       </thead>
       <tbody>
         {% for row in rows %}
-        <tr{% if highlight_row is not none and loop.index0 == highlight_row %} class="highlight"{% elif loop.index0 % 2 == 1 %} class="alt"{% endif %}>
+        <tr{% if highlight_row is not none and loop.index0 == highlight_row %} class="highlight"{% endif %}>
           {% for cell in row %}
-          <td{% if not loop.first %} class="num"{% endif %}>{{ cell }}</td>
+          <td class="{% if loop.first %}c-rank{% elif loop.index == 2 %}c-player{% elif loop.last %}c-stat{% else %}c-team{% endif %}">{{ cell }}</td>
           {% endfor %}
         </tr>
         {% endfor %}
