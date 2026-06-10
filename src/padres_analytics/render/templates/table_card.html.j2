@@ -14,6 +14,11 @@
   font-weight: 600;
 }
 @font-face {
+  font-family: "Barlow Condensed";
+  src: url("file://{{ barlow_bold_ttf }}") format("truetype");
+  font-weight: 700;
+}
+@font-face {
   font-family: "Inter";
   src: url("file://{{ inter_ttf }}") format("truetype");
   font-weight: 100 900;
@@ -67,11 +72,11 @@ html, body {
 
 .title {
   font-family: "Barlow Condensed", sans-serif;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 36px;
   line-height: 1;
   color: {{ gold }};
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -79,10 +84,13 @@ html, body {
 }
 
 .subtitle {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 400;
   font-size: 12px;
   color: {{ text_secondary }};
   margin-top: 4px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -231,18 +239,32 @@ tbody tr.highlight td.c-stat {
 }
 
 .source {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 400;
   font-size: 10px;
   color: {{ text_secondary }};
-  opacity: 0.6;
-  letter-spacing: 0.02em;
+  opacity: 0.55;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .handle {
   font-family: "Barlow Condensed", sans-serif;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
   color: {{ gold }};
-  letter-spacing: 0.06em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.tagline {
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: 10px;
+  font-weight: 400;
+  color: {{ text_secondary }};
+  opacity: 0.45;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 {% if is_projection %}
@@ -308,7 +330,10 @@ tbody tr.highlight td.c-stat {
 
   <div class="footer">
     <span class="source">Source: {{ source }} · through {{ as_of }}</span>
-    <span class="handle">@xFriars</span>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+      <span class="handle">@xFriars</span>
+      <span class="tagline">San Diego Baseball Intelligence</span>
+    </div>
   </div>
 
 </div>

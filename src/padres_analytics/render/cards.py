@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from padres_analytics.detect.candidates import SeriesPayload, TablePayload
 from padres_analytics.render.tokens import (
+    BARLOW_BOLD_TTF,
     BARLOW_REGULAR_TTF,
     BARLOW_SEMIBOLD_TTF,
     BG_DEEP,
@@ -121,6 +122,7 @@ def _render_table(
         inter_ttf=str(INTER_TTF),
         barlow_regular_ttf=str(BARLOW_REGULAR_TTF),
         barlow_semibold_ttf=str(BARLOW_SEMIBOLD_TTF),
+        barlow_bold_ttf=str(BARLOW_BOLD_TTF),
     )
 
     with tempfile.NamedTemporaryFile(
