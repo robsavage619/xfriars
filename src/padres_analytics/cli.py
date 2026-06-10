@@ -88,8 +88,10 @@ def detect_run(
     """Run detector(s) and emit candidates to padres.db."""
     configure_logging()
     # Import here to trigger detector registration
+    import padres_analytics.detect.crossjoin
     import padres_analytics.detect.historical
-    import padres_analytics.detect.leaderboards  # noqa: F401
+    import padres_analytics.detect.leaderboards
+    import padres_analytics.detect.milestones  # noqa: F401
     from padres_analytics.detect.base import all_detectors, emit, get_detector
     from padres_analytics.storage.db import (
         TradesDbNotFoundError,
