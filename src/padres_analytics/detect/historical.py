@@ -26,8 +26,9 @@ _TZ = ZoneInfo("America/Los_Angeles")
 # Coverage metadata — tied to hist.game_logs date range
 _GAMELOGS_COVERAGE = "1990-2024"
 _GAMELOGS_CLAIM = "since_1990"
-_TRANSACTIONS_COVERAGE = "2010-2026"
-_TRANSACTIONS_CLAIM = "since_2010"
+_TRANSACTIONS_YEAR_MIN = 2010
+_TRANSACTIONS_COVERAGE = f"{_TRANSACTIONS_YEAR_MIN}-2026"
+_TRANSACTIONS_CLAIM = f"since_{_TRANSACTIONS_YEAR_MIN}"
 
 # Type codes worth surfacing in On This Day
 _NOTABLE_TX_CODES = {"TR", "SFA", "REL", "RET", "CLW"}
@@ -129,12 +130,13 @@ def _notable_transactions(
         WHERE
             EXTRACT(MONTH FROM date) = ?
             AND EXTRACT(DAY   FROM date) = ?
+            AND EXTRACT(YEAR  FROM date) >= ?
             AND type_code IN ({codes_placeholder})
             AND (from_team_name LIKE '%Padres%' OR to_team_name LIKE '%Padres%')
         ORDER BY date DESC
         LIMIT 20
         """,
-        [month, day, *sorted(_NOTABLE_TX_CODES)],
+        [month, day, _TRANSACTIONS_YEAR_MIN, *sorted(_NOTABLE_TX_CODES)],
     ).fetchall()
     return [
         {
