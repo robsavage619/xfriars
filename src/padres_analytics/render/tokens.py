@@ -34,6 +34,8 @@ FONT_BODY = "Inter"  # body + numbers — vendored woff2/ttf, OFL
 
 # ── Font files (absolute paths for file:// loading at render time) ─────────────
 FONTS_DIR = Path(__file__).parent / "templates" / "fonts"
+ASSETS_DIR = Path(__file__).parent / "templates" / "assets"
+XFRIARS_LOGO_PNG = ASSETS_DIR / "xfriars_logo.png"
 INTER_TTF = FONTS_DIR / "InterVariable.ttf"
 BARLOW_REGULAR_TTF = FONTS_DIR / "BarlowCondensed-Regular.ttf"
 BARLOW_SEMIBOLD_TTF = FONTS_DIR / "BarlowCondensed-SemiBold.ttf"

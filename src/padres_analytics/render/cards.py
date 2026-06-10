@@ -30,6 +30,7 @@ from padres_analytics.render.tokens import (
     TEXT_SECONDARY,
     VIEWPORT_H,
     VIEWPORT_W,
+    XFRIARS_LOGO_PNG,
 )
 
 if TYPE_CHECKING:
@@ -123,6 +124,7 @@ def _render_table(
         barlow_regular_ttf=str(BARLOW_REGULAR_TTF),
         barlow_semibold_ttf=str(BARLOW_SEMIBOLD_TTF),
         barlow_bold_ttf=str(BARLOW_BOLD_TTF),
+        xfriars_logo=str(XFRIARS_LOGO_PNG),
     )
 
     with tempfile.NamedTemporaryFile(
