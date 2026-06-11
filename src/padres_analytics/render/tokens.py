@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# ── Padres brand colors (verified) ────────────────────────────────────────────
-BG_DEEP = "#1E1712"  # card background
-BG_PANEL = "#2F241D"  # header band (brand brown)
-GOLD = "#FFC425"  # brand gold — highlights, rules, watermark
+# ── Palette v2 — slick tech-forward dark; gold is data-ink/accent, never a flood
+BG_DEEP = "#1A1410"  # near-black warm canvas, flat
+BG_PANEL = "#211A14"  # barely-lighter panel (sparing use)
+GOLD = "#FFC425"  # brand gold — data ink, key numbers, small-caps labels, hairlines
 GOLD_DIM = "#B8902A"  # secondary gold for sub-accents
-TEXT_PRIMARY = "#F5EFE6"  # warm off-white
-TEXT_SECONDARY = "#A89D8F"  # muted sand — labels, footers
+TEXT_WHITE = "#FFFFFF"  # titles, names, big numbers — white carries hierarchy
+TEXT_PRIMARY = "#F5EFE6"  # warm off-white body
+TEXT_SECONDARY = "#9C9189"  # muted gray-sand — labels, axis text, captions
 ROW_ALT = "#27201A"  # alternating row tint
 HIGHLIGHT_BG = "#3D2F1F"  # Padre-row band
 HIGHLIGHT_EDGE = "#FFC425"  # 4px left border on the Padre row

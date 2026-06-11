@@ -40,9 +40,6 @@ html, body {
   display: flex;
   flex-direction: column;
   background: {{ bg_deep }};
-  background-image:
-    radial-gradient(ellipse 55% 45% at 12% 0%, rgba(255,196,37,0.07) 0%, transparent 100%),
-    radial-gradient(ellipse 40% 50% at 90% 110%, rgba(0,0,0,0.35) 0%, transparent 100%);
   font-family: "Inter", sans-serif;
   color: {{ text_primary }};
 }
@@ -50,33 +47,34 @@ html, body {
 /* ── Header ─────────────────────────────────────────────────────────── */
 .header {
   position: relative;
-  background: linear-gradient(135deg, #3D2D22 0%, {{ bg_panel }} 65%);
-  padding: 13px 22px 11px 26px;
-  border-bottom: 2px solid {{ gold }};
+  padding: 12px 24px 9px;
+  border-bottom: 1px solid rgba(255, 196, 37, 0.35);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   flex-shrink: 0;
 }
 
-/* left gold accent bar */
-.header::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 5px;
-  background: linear-gradient(to bottom, {{ gold }}, {{ gold_dim }});
-}
-
 .header-left { min-width: 0; }
+
+.kicker {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  color: {{ gold }};
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+  white-space: nowrap;
+}
 
 .title {
   font-family: "Barlow Condensed", sans-serif;
   font-weight: 700;
   font-size: 36px;
   line-height: 1;
-  color: {{ gold }};
-  letter-spacing: 0.04em;
+  color: #FFFFFF;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -89,7 +87,7 @@ html, body {
   font-size: 12px;
   color: {{ text_secondary }};
   margin-top: 4px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -138,21 +136,21 @@ table {
 /* column widths: rank | player | team | stat */
 col.c-rank   { width: 54px; }
 col.c-player { /* auto */ }
-col.c-team   { width: 74px; }
+col.c-team   { width: 84px; }
 col.c-stat   { width: 76px; }
 
 thead tr {
-  border-bottom: 1px solid rgba(255, 196, 37, 0.18);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 th {
   font-family: "Barlow Condensed", sans-serif;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: {{ text_secondary }};
-  opacity: 0.8;
+  opacity: 0.85;
   padding: 9px 6px 6px;
 }
 
@@ -173,9 +171,9 @@ tbody tr:nth-child(odd):not(.highlight) {
 td {
   font-size: 15px;
   padding: 0 6px;
-  color: {{ text_primary }};
+  color: #FFFFFF;
   line-height: 1;
-  height: 31px;
+  height: 29px;
   vertical-align: middle;
 }
 
@@ -194,6 +192,7 @@ td.c-team {
   color: {{ text_secondary }};
   font-size: 12px;
   letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
 td.c-stat {
@@ -207,18 +206,18 @@ td.c-stat {
 tbody tr.highlight {
   background: linear-gradient(
     to right,
-    rgba(255, 196, 37, 0.18) 0%,
-    rgba(255, 196, 37, 0.08) 55%,
+    rgba(255, 196, 37, 0.10) 0%,
+    rgba(255, 196, 37, 0.04) 55%,
     transparent 100%
   ) !important;
-  border-top: 1px solid rgba(255, 196, 37, 0.28);
-  border-bottom: 1px solid rgba(255, 196, 37, 0.28);
+  border-top: 1px solid rgba(255, 196, 37, 0.22);
+  border-bottom: 1px solid rgba(255, 196, 37, 0.22);
 }
 
 /* gold left border via inset shadow — survives border-collapse */
 tbody tr.highlight td.c-rank {
-  box-shadow: inset 5px 0 0 0 {{ gold }};
-  color: {{ text_primary }};
+  box-shadow: inset 3px 0 0 0 {{ gold }};
+  color: #FFFFFF;
   font-weight: 600;
   font-size: 14px;
 }
@@ -228,7 +227,7 @@ tbody tr.highlight td {
 }
 
 tbody tr.highlight td.c-team {
-  color: {{ text_primary }};
+  color: #FFFFFF;
   font-size: 14px;
   letter-spacing: 0.06em;
 }
@@ -245,9 +244,8 @@ tbody tr.highlight td.c-stat {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 22px;
-  border-top: 1px solid rgba(255, 196, 37, 0.15);
-  background: rgba(0, 0, 0, 0.18);
+  padding: 7px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
 }
 
@@ -303,9 +301,9 @@ tbody tr.highlight td.c-stat {
 
   <div class="header">
     <div class="header-left">
+      <div class="kicker">San Diego Padres Analytics</div>
       <div class="title">{{ title }}{% if is_projection %}<span class="projection-badge">Projection</span>{% endif %}</div>
-      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
-    </div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}</div>
     <div class="header-right">
       <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
       <div class="as-of">{{ as_of }}</div>

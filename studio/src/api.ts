@@ -81,7 +81,7 @@ export const api = {
   updateDraftText: (
     id: string,
     text: string,
-  ): Promise<{ saved: boolean; digit_audit_errors: string[]; detail?: string }> =>
+  ): Promise<{ saved: boolean }> =>
     fetch(`${BASE}/drafts/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

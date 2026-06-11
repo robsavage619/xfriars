@@ -1,16 +1,18 @@
 /* ── Brand CSS variables ────────────────────────────────────────────────────── */
 :root {
-  --bg-deep: #1e1712;
-  --bg-panel: #2f241d;
-  --bg-row: #27201a;
+  --bg-deep: #16110d;
+  --bg-panel: #1e1812;
+  --bg-row: #1a1410;
   --gold: #ffc425;
   --gold-dim: #b8902a;
+  --text-white: #ffffff;
   --text-primary: #f5efe6;
-  --text-secondary: #a89d8f;
+  --text-secondary: #9c9189;
   --positive: #7fb069;
   --negative: #c4574e;
-  --border: rgba(255, 196, 37, 0.15);
+  --border: rgba(255, 255, 255, 0.07);
   --border-strong: rgba(255, 196, 37, 0.35);
+  --hairline-gold: rgba(255, 196, 37, 0.25);
   --radius: 6px;
 }
 
@@ -38,8 +40,8 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 0;
-  background: var(--bg-panel);
-  border-bottom: 2px solid var(--gold);
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--hairline-gold);
   padding: 0 24px;
   height: 52px;
   flex-shrink: 0;
@@ -161,7 +163,7 @@ html, body, #root {
   font-size: 13px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-primary);
+  color: var(--text-white);
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -246,7 +248,7 @@ html, body, #root {
   font-family: "Barlow Condensed", sans-serif;
   font-weight: 700;
   font-size: 28px;
-  color: var(--gold);
+  color: var(--text-white);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   line-height: 1.1;
@@ -312,7 +314,7 @@ html, body, #root {
 .fact-val {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-white);
   font-variant-numeric: tabular-nums;
 }
 

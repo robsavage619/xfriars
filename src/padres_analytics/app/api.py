@@ -15,7 +15,7 @@ from typing import Any
 import duckdb
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -264,7 +264,7 @@ class DraftTextUpdate(BaseModel):
 
 
 @app.patch("/api/drafts/{draft_id}")
-def update_draft_text(draft_id: str, body: DraftTextUpdate) -> JSONResponse | dict[str, Any]:
+def update_draft_text(draft_id: str, body: DraftTextUpdate) -> dict[str, Any]:
     """Update caption text with digit-audit validation."""
     if len(body.text) > 280:
         raise HTTPException(status_code=422, detail="Caption exceeds 280 characters")
@@ -288,14 +288,9 @@ def update_draft_text(draft_id: str, body: DraftTextUpdate) -> JSONResponse | di
     facts: dict[str, Any] = json.loads(row[0]) if isinstance(row[0], str) else row[0]
     offenders = digit_audit(body.text, facts)
     if offenders:
-        return JSONResponse(
+        raise HTTPException(
             status_code=422,
-            content={
-                "draft_id": draft_id,
-                "digit_audit_errors": offenders,
-                "saved": False,
-                "detail": f"Numbers not in facts_json: {offenders}",
-            },
+            detail=f"Digit audit failed — numbers not in facts_json: {offenders}",
         )
 
     conn_w = _rw()
@@ -342,7 +337,7 @@ _EXPLORER_QUERIES: dict[str, tuple[str, bool]] = {
     "all_candidates": (
         """
         SELECT candidate_id, detector, subject, CAST(as_of AS VARCHAR) as as_of,
-               novelty_score, status, claim_scope
+               ROUND(novelty_score, 3) AS novelty_score, status, claim_scope
         FROM stat_candidates
         ORDER BY novelty_score DESC
         LIMIT 200

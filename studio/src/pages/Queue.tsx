@@ -21,14 +21,8 @@ function DraftDetail({ d }: { d: Draft }) {
     setSaving(true);
     setSaveError(null);
     try {
-      const res = await api.updateDraftText(d.draft_id, text);
-      if (!res.saved) {
-        setSaveError(
-          `Numbers not in facts_json: ${res.digit_audit_errors.join(", ")}`,
-        );
-      } else {
-        await mutate("drafts");
-      }
+      await api.updateDraftText(d.draft_id, text);
+      await mutate("drafts");
     } catch (e) {
       setSaveError(String(e));
     } finally {

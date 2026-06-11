@@ -95,7 +95,7 @@ export default function Explorer() {
           fontFamily: "Barlow Condensed, sans-serif",
           fontWeight: 700,
           fontSize: 22,
-          color: "var(--gold)",
+          color: "var(--text-white)",
           letterSpacing: "0.04em",
           textTransform: "uppercase",
           marginBottom: 16,
