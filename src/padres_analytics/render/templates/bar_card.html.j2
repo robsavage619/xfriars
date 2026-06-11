@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 800px;
+  height: 450px;
+  overflow: hidden;
+  background: {{ bg_deep }};
+}
+
+.card {
+  width: 800px;
+  height: 450px;
+  display: flex;
+  flex-direction: column;
+  background: {{ bg_deep }};
+  font-family: "Space Grotesk", sans-serif;
+  color: {{ text_primary }};
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.header {
+  padding: 12px 24px 9px;
+  border-bottom: 1px solid rgba(255, 196, 37, 0.35);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.kicker {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  color: {{ gold }};
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 900;
+  font-size: 44px;
+  line-height: 0.95;
+  color: #FFFFFF;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subtitle {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: {{ text_secondary }};
+  margin-top: 4px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.header-right {
+  flex-shrink: 0;
+  margin-left: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.logo-img { height: 28px; width: auto; display: block; opacity: 0.92; }
+.as-of {
+  font-size: 10px;
+  color: {{ text_secondary }};
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  font-family: "Space Grotesk", sans-serif;
+  text-transform: uppercase;
+}
+
+/* ── Chart container ─────────────────────────────────────────────────── */
+.chart-area {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+}
+.source {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 10px;
+  color: {{ text_secondary }};
+  opacity: 0.5;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.handle {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: {{ gold }};
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.tagline {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 10px;
+  color: {{ text_secondary }};
+  opacity: 0.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres Analytics</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  <div class="footer">
+    <span class="source">Source: {{ source }} · through {{ as_of }}</span>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+      <span class="handle">@xFriars</span>
+      <span class="tagline">San Diego Baseball Intelligence</span>
+    </div>
+  </div>
+
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const DATA    = {{ bar_rows | tojson | safe }};
+  const HL_IDX  = {{ highlight_row if highlight_row is not none else -1 }};
+
+  const GOLD       = "{{ gold }}";
+  const GOLD_A20   = "rgba(255,196,37,0.20)";
+  const GOLD_A10   = "rgba(255,196,37,0.10)";
+  const TEXT_PRI   = "{{ text_primary }}";
+  const TEXT_SEC   = "{{ text_secondary }}";
+  const BG_DEEP    = "{{ bg_deep }}";
+
+  // ── Layout constants ──────────────────────────────────────────────
+  const container  = document.getElementById("chart-area");
+  const W          = container.offsetWidth  || 800;
+  const H          = container.offsetHeight || 330;
+
+  const marginL    = 24;   // left edge padding
+  const rankW      = 28;   // rank column
+  const labelW     = 155;  // name + sub column
+  const valueW     = 72;   // right value column
+  const marginR    = 24;
+  const barX       = marginL + rankW + labelW + 8;
+  const barW       = W - barX - valueW - marginR - 8;
+
+  const n          = DATA.length;
+  const rowH       = Math.floor(H / n);
+  const barH       = Math.min(Math.floor(rowH * 0.42), 18);
+  const barRadius  = 3;
+
+  // ── D3 scale ──────────────────────────────────────────────────────
+  const maxPct = d3.max(DATA, d => +d.pct);
+  const xScale = d3.scaleLinear()
+    .domain([0, maxPct])
+    .range([0, barW]);
+
+  const svg = d3.select("#chart-area")
+    .append("svg")
+    .attr("width", W)
+    .attr("height", H);
+
+  // ── Defs: gradients + glow filter ─────────────────────────────────
+  const defs = svg.append("defs");
+
+  // Dim bar gradient (non-highlighted)
+  const gradDim = defs.append("linearGradient")
+    .attr("id", "bar-grad-dim")
+    .attr("x1", "0%").attr("y1", "0%")
+    .attr("x2", "100%").attr("y2", "0%");
+  gradDim.append("stop").attr("offset", "0%")
+    .attr("stop-color", GOLD).attr("stop-opacity", 0.18);
+  gradDim.append("stop").attr("offset", "100%")
+    .attr("stop-color", GOLD).attr("stop-opacity", 0.32);
+
+  // Bright bar gradient (highlighted)
+  const gradHL = defs.append("linearGradient")
+    .attr("id", "bar-grad-hl")
+    .attr("x1", "0%").attr("y1", "0%")
+    .attr("x2", "100%").attr("y2", "0%");
+  gradHL.append("stop").attr("offset", "0%")
+    .attr("stop-color", GOLD).attr("stop-opacity", 0.75);
+  gradHL.append("stop").attr("offset", "100%")
+    .attr("stop-color", GOLD).attr("stop-opacity", 1.0);
+
+  // Glow filter for highlighted bar
+  const glow = defs.append("filter")
+    .attr("id", "bar-glow")
+    .attr("x", "-10%").attr("y", "-80%")
+    .attr("width", "120%").attr("height", "260%");
+  glow.append("feGaussianBlur")
+    .attr("in", "SourceGraphic")
+    .attr("stdDeviation", "4")
+    .attr("result", "blur");
+  const merge = glow.append("feMerge");
+  merge.append("feMergeNode").attr("in", "blur");
+  merge.append("feMergeNode").attr("in", "SourceGraphic");
+
+  // ── Row groups ────────────────────────────────────────────────────
+  const rows = svg.selectAll(".row")
+    .data(DATA)
+    .join("g")
+    .attr("class", "row")
+    .attr("transform", (d, i) => `translate(0, ${i * rowH})`);
+
+  // Hairline separator (skip last)
+  rows.filter((d, i) => i < n - 1)
+    .append("line")
+    .attr("x1", marginL)
+    .attr("x2", W - marginR)
+    .attr("y1", rowH)
+    .attr("y2", rowH)
+    .attr("stroke", "rgba(255,255,255,0.05)")
+    .attr("stroke-width", 1);
+
+  // Highlight row background wash
+  rows.filter((d, i) => i === HL_IDX)
+    .append("rect")
+    .attr("x", 0)
+    .attr("y", 1)
+    .attr("width", W)
+    .attr("height", rowH - 2)
+    .attr("fill", GOLD_A10)
+    .attr("rx", 2);
+
+  // Highlight left accent bar
+  rows.filter((d, i) => i === HL_IDX)
+    .append("rect")
+    .attr("x", 0)
+    .attr("y", Math.floor((rowH - barH) / 2))
+    .attr("width", 3)
+    .attr("height", barH)
+    .attr("fill", GOLD)
+    .attr("rx", 1);
+
+  const hasLogos = DATA.some(d => d.logo && d.logo.length > 0);
+  const logoSize = Math.min(rowH - 8, 24);
+  const logoX    = marginL + rankW + 2;
+  const labelX   = hasLogos ? logoX + logoSize + 6 : marginL + rankW + 8;
+
+  // ── Rank ─────────────────────────────────────────────────────────
+  rows.append("text")
+    .attr("x", marginL + rankW - 4)
+    .attr("y", rowH / 2)
+    .attr("dy", "0.35em")
+    .attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk, sans-serif")
+    .attr("font-size", 11)
+    .attr("fill", TEXT_SEC)
+    .attr("opacity", 0.5)
+    .attr("font-variant-numeric", "tabular-nums")
+    .text(d => d.rank);
+
+  // ── Team logo ─────────────────────────────────────────────────────
+  if (hasLogos) {
+    rows.filter(d => d.logo && d.logo.length > 0)
+      .append("image")
+      .attr("href", d => `file://${d.logo}`)
+      .attr("x", logoX)
+      .attr("y", (rowH - logoSize) / 2)
+      .attr("width", logoSize)
+      .attr("height", logoSize)
+      .attr("preserveAspectRatio", "xMidYMid meet")
+      .attr("opacity", (d, i) => i === HL_IDX ? 1.0 : 0.55);
+  }
+
+  // ── Label: name + sub ─────────────────────────────────────────────
+  const hasSub = DATA.some(d => d.sub && d.sub.length > 0);
+  const nameY  = hasSub ? rowH / 2 - 6 : rowH / 2;
+  const subY   = rowH / 2 + 8;
+
+  rows.append("text")
+    .attr("x", labelX)
+    .attr("y", nameY)
+    .attr("dy", "0.35em")
+    .attr("font-family", "Space Grotesk, sans-serif")
+    .attr("font-weight", (d, i) => i === HL_IDX ? 600 : 500)
+    .attr("font-size", (d, i) => i === HL_IDX ? 13.5 : 13)
+    .attr("fill", "#FFFFFF")
+    .attr("fill-opacity", (d, i) => i === HL_IDX ? 1.0 : 0.88)
+    .text(d => d.label);
+
+  if (hasSub) {
+    rows.filter(d => d.sub && d.sub.length > 0)
+      .append("text")
+      .attr("x", labelX)
+      .attr("y", subY)
+      .attr("dy", "0.35em")
+      .attr("font-family", "Space Grotesk, sans-serif")
+      .attr("font-size", 10)
+      .attr("fill", TEXT_SEC)
+      .attr("fill-opacity", 0.6)
+      .attr("font-variant-numeric", "tabular-nums")
+      .text(d => d.sub);
+  }
+
+  // ── Bar track ─────────────────────────────────────────────────────
+  rows.append("rect")
+    .attr("x", barX)
+    .attr("y", Math.floor((rowH - barH) / 2))
+    .attr("width", barW)
+    .attr("height", barH)
+    .attr("fill", "rgba(255,255,255,0.05)")
+    .attr("rx", barRadius);
+
+  // ── Bar fill ──────────────────────────────────────────────────────
+  rows.append("rect")
+    .attr("x", barX)
+    .attr("y", Math.floor((rowH - barH) / 2))
+    .attr("width", d => Math.max(xScale(+d.pct), barRadius * 2))
+    .attr("height", barH)
+    .attr("fill", (d, i) => i === HL_IDX ? "url(#bar-grad-hl)" : "url(#bar-grad-dim)")
+    .attr("filter", (d, i) => i === HL_IDX ? "url(#bar-glow)" : null)
+    .attr("rx", barRadius);
+
+  // ── Value label ───────────────────────────────────────────────────
+  rows.append("text")
+    .attr("x", W - marginR)
+    .attr("y", rowH / 2)
+    .attr("dy", "0.35em")
+    .attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk, sans-serif")
+    .attr("font-weight", (d, i) => i === HL_IDX ? 700 : 500)
+    .attr("font-size", (d, i) => i === HL_IDX ? 16 : 13)
+    .attr("fill", (d, i) => i === HL_IDX ? GOLD : TEXT_SEC)
+    .attr("fill-opacity", (d, i) => i === HL_IDX ? 1.0 : 0.75)
+    .attr("font-variant-numeric", "tabular-nums")
+    .attr("letter-spacing", "0.04em")
+    .text(d => d.value);
+
+  // Signal Playwright that D3 rendering is complete
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

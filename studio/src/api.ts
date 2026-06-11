@@ -67,8 +67,8 @@ export const api = {
       _json<Candidate[]>(r),
     ),
 
-  renderCard: (id: string): Promise<{ card_path: string }> =>
-    fetch(`${BASE}/candidates/${id}/render`, { method: "POST" }).then((r) =>
+  renderCard: (id: string, visual = "table"): Promise<{ card_path: string; visual: string }> =>
+    fetch(`${BASE}/candidates/${id}/render?visual=${visual}`, { method: "POST" }).then((r) =>
       _json(r),
     ),
 
@@ -108,4 +108,35 @@ export const api = {
 
   explorerQuery: (view: string): Promise<ExplorerResult> =>
     fetch(`${BASE}/explorer/${view}`).then((r) => _json<ExplorerResult>(r)),
+};
+
+// ── MLB asset URL helpers (CDN — browser can fetch directly) ──────────────────
+
+/** MLBAM headshot for a player. Falls back to generic silhouette on CDN. */
+export function mlbPlayerPhotoUrl(mlbId: number | string): string {
+  return (
+    `https://img.mlbstatic.com/mlb-photos/image/upload` +
+    `/d_people:generic:headshot:67:current.png` +
+    `/w_213,q_auto:best/v1/people/${mlbId}/headshot/67/current`
+  );
+}
+
+/** Official team logo SVG from MLB static CDN. */
+export function mlbTeamLogoUrl(mlbamTeamId: number): string {
+  return `https://www.mlbstatic.com/team-logos/${mlbamTeamId}.svg`;
+}
+
+/** BRef team code → MLBAM team ID (subset — most common codes). */
+export const BREF_TO_MLBAM: Record<string, number> = {
+  ARI: 109, ATL: 144, BAL: 110, BOS: 111,
+  CHN: 112, CHA: 145, CIN: 113, CLE: 114,
+  COL: 115, DET: 116, HOU: 117, KCA: 118,
+  LAA: 108, LAN: 119, MIA: 146, MIL: 158,
+  MIN: 142, NYN: 121, NYA: 147, OAK: 133,
+  PHI: 143, PIT: 134, SDP: 135, SEA: 136,
+  SFN: 137, STL: 138, TBA: 139, TEX: 140,
+  TOR: 141, WSN: 120,
+  // aliases
+  SD: 135, LAD: 119, SF: 137, NYY: 147, NYM: 121,
+  WSH: 120, CWS: 145, CHC: 112, KC: 118, TB: 139,
 };

@@ -4,24 +4,20 @@
 <meta charset="utf-8">
 <style>
 @font-face {
-  font-family: "Barlow Condensed";
-  src: url("file://{{ barlow_regular_ttf }}") format("truetype");
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
   font-weight: 400;
 }
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+/* keep Barlow for small-caps utility classes only */
 @font-face {
   font-family: "Barlow Condensed";
   src: url("file://{{ barlow_semibold_ttf }}") format("truetype");
   font-weight: 600;
-}
-@font-face {
-  font-family: "Barlow Condensed";
-  src: url("file://{{ barlow_bold_ttf }}") format("truetype");
-  font-weight: 700;
-}
-@font-face {
-  font-family: "Inter";
-  src: url("file://{{ inter_ttf }}") format("truetype");
-  font-weight: 100 900;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -40,7 +36,7 @@ html, body {
   display: flex;
   flex-direction: column;
   background: {{ bg_deep }};
-  font-family: "Inter", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   color: {{ text_primary }};
 }
 
@@ -58,23 +54,23 @@ html, body {
 .header-left { min-width: 0; }
 
 .kicker {
-  font-family: "Barlow Condensed", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 10px;
   color: {{ gold }};
-  letter-spacing: 0.22em;
+  letter-spacing: 0.26em;
   text-transform: uppercase;
-  margin-bottom: 5px;
+  margin-bottom: 4px;
   white-space: nowrap;
 }
 
 .title {
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 700;
-  font-size: 36px;
-  line-height: 1;
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 900;
+  font-size: 44px;
+  line-height: 0.95;
   color: #FFFFFF;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -82,12 +78,12 @@ html, body {
 }
 
 .subtitle {
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 400;
-  font-size: 12px;
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 500;
+  font-size: 11px;
   color: {{ text_secondary }};
-  margin-top: 4px;
-  letter-spacing: 0.14em;
+  margin-top: 5px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -116,7 +112,7 @@ html, body {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   white-space: nowrap;
-  font-family: "Barlow Condensed", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   text-transform: uppercase;
 }
 
@@ -124,7 +120,7 @@ html, body {
 .table-wrap {
   flex: 1;
   overflow: hidden;
-  padding: 2px 18px 0;
+  padding: 4px 24px 0;
 }
 
 table {
@@ -140,11 +136,11 @@ col.c-team   { width: 84px; }
 col.c-stat   { width: 76px; }
 
 thead tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 th {
-  font-family: "Barlow Condensed", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -161,11 +157,11 @@ th.c-stat   { text-align: right;   padding-right: 12px; }
 
 /* ── Data rows ─────────────────────────────────────────────────────── */
 tbody tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.028);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-tbody tr:nth-child(odd):not(.highlight) {
-  background: rgba(0, 0, 0, 0.13);
+tbody tr:last-child {
+  border-bottom: none;
 }
 
 td {
@@ -181,7 +177,8 @@ td.c-rank {
   text-align: center;
   padding-left: 10px;
   color: {{ text_secondary }};
-  font-size: 13px;
+  opacity: 0.7;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -206,12 +203,10 @@ td.c-stat {
 tbody tr.highlight {
   background: linear-gradient(
     to right,
-    rgba(255, 196, 37, 0.10) 0%,
-    rgba(255, 196, 37, 0.04) 55%,
+    rgba(255, 196, 37, 0.12) 0%,
+    rgba(255, 196, 37, 0.045) 60%,
     transparent 100%
   ) !important;
-  border-top: 1px solid rgba(255, 196, 37, 0.22);
-  border-bottom: 1px solid rgba(255, 196, 37, 0.22);
 }
 
 /* gold left border via inset shadow — survives border-collapse */
@@ -250,7 +245,7 @@ tbody tr.highlight td.c-stat {
 }
 
 .source {
-  font-family: "Barlow Condensed", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   font-weight: 400;
   font-size: 10px;
   color: {{ text_secondary }};
@@ -260,7 +255,7 @@ tbody tr.highlight td.c-stat {
 }
 
 .handle {
-  font-family: "Barlow Condensed", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   font-size: 13px;
   font-weight: 700;
   color: {{ gold }};
@@ -269,7 +264,7 @@ tbody tr.highlight td.c-stat {
 }
 
 .tagline {
-  font-family: "Barlow Condensed", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   font-size: 10px;
   font-weight: 400;
   color: {{ text_secondary }};
@@ -283,7 +278,7 @@ tbody tr.highlight td.c-stat {
   display: inline-block;
   border: 1px solid {{ gold }};
   color: {{ gold }};
-  font-family: "Barlow Condensed", sans-serif;
+  font-family: "Space Grotesk", sans-serif;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;

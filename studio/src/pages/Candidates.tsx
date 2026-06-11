@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import useSWR, { mutate } from "swr";
 import { type Candidate, api } from "../api.ts";
+import { PlayerPhoto } from "../components/MlbAssets.tsx";
 
 function scoreClass(s: number) {
   if (s >= 0.85) return "score-high";
@@ -44,14 +45,15 @@ function CandidateDetail({
   const [rendering, setRendering] = useState(false);
   const [imgKey, setImgKey] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [visual, setVisual] = useState<"table" | "bars">("table");
 
   const headline =
     typeof c.facts.headline === "string" ? c.facts.headline : null;
 
-  async function handleRender() {
+  async function handleRender(v = visual) {
     setRendering(true);
     try {
-      await api.renderCard(c.candidate_id);
+      await api.renderCard(c.candidate_id, v);
       setImgKey((k) => k + 1);
       await mutate("candidates");
     } catch (e) {
@@ -71,11 +73,23 @@ function CandidateDetail({
 
   const hasCard = c.has_card || imgKey > 0;
 
+  const playerId =
+    typeof c.facts.player_id === "number"
+      ? c.facts.player_id
+      : typeof c.facts.mlb_id === "number"
+        ? c.facts.mlb_id
+        : null;
+
   return (
     <div>
-      <div className="detail-title">{c.detector.replace(/_/g, " ")}</div>
-      <div className="detail-sub">
-        {c.claim_scope} · as of {c.as_of}
+      <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 12 }}>
+        {playerId && <PlayerPhoto mlbId={playerId} size={56} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="detail-title">{c.detector.replace(/_/g, " ")}</div>
+          <div className="detail-sub">
+            {c.claim_scope} · as of {c.as_of}
+          </div>
+        </div>
       </div>
 
       {headline && (
@@ -83,6 +97,21 @@ function CandidateDetail({
           {headline}
         </div>
       )}
+
+      <div className="visual-toggle">
+        {(["table", "bars"] as const).map((v) => (
+          <button
+            key={v}
+            className={`visual-btn${visual === v ? " active" : ""}`}
+            onClick={() => {
+              setVisual(v);
+              if (hasCard) void handleRender(v);
+            }}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
 
       {hasCard ? (
         <img
@@ -96,7 +125,7 @@ function CandidateDetail({
           <span>Card not rendered yet</span>
           <button
             className="btn btn-ghost btn-sm"
-            onClick={handleRender}
+            onClick={() => handleRender()}
             disabled={rendering}
           >
             {rendering ? <span className="spinner" /> : "Render Card"}
@@ -108,7 +137,7 @@ function CandidateDetail({
         {hasCard && (
           <button
             className="btn btn-ghost btn-sm"
-            onClick={handleRender}
+            onClick={() => handleRender()}
             disabled={rendering}
           >
             {rendering ? <span className="spinner" /> : "Re-render"}

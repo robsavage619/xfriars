@@ -1,6 +1,7 @@
 import { useState } from "react";
 import useSWR from "swr";
-import { type ExplorerResult, api } from "../api.ts";
+import { BREF_TO_MLBAM, type ExplorerResult, api } from "../api.ts";
+import { PlayerPhoto, TeamLogo } from "../components/MlbAssets.tsx";
 
 const VIEW_LABELS: Record<string, string> = {
   all_candidates: "All Candidates",
@@ -9,6 +10,53 @@ const VIEW_LABELS: Record<string, string> = {
   dollar_per_war: "$/WAR by Team",
   draft_history: "Draft History",
 };
+
+const TEAM_COLS = new Set(["team_bref", "team_abbrev", "team_id"]);
+const PLAYER_COLS = new Set(["mlb_id", "player_id"]);
+const NAME_COLS = new Set(["name_common", "player_name"]);
+
+function Cell({
+  value,
+  col,
+  row,
+  cols,
+}: {
+  value: unknown;
+  col: string;
+  row: unknown[];
+  cols: string[];
+}) {
+  if (value === null)
+    return <span style={{ color: "var(--text-secondary)", opacity: 0.5 }}>—</span>;
+
+  const str = String(value);
+
+  // Team logo + name inline
+  if (TEAM_COLS.has(col) && BREF_TO_MLBAM[str.toUpperCase()]) {
+    return (
+      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <TeamLogo brefCode={str} size={20} opacity={0.9} />
+        <span>{str}</span>
+      </span>
+    );
+  }
+
+  // Player name with inline photo — look for sibling mlb_id / player_id column
+  if (NAME_COLS.has(col)) {
+    const idCol = cols.findIndex((c) => PLAYER_COLS.has(c));
+    const mlbId = idCol >= 0 ? Number(row[idCol]) : NaN;
+    if (!isNaN(mlbId) && mlbId > 0) {
+      return (
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <PlayerPhoto mlbId={mlbId} size={28} />
+          <span>{str}</span>
+        </span>
+      );
+    }
+  }
+
+  return <>{str}</>;
+}
 
 function DataTable({ result }: { result: ExplorerResult }) {
   if (result.error) {
@@ -32,13 +80,12 @@ function DataTable({ result }: { result: ExplorerResult }) {
             <tr key={i}>
               {row.map((cell, j) => (
                 <td key={j}>
-                  {cell === null ? (
-                    <span style={{ color: "var(--text-secondary)", opacity: 0.5 }}>
-                      —
-                    </span>
-                  ) : (
-                    String(cell)
-                  )}
+                  <Cell
+                    value={cell}
+                    col={result.columns[j]}
+                    row={row}
+                    cols={result.columns}
+                  />
                 </td>
               ))}
             </tr>

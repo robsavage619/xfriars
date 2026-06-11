@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -197,6 +197,94 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_mlb_leaders_stat
         ON mlb_leaders(season, stat_type)
+    """,
+    # ── Statcast tables (pulled from Baseball Savant via pybaseball) ──────────
+    """
+    CREATE TABLE IF NOT EXISTS statcast_batter_percentile_ranks (
+        player_id         INTEGER NOT NULL,
+        player_name       VARCHAR NOT NULL,
+        year              INTEGER NOT NULL,
+        xwoba             DOUBLE,
+        xba               DOUBLE,
+        xslg              DOUBLE,
+        xiso              DOUBLE,
+        xobp              DOUBLE,
+        brl               DOUBLE,
+        brl_percent       DOUBLE,
+        exit_velocity     DOUBLE,
+        max_ev            DOUBLE,
+        hard_hit_percent  DOUBLE,
+        k_percent         DOUBLE,
+        bb_percent        DOUBLE,
+        whiff_percent     DOUBLE,
+        chase_percent     DOUBLE,
+        arm_strength      DOUBLE,
+        sprint_speed      DOUBLE,
+        oaa               DOUBLE,
+        bat_speed         DOUBLE,
+        squared_up_rate   DOUBLE,
+        swing_length      DOUBLE,
+        ingested_at       TIMESTAMP,
+        PRIMARY KEY (player_id, year)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS statcast_batting_expected (
+        player_id   INTEGER NOT NULL,
+        player_name VARCHAR NOT NULL,
+        year        INTEGER NOT NULL,
+        pa          INTEGER,
+        bip         INTEGER,
+        ba          DOUBLE,
+        est_ba      DOUBLE,
+        slg         DOUBLE,
+        est_slg     DOUBLE,
+        woba        DOUBLE,
+        est_woba    DOUBLE,
+        ingested_at TIMESTAMP,
+        PRIMARY KEY (player_id, year)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS statcast_sprint_speed (
+        player_id        INTEGER NOT NULL,
+        player_name      VARCHAR NOT NULL,
+        year             INTEGER NOT NULL,
+        sprint_speed     DOUBLE,
+        competitive_runs INTEGER,
+        ingested_at      TIMESTAMP,
+        PRIMARY KEY (player_id, year)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS statcast_batter_exitvelo_barrels (
+        player_id     INTEGER NOT NULL,
+        player_name   VARCHAR NOT NULL,
+        year          INTEGER NOT NULL,
+        attempts      INTEGER,
+        avg_hit_speed DOUBLE,
+        max_hit_speed DOUBLE,
+        barrels       INTEGER,
+        brl_percent   DOUBLE,
+        ingested_at   TIMESTAMP,
+        PRIMARY KEY (player_id, year)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_percentile_year
+        ON statcast_batter_percentile_ranks(year)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_expected_year
+        ON statcast_batting_expected(year)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_sprint_year
+        ON statcast_sprint_speed(year)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_barrels_year
+        ON statcast_batter_exitvelo_barrels(year)
     """,
 )
 

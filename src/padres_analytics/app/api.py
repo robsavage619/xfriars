@@ -22,6 +22,11 @@ from pydantic import BaseModel
 from padres_analytics.config import CARDS_DIR, DUCKDB_PATH
 from padres_analytics.detect.candidates import TablePayload
 from padres_analytics.render.cards import RenderError, render
+from padres_analytics.render.mlb_assets import (
+    BREF_TO_MLBAM,
+    player_photo_path,
+    team_logo_path,
+)
 from padres_analytics.tweets.draft import StateTransitionError, transition
 from padres_analytics.tweets.verify import digit_audit
 
@@ -73,7 +78,7 @@ def _attach_hist(conn: duckdb.DuckDBPyConnection) -> bool:
         trades_path = Path(env_path)
     else:
         trades_path = (
-            Path(__file__).resolve().parents[5]
+            Path(__file__).resolve().parents[4]
             / "savage-trade-evaluator"
             / "data"
             / "duckdb"
@@ -167,8 +172,14 @@ def list_candidates(status: str = "new") -> list[dict[str, Any]]:
 
 
 @app.post("/api/candidates/{candidate_id}/render")
-def render_candidate_card(candidate_id: str) -> dict[str, str]:
-    """Render a card PNG for a candidate (idempotent — overwrites existing)."""
+async def render_candidate_card(candidate_id: str, visual: str = "table") -> dict[str, str]:
+    """Render a card PNG for a candidate (idempotent — overwrites existing).
+
+    Query param ``visual``: "table" (default) or "bars".
+    Playwright runs in a thread pool to avoid greenlet conflicts.
+    """
+    import asyncio
+
     conn = _ro()
     try:
         row = conn.execute(
@@ -189,8 +200,8 @@ def render_candidate_card(candidate_id: str) -> dict[str, str]:
 
     try:
         payload = TablePayload.model_validate(facts)
-        card_path = render(payload, CARDS_DIR, candidate_id)
-        return {"card_path": str(card_path)}
+        card_path = await asyncio.to_thread(render, payload, CARDS_DIR, candidate_id, visual)
+        return {"card_path": str(card_path), "visual": visual}
     except RenderError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -355,6 +366,33 @@ def reject_draft(draft_id: str) -> dict[str, str]:
         conn.close()
 
 
+# ── MLB assets ────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/mlb/player/{mlb_id}/photo", response_class=FileResponse)
+def get_player_photo(mlb_id: int) -> FileResponse:
+    """Serve a cached MLB player headshot PNG, downloading if needed."""
+    path = player_photo_path(mlb_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"Photo not available for {mlb_id}")
+    return FileResponse(str(path), media_type="image/png")
+
+
+@app.get("/api/mlb/team/{bref_code}/logo", response_class=FileResponse)
+def get_team_logo(bref_code: str) -> FileResponse:
+    """Serve a cached MLB team logo SVG."""
+    path = team_logo_path(bref_code.upper())
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"Logo not available for {bref_code!r}")
+    return FileResponse(str(path), media_type="image/svg+xml")
+
+
+@app.get("/api/mlb/teams")
+def list_mlb_teams() -> dict[str, int]:
+    """Return the BRef-code → MLBAM-ID mapping (for frontend logo construction)."""
+    return BREF_TO_MLBAM
+
+
 # ── Explorer ───────────────────────────────────────────────────────────────────
 
 _EXPLORER_QUERIES: dict[str, tuple[str, bool]] = {
@@ -418,12 +456,13 @@ _EXPLORER_QUERIES: dict[str, tuple[str, bool]] = {
     ),
     "draft_history": (
         """
-        SELECT draft_id, detector, status,
-               CAST(created_at AS VARCHAR) AS created_at,
-               CAST(posted_at AS VARCHAR) AS posted_at,
-               LEFT(text, 100) AS caption_preview
-        FROM tweet_drafts
-        ORDER BY created_at DESC
+        SELECT td.draft_id, sc.detector, td.status,
+               CAST(td.created_at AS VARCHAR) AS created_at,
+               CAST(td.posted_at AS VARCHAR) AS posted_at,
+               LEFT(td.text, 100) AS caption_preview
+        FROM tweet_drafts td
+        LEFT JOIN stat_candidates sc ON sc.candidate_id = td.candidate_id
+        ORDER BY td.created_at DESC
         LIMIT 100
         """,
         False,

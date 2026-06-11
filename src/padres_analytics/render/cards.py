@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import tempfile
 from contextlib import contextmanager
@@ -15,9 +16,13 @@ from padres_analytics.render.tokens import (
     BARLOW_BOLD_TTF,
     BARLOW_REGULAR_TTF,
     BARLOW_SEMIBOLD_TTF,
+    BEBAS_NEUE_TTF,
     BG_DEEP,
     BG_PANEL,
+    BIG_SHOULDERS_TTF,
+    D3_JS,
     DEVICE_SCALE,
+    DM_SANS_TTF,
     GOLD,
     GOLD_DIM,
     HIGHLIGHT_BG,
@@ -26,6 +31,7 @@ from padres_analytics.render.tokens import (
     NEGATIVE,
     POSITIVE,
     ROW_ALT,
+    SPACE_GROTESK_TTF,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     VIEWPORT_H,
@@ -47,8 +53,6 @@ _JINJA_ENV = Environment(
     autoescape=select_autoescape(["html", "j2"]),
 )
 
-_browser: Browser | None = None
-
 
 class RenderError(RuntimeError):
     """Raised when card rendering fails. Never silently swallowed."""
@@ -56,15 +60,17 @@ class RenderError(RuntimeError):
 
 @contextmanager
 def _get_browser() -> Iterator[Browser]:
-    """Lazily launch a Chromium browser, reused within a process.
+    """Launch a short-lived Chromium browser for one render call.
+
+    A fresh browser is created per call so sync_playwright stays on the calling
+    thread — avoids greenlet conflicts when called from FastAPI's threadpool.
 
     Yields:
         A Playwright Browser instance.
 
     Raises:
-        RenderError: If Playwright/Chromium is not installed.
+        RenderError: If Playwright/Chromium is not installed or fails to launch.
     """
-    global _browser
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -72,59 +78,130 @@ def _get_browser() -> Iterator[Browser]:
             "playwright not installed. Run: uv run playwright install chromium"
         ) from exc
 
-    if _browser is None:
-        try:
-            _pw = sync_playwright().start()
-            _browser = _pw.chromium.launch()
-        except Exception as exc:
-            raise RenderError(
-                f"Failed to launch Chromium. Run: uv run playwright install chromium\n{exc}"
-            ) from exc
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            try:
+                yield browser
+            finally:
+                browser.close()
+    except RenderError:
+        raise
+    except Exception as exc:
+        raise RenderError(
+            f"Failed to launch Chromium. Run: uv run playwright install chromium\n{exc}"
+        ) from exc
 
-    yield _browser
+
+_VISUALS = ("table", "bars")
+
+
+_SUFFIX_MULTIPLIERS = {"K": 1e3, "M": 1e6, "B": 1e9}
+
+
+def _parse_numeric(raw: str) -> float:
+    """Parse display-formatted numbers like '$4.25M', '47.1', '2,345' to float."""
+    s = raw.strip().replace("$", "").replace("%", "").replace(",", "")
+    if s and s[-1].upper() in _SUFFIX_MULTIPLIERS:
+        try:
+            return float(s[:-1]) * _SUFFIX_MULTIPLIERS[s[-1].upper()]
+        except ValueError:
+            pass
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _bar_rows(payload: TablePayload) -> list[dict[str, str | float]]:
+    """Shape table rows into bar-chart rows, scaled to the max numeric final column."""
+    from padres_analytics.render.mlb_assets import team_logo_path
+
+    values = [_parse_numeric(str(r[-1])) for r in payload.rows]
+    max_v = max(values) if values else 1.0
+    if max_v <= 0:
+        max_v = 1.0
+    rows = []
+    for r, v in zip(payload.rows, values, strict=True):
+        sub = " · ".join(str(c) for c in r[2:-1]) if len(r) > 3 else ""
+        label = str(r[1])
+        logo = team_logo_path(label)
+        rows.append(
+            {
+                "rank": str(r[0]),
+                "label": label,
+                "sub": sub,
+                "value": str(r[-1]),
+                "pct": round(max(v / max_v * 100, 3.0), 1),
+                "logo": str(logo) if logo else "",
+            }
+        )
+    return rows
+
+
+def _token_kwargs() -> dict[str, str]:
+    return {
+        "bg_deep": BG_DEEP,
+        "bg_panel": BG_PANEL,
+        "gold": GOLD,
+        "gold_dim": GOLD_DIM,
+        "text_primary": TEXT_PRIMARY,
+        "text_secondary": TEXT_SECONDARY,
+        "row_alt": ROW_ALT,
+        "highlight_bg": HIGHLIGHT_BG,
+        "highlight_edge": HIGHLIGHT_EDGE,
+        "positive": POSITIVE,
+        "negative": NEGATIVE,
+        "inter_ttf": str(INTER_TTF),
+        "barlow_regular_ttf": str(BARLOW_REGULAR_TTF),
+        "barlow_semibold_ttf": str(BARLOW_SEMIBOLD_TTF),
+        "barlow_bold_ttf": str(BARLOW_BOLD_TTF),
+        "xfriars_logo": str(XFRIARS_LOGO_PNG),
+        "d3_js": str(D3_JS),
+        "bebas_neue_ttf": str(BEBAS_NEUE_TTF),
+        "dm_sans_ttf": str(DM_SANS_TTF),
+        "big_shoulders_ttf": str(BIG_SHOULDERS_TTF),
+        "space_grotesk_ttf": str(SPACE_GROTESK_TTF),
+    }
 
 
 def _render_table(
     payload: TablePayload,
     out_path: Path,
+    visual: str = "table",
 ) -> None:
     """Render a TablePayload to a PNG via Playwright.
 
     Args:
         payload: The validated table payload.
         out_path: Destination PNG path.
+        visual: "table" (default) or "bars".
 
     Raises:
-        RenderError: On any Playwright or rendering failure.
+        RenderError: On any Playwright or rendering failure, or unknown visual.
     """
-    template = _JINJA_ENV.get_template("table_card.html.j2")
+    if visual not in _VISUALS:
+        raise RenderError(f"Unknown visual {visual!r}. Available: {', '.join(_VISUALS)}")
+
+    if visual == "bars":
+        template = _JINJA_ENV.get_template("bar_card.html.j2")
+        extra: dict[str, object] = {"bar_rows": _bar_rows(payload)}
+    else:
+        template = _JINJA_ENV.get_template("table_card.html.j2")
+        extra = {
+            "columns": payload.columns,
+            "rows": payload.rows,
+            "is_projection": False,
+        }
+
     html = template.render(
         title=payload.title,
         subtitle=payload.subtitle,
         as_of=str(payload.as_of),
-        columns=payload.columns,
-        rows=payload.rows,
         highlight_row=payload.highlight_row,
         source=payload.source,
-        is_projection=False,
-        # Token values
-        bg_deep=BG_DEEP,
-        bg_panel=BG_PANEL,
-        gold=GOLD,
-        gold_dim=GOLD_DIM,
-        text_primary=TEXT_PRIMARY,
-        text_secondary=TEXT_SECONDARY,
-        row_alt=ROW_ALT,
-        highlight_bg=HIGHLIGHT_BG,
-        highlight_edge=HIGHLIGHT_EDGE,
-        positive=POSITIVE,
-        negative=NEGATIVE,
-        # Font paths (absolute, for file:// loading — no network at render time)
-        inter_ttf=str(INTER_TTF),
-        barlow_regular_ttf=str(BARLOW_REGULAR_TTF),
-        barlow_semibold_ttf=str(BARLOW_SEMIBOLD_TTF),
-        barlow_bold_ttf=str(BARLOW_BOLD_TTF),
-        xfriars_logo=str(XFRIARS_LOGO_PNG),
+        **extra,
+        **_token_kwargs(),
     )
 
     with tempfile.NamedTemporaryFile(
@@ -139,7 +216,10 @@ def _render_table(
                 viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
                 device_scale_factor=DEVICE_SCALE,
             )
-            page.goto(f"file://{tmp_path}")
+            page.goto(f"file://{tmp_path}", wait_until="domcontentloaded")
+            # D3-rendered templates signal completion via #chart-ready sentinel
+            with contextlib.suppress(Exception):
+                page.wait_for_selector("#chart-ready", timeout=3000)
             page.screenshot(path=str(out_path), full_page=False)
             page.close()
     except RenderError:
@@ -154,6 +234,7 @@ def render(
     facts: TablePayload | SeriesPayload,
     out_dir: Path,
     candidate_id: str,
+    visual: str = "table",
 ) -> Path:
     """Render a facts payload to ``out_dir/<candidate_id>.png``.
 
@@ -163,6 +244,7 @@ def render(
         facts: Validated payload object.
         out_dir: Output directory. Created if absent.
         candidate_id: Used as the output filename stem.
+        visual: Card template type — "table" or "bar".
 
     Returns:
         Path to the rendered PNG.
@@ -174,7 +256,7 @@ def render(
     out_path = out_dir / f"{candidate_id}.png"
 
     if isinstance(facts, TablePayload):
-        _render_table(facts, out_path)
+        _render_table(facts, out_path, visual=visual)
     elif isinstance(facts, SeriesPayload):
         raise RenderError("SeriesPayload rendering not yet implemented (Phase 4)")
     else:

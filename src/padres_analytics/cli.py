@@ -92,7 +92,8 @@ def detect_run(
     import padres_analytics.detect.first_since
     import padres_analytics.detect.historical
     import padres_analytics.detect.leaderboards
-    import padres_analytics.detect.milestones  # noqa: F401
+    import padres_analytics.detect.milestones
+    import padres_analytics.detect.statcast  # noqa: F401
     from padres_analytics.detect.base import all_detectors, emit, get_detector
     from padres_analytics.storage.db import (
         TradesDbNotFoundError,
@@ -383,6 +384,40 @@ def ingest_leaders_cmd(
             raise typer.Exit(ERR) from exc
 
     typer.echo(f"Done. {n} rows written to mlb_leaders.")
+
+
+# ── pad ingest statcast ───────────────────────────────────────────────────────
+
+
+@ingest_app.command("statcast")
+def ingest_statcast_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Fetch Statcast data from Baseball Savant and store in padres.db.
+
+    Refreshes four tables: statcast_batter_percentile_ranks,
+    statcast_batting_expected, statcast_sprint_speed,
+    statcast_batter_exitvelo_barrels.
+    """
+    configure_logging()
+    from padres_analytics.ingest.statcast import ingest_statcast
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting Statcast data for season {ref_season} from Baseball Savant …")
+
+    with connect() as conn:
+        initialize(conn)
+        try:
+            results = ingest_statcast(conn, ref_season)
+        except RuntimeError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    for table, n in results.items():
+        typer.echo(f"  {table}: {n} rows")
+    typer.echo(f"Done. Season {ref_season} Statcast data refreshed.")
 
 
 # ── pad ammo ──────────────────────────────────────────────────────────────────
