@@ -42,6 +42,7 @@ html, body, #root {
   gap: 0;
   background: var(--bg-deep);
   border-bottom: 1px solid var(--hairline-gold);
+  box-shadow: 0 2px 20px rgba(255, 196, 37, 0.05);
   padding: 0 24px;
   height: 52px;
   flex-shrink: 0;
@@ -145,9 +146,10 @@ html, body, #root {
 .list-item:hover { background: rgba(255,255,255,0.03); }
 
 .list-item.selected {
-  background: rgba(255, 196, 37, 0.07);
+  background: rgba(255, 196, 37, 0.09);
   border-left: 3px solid var(--gold);
   padding-left: 13px;
+  box-shadow: inset 0 0 20px rgba(255, 196, 37, 0.04);
 }
 
 .list-item-top {
@@ -173,8 +175,8 @@ html, body, #root {
 .score-badge {
   font-size: 11px;
   font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
@@ -246,12 +248,13 @@ html, body, #root {
 
 .detail-title {
   font-family: "Big Shoulders Display", sans-serif;
-  font-weight: 400;
-  font-size: 34px;
+  font-weight: 900;
+  font-size: 42px;
   color: var(--text-white);
-  letter-spacing: 0.05em;
-  line-height: 1;
-  margin-bottom: 4px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 0.95;
+  margin-bottom: 6px;
 }
 
 .detail-sub {
@@ -329,6 +332,7 @@ html, body, #root {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .fact-key {
@@ -363,6 +367,7 @@ html, body, #root {
   gap: 12px;
   cursor: pointer;
   transition: border-color 0.15s;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .cli-block:hover { border-color: var(--border-strong); }

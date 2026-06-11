@@ -29,15 +29,16 @@ html, body {
   height: 450px;
   display: flex;
   flex-direction: column;
-  background: {{ bg_deep }};
+  background: radial-gradient(ellipse 110% 80% at 30% 0%, #1f1812 0%, #13100c 70%);
   font-family: "Space Grotesk", sans-serif;
   color: {{ text_primary }};
 }
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 .header {
-  padding: 12px 24px 9px;
+  padding: 14px 24px 10px;
   border-bottom: 1px solid rgba(255, 196, 37, 0.35);
+  box-shadow: 0 1px 0 rgba(255, 196, 37, 0.08);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -118,7 +119,7 @@ html, body {
 }
 .handle {
   font-family: "Space Grotesk", sans-serif;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   color: {{ gold }};
   letter-spacing: 0.14em;
@@ -139,7 +140,7 @@ html, body {
 
   <div class="header">
     <div class="header-left">
-      <div class="kicker">San Diego Padres Analytics</div>
+      <div class="kicker">xFriars</div>
       <div class="title">{{ title }}</div>
       {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
     </div>
@@ -169,8 +170,8 @@ html, body {
   const HL_IDX  = {{ highlight_row if highlight_row is not none else -1 }};
 
   const GOLD       = "{{ gold }}";
-  const GOLD_A20   = "rgba(255,196,37,0.20)";
-  const GOLD_A10   = "rgba(255,196,37,0.10)";
+  const GOLD_A20   = "rgba(255,196,37,0.22)";
+  const GOLD_A10   = "rgba(255,196,37,0.15)";
   const TEXT_PRI   = "{{ text_primary }}";
   const TEXT_SEC   = "{{ text_secondary }}";
   const BG_DEEP    = "{{ bg_deep }}";
@@ -190,7 +191,7 @@ html, body {
 
   const n          = DATA.length;
   const rowH       = Math.floor(H / n);
-  const barH       = Math.min(Math.floor(rowH * 0.42), 18);
+  const barH       = Math.min(Math.floor(rowH * 0.46), 20);
   const barRadius  = 3;
 
   // ── D3 scale ──────────────────────────────────────────────────────
@@ -213,9 +214,9 @@ html, body {
     .attr("x1", "0%").attr("y1", "0%")
     .attr("x2", "100%").attr("y2", "0%");
   gradDim.append("stop").attr("offset", "0%")
-    .attr("stop-color", GOLD).attr("stop-opacity", 0.18);
+    .attr("stop-color", GOLD).attr("stop-opacity", 0.22);
   gradDim.append("stop").attr("offset", "100%")
-    .attr("stop-color", GOLD).attr("stop-opacity", 0.32);
+    .attr("stop-color", GOLD).attr("stop-opacity", 0.40);
 
   // Bright bar gradient (highlighted)
   const gradHL = defs.append("linearGradient")
@@ -234,7 +235,7 @@ html, body {
     .attr("width", "120%").attr("height", "260%");
   glow.append("feGaussianBlur")
     .attr("in", "SourceGraphic")
-    .attr("stdDeviation", "4")
+    .attr("stdDeviation", "6")
     .attr("result", "blur");
   const merge = glow.append("feMerge");
   merge.append("feMergeNode").attr("in", "blur");
@@ -344,7 +345,7 @@ html, body {
     .attr("y", Math.floor((rowH - barH) / 2))
     .attr("width", barW)
     .attr("height", barH)
-    .attr("fill", "rgba(255,255,255,0.05)")
+    .attr("fill", "rgba(255,255,255,0.07)")
     .attr("rx", barRadius);
 
   // ── Bar fill ──────────────────────────────────────────────────────
@@ -365,7 +366,7 @@ html, body {
     .attr("text-anchor", "end")
     .attr("font-family", "Space Grotesk, sans-serif")
     .attr("font-weight", (d, i) => i === HL_IDX ? 700 : 500)
-    .attr("font-size", (d, i) => i === HL_IDX ? 16 : 13)
+    .attr("font-size", (d, i) => i === HL_IDX ? 18 : 13)
     .attr("fill", (d, i) => i === HL_IDX ? GOLD : TEXT_SEC)
     .attr("fill-opacity", (d, i) => i === HL_IDX ? 1.0 : 0.75)
     .attr("font-variant-numeric", "tabular-nums")

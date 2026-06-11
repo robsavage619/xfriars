@@ -35,7 +35,7 @@ html, body {
   height: 450px;
   display: flex;
   flex-direction: column;
-  background: {{ bg_deep }};
+  background: radial-gradient(ellipse 110% 80% at 30% 0%, #1f1812 0%, #13100c 70%);
   font-family: "Space Grotesk", sans-serif;
   color: {{ text_primary }};
 }
@@ -43,8 +43,9 @@ html, body {
 /* ── Header ─────────────────────────────────────────────────────────── */
 .header {
   position: relative;
-  padding: 12px 24px 9px;
+  padding: 14px 24px 10px;
   border-bottom: 1px solid rgba(255, 196, 37, 0.35);
+  box-shadow: 0 1px 0 rgba(255, 196, 37, 0.08);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -169,7 +170,7 @@ td {
   padding: 0 6px;
   color: #FFFFFF;
   line-height: 1;
-  height: 29px;
+  height: 34px;
   vertical-align: middle;
 }
 
@@ -203,17 +204,17 @@ td.c-stat {
 tbody tr.highlight {
   background: linear-gradient(
     to right,
-    rgba(255, 196, 37, 0.12) 0%,
-    rgba(255, 196, 37, 0.045) 60%,
+    rgba(255, 196, 37, 0.20) 0%,
+    rgba(255, 196, 37, 0.07) 55%,
     transparent 100%
   ) !important;
 }
 
 /* gold left border via inset shadow — survives border-collapse */
 tbody tr.highlight td.c-rank {
-  box-shadow: inset 3px 0 0 0 {{ gold }};
+  box-shadow: inset 4px 0 0 0 {{ gold }};
   color: #FFFFFF;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 14px;
 }
 
@@ -230,8 +231,9 @@ tbody tr.highlight td.c-team {
 /* hero number: gold + larger */
 tbody tr.highlight td.c-stat {
   color: {{ gold }};
-  font-size: 20px;
+  font-size: 26px;
   font-weight: 700;
+  text-shadow: 0 0 20px rgba(255, 196, 37, 0.35);
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────── */
@@ -256,7 +258,7 @@ tbody tr.highlight td.c-stat {
 
 .handle {
   font-family: "Space Grotesk", sans-serif;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   color: {{ gold }};
   letter-spacing: 0.14em;
@@ -296,7 +298,7 @@ tbody tr.highlight td.c-stat {
 
   <div class="header">
     <div class="header-left">
-      <div class="kicker">San Diego Padres Analytics</div>
+      <div class="kicker">xFriars</div>
       <div class="title">{{ title }}{% if is_projection %}<span class="projection-badge">Projection</span>{% endif %}</div>
       {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}</div>
     <div class="header-right">
