@@ -416,6 +416,52 @@ def ammo(
         typer.echo(f"  {r['claim_scope']} · as_of={r['as_of']}")
 
 
+# ── pad serve ─────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def serve(
+    port: int = typer.Option(7547, "--port", help="API server port."),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes."),
+) -> None:
+    """Start the xFriars Studio API server (FastAPI + uvicorn).
+
+    In dev mode, also start the Vite frontend:
+        cd studio && npm run dev
+    """
+    configure_logging()
+    import subprocess
+    import sys
+
+    from padres_analytics.config import PROJECT_ROOT
+
+    studio_dist = PROJECT_ROOT / "studio" / "dist"
+    if studio_dist.exists():
+        typer.echo(f"Serving built app at http://localhost:{port}/")
+    else:
+        typer.echo(
+            f"API running at http://localhost:{port}/api\n"
+            f"  → For the UI: cd studio && npm install && npm run dev"
+        )
+
+    typer.echo("API docs: http://localhost:{port}/api/docs")
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "padres_analytics.app.api:app",
+        "--port",
+        str(port),
+        "--host",
+        "127.0.0.1",
+    ]
+    if reload:
+        cmd.append("--reload")
+
+    subprocess.run(cmd, check=False)
+
+
 def main() -> None:
     """Entrypoint for the pad CLI."""
     configure_logging(logging.DEBUG if "--verbose" in sys.argv else logging.INFO)

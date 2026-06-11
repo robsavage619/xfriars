@@ -242,6 +242,10 @@ credentials.json
 playwright/.cache/
 playwright-report/
 
+# ── studio (React app) ────────────────────────────────────────────────────────
+studio/node_modules/
+studio/dist/
+
 # macOS
 .DS_Store
 .AppleDouble
