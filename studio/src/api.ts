@@ -75,6 +75,11 @@ export const api = {
   cardUrl: (id: string): string =>
     `${BASE}/candidates/${id}/card.png?t=${Date.now()}`,
 
+  rejectCandidate: (id: string): Promise<{ status: string }> =>
+    fetch(`${BASE}/candidates/${id}/reject`, { method: "POST" }).then((r) =>
+      _json(r),
+    ),
+
   drafts: (status = "pending,verified,approved"): Promise<Draft[]> =>
     fetch(`${BASE}/drafts?status=${status}`).then((r) => _json<Draft[]>(r)),
 

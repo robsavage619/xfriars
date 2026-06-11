@@ -207,6 +207,31 @@ def get_candidate_card(candidate_id: str) -> FileResponse:
     return FileResponse(str(card_path), media_type="image/png")
 
 
+@app.post("/api/candidates/{candidate_id}/reject")
+def reject_candidate(candidate_id: str) -> dict[str, str]:
+    """Reject a new candidate — curation kill switch. Only 'new' can be rejected."""
+    conn = _rw()
+    try:
+        row = conn.execute(
+            "SELECT status FROM stat_candidates WHERE candidate_id = ?",
+            [candidate_id],
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        if row[0] != "new":
+            raise HTTPException(
+                status_code=422,
+                detail=f"Only 'new' candidates can be rejected (status: {row[0]!r})",
+            )
+        conn.execute(
+            "UPDATE stat_candidates SET status = 'rejected' WHERE candidate_id = ?",
+            [candidate_id],
+        )
+        return {"candidate_id": candidate_id, "status": "rejected"}
+    finally:
+        conn.close()
+
+
 # ── Drafts ─────────────────────────────────────────────────────────────────────
 
 
@@ -457,4 +482,16 @@ def explorer_view(view_name: str) -> dict[str, Any]:
 # ── Static files (built React app) ────────────────────────────────────────────
 
 if _STUDIO_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(_STUDIO_DIST), html=True), name="studio")
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_STUDIO_DIST / "assets")),
+        name="studio-assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str) -> FileResponse:
+        """Serve the React app; unknown non-API paths fall back to index.html."""
+        candidate = _STUDIO_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(_STUDIO_DIST / "index.html"))

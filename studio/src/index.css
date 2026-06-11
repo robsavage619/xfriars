@@ -554,3 +554,100 @@ html, body, #root {
   border-top: 1px solid var(--border);
   margin: 20px 0;
 }
+
+/* ── Tweet mock ─────────────────────────────────────────────────────────────── */
+.tweet-mock {
+  max-width: 560px;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.tweet-mock-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tweet-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #000;
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tweet-id { display: flex; flex-direction: column; line-height: 1.25; }
+
+.tweet-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+}
+
+.tweet-handle {
+  font-size: 13px;
+  color: #71767b;
+}
+
+.tweet-text {
+  font-size: 14.5px;
+  color: #e7e9ea;
+  line-height: 1.45;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.tweet-media {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: block;
+}
+
+.tweet-actions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 320px;
+  margin-top: 10px;
+  color: #71767b;
+}
+
+/* ── Keyboard hint bar ──────────────────────────────────────────────────────── */
+.kbd-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 8px 16px;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: flex;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.kbd-bar kbd {
+  font-family: "SF Mono", monospace;
+  font-size: 10px;
+  color: var(--gold);
+  background: rgba(255, 196, 37, 0.08);
+  border: 1px solid rgba(255, 196, 37, 0.25);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 4px;
+}

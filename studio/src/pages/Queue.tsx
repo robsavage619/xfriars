@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import useSWR, { mutate } from "swr";
 import { type Draft, api } from "../api.ts";
+import TweetMock from "../components/TweetMock.tsx";
 
 const STATUS_ORDER: Record<string, number> = {
   approved: 0,
@@ -35,6 +36,7 @@ function DraftDetail({ d }: { d: Draft }) {
     try {
       await api.approveDraft(d.draft_id);
       await mutate("drafts");
+      await mutate("stats");
     } catch (e) {
       alert(String(e));
     } finally {
@@ -48,6 +50,7 @@ function DraftDetail({ d }: { d: Draft }) {
     try {
       await api.rejectDraft(d.draft_id);
       await mutate("drafts");
+      await mutate("stats");
     } catch (e) {
       alert(String(e));
     } finally {
@@ -85,20 +88,15 @@ function DraftDetail({ d }: { d: Draft }) {
         <div className="judgment-box">{d.interesting_judgment}</div>
       )}
 
-      {d.has_card ? (
-        <img
-          src={`/api/candidates/${d.candidate_id}/card.png`}
-          alt="stat card"
-          className="card-preview"
+      <div className="detail-section">
+        <div className="detail-label">Post Preview</div>
+        <TweetMock
+          text={text}
+          imageUrl={
+            d.has_card ? `/api/candidates/${d.candidate_id}/card.png` : null
+          }
         />
-      ) : (
-        <div
-          className="card-placeholder"
-          style={{ aspectRatio: "16/9", marginBottom: 16 }}
-        >
-          <span>Card not available</span>
-        </div>
-      )}
+      </div>
 
       <div className="detail-section">
         <div className="detail-label">Caption</div>
@@ -144,7 +142,11 @@ function DraftDetail({ d }: { d: Draft }) {
           className="btn btn-primary"
           onClick={handleApprove}
           disabled={!canApprove || acting}
-          title={!canApprove ? "Draft must be verified and saved before approving" : ""}
+          title={
+            !canApprove
+              ? "Draft must be verified and saved before approving"
+              : ""
+          }
         >
           {acting ? <span className="spinner" /> : "Approve"}
         </button>
@@ -161,7 +163,11 @@ function DraftDetail({ d }: { d: Draft }) {
 
       {d.status === "approved" && (
         <div
-          style={{ marginTop: 12, fontSize: 12, color: "var(--text-secondary)" }}
+          style={{
+            marginTop: 12,
+            fontSize: 12,
+            color: "var(--text-secondary)",
+          }}
         >
           Ready to post. Run:{" "}
           <code style={{ color: "var(--gold)" }}>
@@ -185,7 +191,36 @@ export default function Queue() {
     (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9),
   );
 
-  const selectedItem = sorted.find((d) => d.draft_id === selected) ?? null;
+  const selectedIdx = sorted.findIndex((d) => d.draft_id === selected);
+  const selectedItem = selectedIdx >= 0 ? sorted[selectedIdx] : null;
+
+  const move = useCallback(
+    (delta: number) => {
+      if (!sorted.length) return;
+      const next =
+        selectedIdx < 0
+          ? 0
+          : Math.min(Math.max(selectedIdx + delta, 0), sorted.length - 1);
+      setSelected(sorted[next].draft_id);
+    },
+    [sorted, selectedIdx],
+  );
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement;
+      if (t.tagName === "TEXTAREA" || t.tagName === "INPUT") return;
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        move(1);
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        move(-1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [move]);
 
   return (
     <div className="split">
@@ -230,6 +265,12 @@ export default function Queue() {
             Run /padres-stat in Claude Code to generate drafts.
           </div>
         )}
+        <div className="kbd-bar">
+          <span>
+            <kbd>J</kbd>
+            <kbd>K</kbd>navigate
+          </span>
+        </div>
       </div>
       <div className="split-detail">
         {selectedItem ? (
