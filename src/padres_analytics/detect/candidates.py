@@ -48,6 +48,69 @@ class SeriesPayload(BaseModel):
     claim_scope: str
 
 
+# ── ChartDataset — typed dataset whose shape selects the visual ─────────────────
+
+SemanticRole = Literal[
+    "dimension",  # categorical key per row (player, team, season-label)
+    "measure",  # a numeric value to encode
+    "distribution",  # population values forming a backdrop (beeswarm/ridgeline)
+    "spatial_x",  # horizontal spatial coord (launch angle, field x)
+    "spatial_y",  # vertical spatial coord (exit velo, field y)
+    "temporal",  # ordered time axis (season, game date, PA index)
+    "categorical",  # secondary grouping / facet
+    "rank",  # integer rank
+    "label",  # display-only string; never numeric-audited
+]
+
+
+class Column(BaseModel):
+    """One column of a ChartDataset, tagged with the role that drives encoding."""
+
+    key: str
+    label: str  # axis/header label rendered on the card
+    role: SemanticRole
+    unit: str | None = None  # "ft/s", "%", "mph"
+    format: str | None = None  # python format spec: ".3f", "d", "pct1"
+    higher_is_better: bool | None = None
+    domain: tuple[float, float] | None = None  # explicit scale → deterministic render
+
+
+class Mark(BaseModel):
+    """A protagonist callout — the row the card should emphasize (the Padre)."""
+
+    row_index: int  # index into ChartDataset.rows
+    label: str  # "Tatis Jr."
+    note: str | None = None  # "95th pct"
+
+
+class ChartDataset(BaseModel):
+    """A verified, role-typed dataset. The card type emerges from its column roles.
+
+    ``model_dump(mode="json")`` is the digit-audit corpus: every renderable number
+    in ``rows``, ``hero``, ``domain``, and ``facts`` lands in the dumped string, so
+    the caption can only cite numbers that originate here. ``framing`` is the
+    engine-selected, already-verified claim string; the caption-writer may use it
+    verbatim but may never upgrade its scope.
+    """
+
+    kind: Literal["dataset"] = "dataset"
+    title: str
+    subtitle: str | None = None
+    as_of: date
+    columns: Annotated[list[Column], Field(min_length=1)]
+    rows: list[list[str | int | float | None]]  # row-major, aligned to columns
+    highlight: list[Mark] = []
+    hero: dict | None = None  # {value, label, context} — the one big number
+    framing: str = ""  # engine-selected, pre-verified claim string
+    population_label: str = ""  # "Qualified MLB hitters, 2026" — for distribution cards
+    n: int | None = None  # sample size, printed when a distribution is shown
+    source: str
+    headline: str  # one-sentence hook for Claude; never rendered on card
+    claim_scope: str
+    card_hint: str | None = None  # selector override ("slider", "beeswarm", ...)
+    facts: dict[str, str | int | float] = {}  # flat audited scalars
+
+
 class StatCandidate(BaseModel):
     """A detector-emitted stat with full provenance."""
 
@@ -79,3 +142,18 @@ def make_candidate_id(detector: str, subject: str | None, facts: dict) -> str:
     """
     payload = f"{detector}|{subject or ''}|{json.dumps(facts, sort_keys=True, default=str)}"
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def audit_corpus(payload: TablePayload | SeriesPayload | ChartDataset) -> str:
+    """Return the canonical JSON string the digit-audit greps against.
+
+    Every renderable number in the payload must appear in this string. Used so the
+    table path and the dataset path share one definition of "the audited corpus".
+
+    Args:
+        payload: A validated payload object.
+
+    Returns:
+        Deterministic JSON string (sorted keys) of the payload dump.
+    """
+    return json.dumps(payload.model_dump(mode="json"), sort_keys=True, default=str)

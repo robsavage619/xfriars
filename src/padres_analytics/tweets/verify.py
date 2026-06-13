@@ -83,16 +83,28 @@ def verify_path_b(
     return result
 
 
+_MAX_DATASET_ROWS = 2000  # distribution backdrops carry the whole population
+
+
 def _sanity_check_facts(facts: dict, checks: list[str]) -> None:
     """Run sanity-range assertions on known fact keys.
 
+    Dispatches on ``facts["kind"]``: a ChartDataset dump is validated structurally
+    (row/column alignment, per-column domain ranges) and its nested ``facts``
+    scalars are range-checked; legacy TablePayload dumps keep their original checks.
+
     Args:
-        facts: The facts_json payload dict (may be a TablePayload dump).
+        facts: The facts_json payload dict (TablePayload or ChartDataset dump).
         checks: Mutable list to append check descriptions to.
 
     Raises:
         VerificationError: If any value is outside its expected range.
     """
+    if facts.get("kind") == "dataset":
+        _sanity_check_dataset(facts, checks)
+        _range_checks(facts.get("facts", {}) or {}, checks)
+        return
+
     # TablePayload sanity checks
     if "rows" in facts:
         rows = facts["rows"]
@@ -117,6 +129,68 @@ def _sanity_check_facts(facts: dict, checks: list[str]) -> None:
             raise VerificationError(f"wins ({wins}) + losses ({losses}) > total_games ({total})")
         checks.append(f"W-L sanity OK ({wins}-{losses} in {total})")
 
+    _range_checks(facts, checks)
+
+
+def _sanity_check_dataset(facts: dict, checks: list[str]) -> None:
+    """Validate ChartDataset structure: row/column alignment and per-column domains.
+
+    Args:
+        facts: A ChartDataset dump (``kind == "dataset"``).
+        checks: Mutable list to append check descriptions to.
+
+    Raises:
+        VerificationError: On shape mismatch or out-of-domain values.
+    """
+    columns = facts.get("columns")
+    rows = facts.get("rows")
+    if not isinstance(columns, list) or not columns:
+        raise VerificationError("dataset facts_json.columns must be a non-empty list")
+    if not isinstance(rows, list):
+        raise VerificationError(f"dataset facts_json.rows must be a list, got {type(rows)}")
+    if len(rows) > _MAX_DATASET_ROWS:
+        raise VerificationError(
+            f"dataset facts_json.rows has {len(rows)} entries; max is {_MAX_DATASET_ROWS}"
+        )
+
+    n_cols = len(columns)
+    for i, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != n_cols:
+            raise VerificationError(
+                f"dataset row {i} has {len(row) if isinstance(row, list) else '?'} cells; "
+                f"expected {n_cols} to match columns"
+            )
+
+    # Per-column domain bounds, when declared
+    for col_idx, col in enumerate(columns):
+        domain = col.get("domain")
+        if not domain:
+            continue
+        lo, hi = float(domain[0]), float(domain[1])
+        for row in rows:
+            cell = row[col_idx]
+            if cell is None or isinstance(cell, str):
+                continue
+            val = float(cell)
+            if not (lo <= val <= hi):
+                raise VerificationError(
+                    f"dataset column {col.get('key', col_idx)!r} value {val} "
+                    f"outside declared domain [{lo}, {hi}]"
+                )
+    checks.append(f"dataset shape OK ({len(rows)} rows x {n_cols} cols)")
+
+
+def _range_checks(facts: dict, checks: list[str]) -> None:
+    """Range-check known scalar stat keys in a flat dict.
+
+    Args:
+        facts: A flat dict of scalar facts (top-level table dump, or a dataset's
+            nested ``facts``).
+        checks: Mutable list to append check descriptions to.
+
+    Raises:
+        VerificationError: If any value is outside its expected range.
+    """
     # Batting average range
     for key in ("batting_avg", "avg", "ba"):
         if key in facts:
