@@ -24,6 +24,8 @@ ingest_app = typer.Typer(help="Ingest data from MLB Stats API and other sources.
 app.add_typer(detect_app, name="detect")
 app.add_typer(draft_app, name="draft")
 app.add_typer(ingest_app, name="ingest")
+scan_app = typer.Typer(help="Generic metric scanner (registry-driven).")
+app.add_typer(scan_app, name="scan")
 
 logger = logging.getLogger(__name__)
 
@@ -468,6 +470,71 @@ def ingest_statcast_cmd(
     for table, n in results.items():
         typer.echo(f"  {table}: {n} rows")
     typer.echo(f"Done. Season {ref_season} Statcast data refreshed.")
+
+
+# ── pad scan ──────────────────────────────────────────────────────────────────
+
+
+@scan_app.command("run")
+def scan_run(
+    as_of: str | None = typer.Option(
+        None, "--date", help="Reference date (YYYY-MM-DD). Defaults to today LA time."
+    ),
+    top_k: int | None = typer.Option(None, "--top-k", help="Override registry top_k."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print candidates without writing to DB."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Print candidates as JSON."),
+) -> None:
+    """Run the generic metric scanner and emit candidates."""
+    configure_logging()
+    import padres_analytics.detect.scanner  # noqa: F401 — triggers registration
+    from padres_analytics.detect.base import emit, get_detector
+    from padres_analytics.detect.registry import load_registry
+    from padres_analytics.storage.db import TradesDbNotFoundError, attach_trades, connect
+
+    ref_date = date.fromisoformat(as_of) if as_of else _la_today()
+    scanner = get_detector("scan")
+
+    try:
+        reg = load_registry()
+    except FileNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    effective_k = top_k if top_k is not None else reg.scan.top_k
+
+    with connect() as conn:
+        try:
+            attach_trades(conn)
+        except TradesDbNotFoundError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+        candidates = scanner.run(conn, ref_date)
+
+        if not candidates:
+            typer.echo("scan: no candidates surfaced.")
+            return
+
+        if output_json:
+            typer.echo(
+                json.dumps([c.model_dump(mode="json") for c in candidates[:effective_k]], indent=2)
+            )
+            return
+
+        typer.echo(f"\nscan: {len(candidates)} candidates (top {effective_k} shown)\n")
+        for c in candidates[:effective_k]:
+            typer.echo(
+                f"  {c.candidate_id[:20]}  score={c.novelty_score:.2f}"
+                f"  {c.detector:8s}  {c.subject}"
+            )
+
+        if not dry_run:
+            n = emit(conn, candidates[:effective_k])
+            typer.echo(f"\n{n} new candidate(s) written.")
+        else:
+            typer.echo("\n[dry-run] no writes.")
 
 
 # ── pad ammo ──────────────────────────────────────────────────────────────────

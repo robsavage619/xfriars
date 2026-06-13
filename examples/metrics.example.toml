@@ -1,0 +1,128 @@
+# Metric registry — public example.
+# Copy to private/metrics.toml and add private metrics and tuned thresholds.
+# Structure mirrors examples/interest_weights.example.toml — private overrides example.
+#
+# Each [[metric]] block describes one scannable stat.
+# Each [population.*] block describes how to fetch the comparison universe.
+# [scan] block controls top-K emission and FDR threshold.
+
+[scan]
+top_k           = 12
+subject_filter  = "padres"
+fdr_alpha       = 0.05   # Benjamini-Hochberg FDR level across the daily test battery
+min_observation_n = 30   # skip lens if fewer population points (guards against tiny samples)
+
+# ── Populations ────────────────────────────────────────────────────────────────
+# The population is the comparison universe for a metric. One population can be
+# shared by multiple metrics; populations are keyed into MetricSpec.population.
+
+[population.qualified_batters_barrels]
+table     = "statcast_batter_exitvelo_barrels"
+id_col    = "player_id"
+name_col  = "player_name"
+value_col = "brl_percent"
+year_col  = "year"
+filter_sql = "attempts >= 100"
+scope     = "mlb"
+
+[population.qualified_sprinters]
+table     = "statcast_sprint_speed"
+id_col    = "player_id"
+name_col  = "player_name"
+value_col = "sprint_speed"
+year_col  = "year"
+filter_sql = "competitive_runs >= 10"
+scope     = "mlb"
+
+[population.qualified_xwoba]
+table     = "statcast_batting_expected"
+id_col    = "player_id"
+name_col  = "player_name"
+value_col = "est_woba"
+year_col  = "year"
+filter_sql = "pa >= 100"
+scope     = "mlb"
+
+# ── Metrics ────────────────────────────────────────────────────────────────────
+# metric_type: rate | counting | differential | ordinal
+#   rate         — both rank and extremeness lenses valid
+#   counting     — only rank/pace lenses valid (no extremeness; playing-time confounded)
+#   differential — derived value (set derived_expr); rank + extremeness valid
+#   ordinal      — rank lens only (percentile ranks, discrete ordinals)
+#
+# distribution: empirical | normal_ok
+#   empirical    — ECDF tail (always safe, required for heavy-tailed or bounded stats)
+#   normal_ok    — parametric z-score approximation (only for unbounded, symmetric dists)
+#
+# stabilization_n — empirical-Bayes shrinkage point; shrink toward 0.5 until n reaches this.
+#   Derived from historical within-season sample accumulation; see Tango/MGL stabilization tables.
+
+[[metric]]
+id          = "barrel_rate"
+label       = "Barrel %"
+table       = "statcast_batter_exitvelo_barrels"
+grain       = "player_season"
+value_col   = "brl_percent"
+id_col      = "player_id"
+name_col    = "player_name"
+year_col    = "year"
+filter_sql  = "attempts >= 100"
+metric_type = "rate"
+direction   = "higher"
+value_format = ".1f"
+unit        = "%"
+park_adjusted = false
+era_indexed   = false
+stabilization_n = 150      # barrel rate stabilizes quickly (~120 PA)
+distribution    = "empirical"
+reference_is_survivor_set = true
+population  = "qualified_batters_barrels"
+coverage    = "since_2015"
+lenses      = ["rank", "extremeness"]
+
+[[metric]]
+id          = "sprint_speed"
+label       = "Sprint Speed"
+table       = "statcast_sprint_speed"
+grain       = "player_season"
+value_col   = "sprint_speed"
+id_col      = "player_id"
+name_col    = "player_name"
+year_col    = "year"
+filter_sql  = "competitive_runs >= 10"
+metric_type = "rate"
+direction   = "higher"
+value_format = ".1f"
+unit        = "ft/s"
+park_adjusted = false
+era_indexed   = false
+stabilization_n = 200
+distribution    = "empirical"
+reference_is_survivor_set = true
+population  = "qualified_sprinters"
+coverage    = "since_2015"
+lenses      = ["rank", "extremeness"]
+
+[[metric]]
+id           = "xwoba_gap"
+label        = "xwOBA-wOBA Gap"
+table        = "statcast_batting_expected"
+grain        = "player_season"
+value_col    = "est_woba"           # base column for provenance; actual value computed by derived_expr
+derived_expr = "ROUND(est_woba - woba, 3)"
+id_col       = "player_id"
+name_col     = "player_name"
+year_col     = "year"
+filter_sql   = "pa >= 100"
+metric_type  = "differential"
+direction    = "higher"             # positive gap = running unlucky; higher = more unlucky
+value_format = "+.3f"
+unit         = ""
+park_adjusted = false
+era_indexed   = false
+stabilization_n = 200
+distribution    = "empirical"
+reference_is_survivor_set = true
+population   = "qualified_xwoba"
+coverage     = "since_2015"
+lenses       = ["rank", "extremeness"]

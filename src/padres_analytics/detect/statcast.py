@@ -25,13 +25,16 @@ from padres_analytics.detect.candidates import (
     make_candidate_id,
 )
 from padres_analytics.detect.scoring import novelty_score
+from padres_analytics.detect.sql import fmt_name as _fmt_name
+from padres_analytics.detect.sql import max_year as _max_year
+from padres_analytics.detect.sql import ordinal as _ordinal
+from padres_analytics.detect.sql import padre_ids as _padre_ids
+from padres_analytics.detect.sql import resolve_table as _tbl
 
 if TYPE_CHECKING:
     import duckdb
 
 logger = logging.getLogger(__name__)
-
-_SD_TEAM_BREF = "SDP"
 
 # Statcast percentile rank columns to include in the player profile card.
 # Tuples: (column_name, display_label)
@@ -50,94 +53,6 @@ _MIN_PROFILE_METRICS = 4  # non-null metrics required to emit a profile card
 _MIN_PA_XSTATS = 100  # plate appearances for xstats gap
 _MIN_COMPETITIVE_RUNS = 10  # sprint speed competitive runs
 _MIN_BARREL_ATTEMPTS = 100  # batted ball attempts for barrel rate
-
-
-# ── Shared helpers ────────────────────────────────────────────────────────────
-
-
-def _fmt_name(raw: str) -> str:
-    """Convert Statcast 'Last, First' format to 'First Last'.
-
-    Args:
-        raw: Raw player name string, possibly 'Last, First'.
-
-    Returns:
-        'First Last' humanized name.
-    """
-    if "," in raw:
-        last, first = raw.split(",", 1)
-        return f"{first.strip()} {last.strip()}"
-    return raw
-
-
-def _ordinal(n: float | int) -> str:
-    """Format a percentile as an ordinal string.
-
-    Args:
-        n: Numeric percentile (0-100).
-
-    Returns:
-        String like '95th', '1st', '42nd'.
-    """
-    i = round(n)
-    if 11 <= i % 100 <= 13:
-        return f"{i}th"
-    return f"{i}{('st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th', 'th')[i % 10]}"
-
-
-def _tbl(conn: duckdb.DuckDBPyConnection, name: str) -> str:
-    """Resolve the qualified table name, preferring main. over hist. when populated.
-
-    Checks main.{name} (padres.db, from ``pad ingest statcast``) first.
-    Falls back to hist.{name} (trades.db read-only attachment).
-
-    Args:
-        conn: Connection with hist attached.
-        name: Unqualified table name.
-
-    Returns:
-        Qualified table reference string (e.g. 'statcast_sprint_speed' or
-        'hist.statcast_sprint_speed').
-    """
-    try:
-        row = conn.execute(f"SELECT MAX(year) FROM {name}").fetchone()
-        if row and row[0] is not None:
-            return name  # main. (unqualified resolves to main schema)
-    except Exception:
-        pass
-    return f"hist.{name}"
-
-
-def _max_year(conn: duckdb.DuckDBPyConnection, table: str) -> int | None:
-    """Return the maximum year value for a Statcast table, checking main. then hist.
-
-    Args:
-        conn: Connection with hist attached.
-        table: Unqualified table name.
-
-    Returns:
-        Maximum year, or None if table is absent in both schemas.
-    """
-    src = _tbl(conn, table)
-    row = conn.execute(f"SELECT MAX(year) FROM {src}").fetchone()
-    return row[0] if row and row[0] is not None else None
-
-
-def _padre_ids(conn: duckdb.DuckDBPyConnection, year: int) -> set[int]:
-    """Return MLBAM IDs for all Padre players in hist.bwar_player_seasons for a given year.
-
-    Args:
-        conn: Connection with hist attached.
-        year: Season year.
-
-    Returns:
-        Set of mlb_id integers on the SDP roster that year.
-    """
-    rows = conn.execute(
-        "SELECT mlb_id FROM hist.bwar_player_seasons WHERE year_id = ? AND team_id = ?",
-        [year, _SD_TEAM_BREF],
-    ).fetchall()
-    return {r[0] for r in rows}
 
 
 def _leaderboard_candidate(
