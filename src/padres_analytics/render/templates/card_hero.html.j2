@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 540px;
+  height: 675px;
+  overflow: hidden;
+  background: {{ bg_deep }};
+}
+
+.card {
+  width: 540px;
+  height: 675px;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(ellipse 120% 65% at 50% -5%, #241a12 0%, #14100c 62%);
+  font-family: "Space Grotesk", sans-serif;
+  color: {{ text_primary }};
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.header {
+  padding: 24px 30px 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.kicker {
+  font-weight: 600;
+  font-size: 13px;
+  color: {{ gold }};
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.logo-img { height: 34px; width: auto; opacity: 0.92; }
+.as-of {
+  font-size: 11px;
+  color: {{ text_secondary }};
+  opacity: 0.65;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Body ───────────────────────────────────────────────────────────── */
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 36px;
+  text-align: center;
+}
+.headshot {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255, 196, 37, 0.55);
+  box-shadow: 0 0 28px rgba(255, 196, 37, 0.22);
+  margin-bottom: 18px;
+  background: {{ bg_panel }};
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 800;
+  font-size: 40px;
+  line-height: 0.96;
+  color: #FFFFFF;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.subtitle {
+  font-size: 13px;
+  color: {{ text_secondary }};
+  margin-top: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.hero-value {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 900;
+  font-size: 168px;
+  line-height: 0.86;
+  color: {{ gold }};
+  letter-spacing: -0.01em;
+  margin: 18px 0 2px;
+  text-shadow: 0 0 36px rgba(255, 196, 37, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+.hero-label {
+  font-weight: 600;
+  font-size: 15px;
+  color: {{ text_primary }};
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.hero-context {
+  font-size: 15px;
+  color: {{ text_secondary }};
+  margin-top: 6px;
+  letter-spacing: 0.04em;
+}
+.framing {
+  margin-top: 26px;
+  padding: 10px 20px;
+  border: 1px solid rgba(255, 196, 37, 0.45);
+  border-radius: 999px;
+  background: rgba(255, 196, 37, 0.06);
+  font-weight: 600;
+  font-size: 15px;
+  color: #FFFFFF;
+  letter-spacing: 0.03em;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 30px 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+}
+.source {
+  font-size: 11px;
+  color: {{ text_secondary }};
+  opacity: 0.55;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.handle {
+  font-size: 17px;
+  font-weight: 700;
+  color: {{ gold }};
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.tagline {
+  font-size: 10px;
+  color: {{ text_secondary }};
+  opacity: 0.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div class="header">
+    <div class="kicker">xFriars</div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="body">
+    {% if hero and hero.photo %}<img class="headshot" src="file://{{ hero.photo }}" alt="">{% endif %}
+    <div class="title">{{ title }}</div>
+    {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    {% if hero %}
+      <div class="hero-value">{{ hero.value }}</div>
+      {% if hero.label %}<div class="hero-label">{{ hero.label }}</div>{% endif %}
+      {% if hero.context %}<div class="hero-context">{{ hero.context }}</div>{% endif %}
+    {% endif %}
+    {% if framing %}<div class="framing">{{ framing }}</div>{% endif %}
+  </div>
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+      <span class="handle">@xFriars</span>
+      <span class="tagline">San Diego Baseball Intelligence</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

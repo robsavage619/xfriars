@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from padres_analytics.detect.candidates import TablePayload
+from padres_analytics.detect.candidates import ChartDataset, TablePayload
 from padres_analytics.render.cards import render
 from padres_analytics.tweets.models import TweetDraft
 from padres_analytics.tweets.verify import (
@@ -103,7 +103,10 @@ def ingest_draft(
         )
 
     # 4 — Render the card
-    if payload_kind == "table":
+    if payload_kind == "dataset":
+        dataset = ChartDataset.model_validate(facts_json)
+        card_path = render(dataset, cards_dir, draft.candidate_id)
+    elif payload_kind == "table":
         payload = TablePayload.model_validate(facts_json)
         card_path = render(payload, cards_dir, draft.candidate_id)
     else:

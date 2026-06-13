@@ -256,6 +256,56 @@ def queue() -> None:
         typer.echo(f"  Caption:  {text[:120]}{'…' if len(text) > 120 else ''}")
 
 
+# ── pad render ────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def render(
+    candidate_id: str = typer.Argument(..., help="Candidate to render a card for."),
+    card: str | None = typer.Option(
+        None, "--card", help="Override dataset card type (e.g. hero, slider)."
+    ),
+    visual: str = typer.Option("table", "--visual", help="Legacy table visual: table|bars."),
+) -> None:
+    """Render a candidate's card to the cards dir (debug / fast iteration)."""
+    configure_logging()
+    from padres_analytics.detect.candidates import ChartDataset, TablePayload
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        row = conn.execute(
+            "SELECT payload_kind, facts_json FROM stat_candidates WHERE candidate_id = ?",
+            [candidate_id],
+        ).fetchone()
+
+    if row is None:
+        typer.echo(f"Error: candidate {candidate_id!r} not found.", err=True)
+        raise typer.Exit(ERR)
+
+    payload_kind, facts_raw = row
+    facts = json.loads(facts_raw) if isinstance(facts_raw, str) else facts_raw
+
+    try:
+        if payload_kind == "dataset":
+            out = render_card(
+                ChartDataset.model_validate(facts), CARDS_DIR, candidate_id, card=card
+            )
+        elif payload_kind == "table":
+            out = render_card(
+                TablePayload.model_validate(facts), CARDS_DIR, candidate_id, visual=visual
+            )
+        else:
+            typer.echo(f"Error: unsupported payload_kind {payload_kind!r}", err=True)
+            raise typer.Exit(ERR)
+    except RenderError as exc:
+        typer.echo(f"Render failed: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered: {out}")
+
+
 # ── pad draft show / approve / reject ─────────────────────────────────────────
 
 

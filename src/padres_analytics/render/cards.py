@@ -1,8 +1,9 @@
-"""Card renderer — Jinja2 → Playwright for tables; matplotlib for series."""
+"""Card renderer — Jinja2 → Playwright for tables and role-typed datasets."""
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import tempfile
 from contextlib import contextmanager
@@ -11,7 +12,8 @@ from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from padres_analytics.detect.candidates import SeriesPayload, TablePayload
+from padres_analytics.detect.candidates import ChartDataset, SeriesPayload, TablePayload
+from padres_analytics.render.select import IMPLEMENTED_CARDS, select_card
 from padres_analytics.render.tokens import (
     BARLOW_BOLD_TTF,
     BARLOW_REGULAR_TTF,
@@ -20,6 +22,8 @@ from padres_analytics.render.tokens import (
     BG_DEEP,
     BG_PANEL,
     BIG_SHOULDERS_TTF,
+    CARD_VIEWPORT_H,
+    CARD_VIEWPORT_W,
     D3_JS,
     DEVICE_SCALE,
     DM_SANS_TTF,
@@ -29,6 +33,7 @@ from padres_analytics.render.tokens import (
     HIGHLIGHT_EDGE,
     INTER_TTF,
     NEGATIVE,
+    PLOT_JS,
     POSITIVE,
     ROW_ALT,
     SPACE_GROTESK_TTF,
@@ -158,6 +163,7 @@ def _token_kwargs() -> dict[str, str]:
         "barlow_bold_ttf": str(BARLOW_BOLD_TTF),
         "xfriars_logo": str(XFRIARS_LOGO_PNG),
         "d3_js": str(D3_JS),
+        "plot_js": str(PLOT_JS),
         "bebas_neue_ttf": str(BEBAS_NEUE_TTF),
         "dm_sans_ttf": str(DM_SANS_TTF),
         "big_shoulders_ttf": str(BIG_SHOULDERS_TTF),
@@ -204,6 +210,25 @@ def _render_table(
         **_token_kwargs(),
     )
 
+    _html_to_png(html, out_path, VIEWPORT_W, VIEWPORT_H)
+
+
+def _html_to_png(html: str, out_path: Path, viewport_w: int, viewport_h: int) -> None:
+    """Screenshot a rendered HTML string to a PNG via headless Chromium.
+
+    The HTML is written to a temp file and loaded over ``file://`` so vendored
+    fonts/JS resolve. Templates using D3/Plot signal completion via the
+    ``#chart-ready`` sentinel; CSS-only cards simply have no sentinel.
+
+    Args:
+        html: Fully rendered HTML.
+        out_path: Destination PNG path.
+        viewport_w: CSS-pixel viewport width (PNG width = this x DEVICE_SCALE).
+        viewport_h: CSS-pixel viewport height.
+
+    Raises:
+        RenderError: On any Playwright failure.
+    """
     with tempfile.NamedTemporaryFile(
         suffix=".html", delete=False, mode="w", encoding="utf-8"
     ) as tmp:
@@ -213,11 +238,11 @@ def _render_table(
     try:
         with _get_browser() as browser:
             page = browser.new_page(
-                viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
+                viewport={"width": viewport_w, "height": viewport_h},
                 device_scale_factor=DEVICE_SCALE,
             )
             page.goto(f"file://{tmp_path}", wait_until="domcontentloaded")
-            # D3-rendered templates signal completion via #chart-ready sentinel
+            # D3/Plot-rendered templates signal completion via #chart-ready sentinel
             with contextlib.suppress(Exception):
                 page.wait_for_selector("#chart-ready", timeout=3000)
             page.screenshot(path=str(out_path), full_page=False)
@@ -230,21 +255,72 @@ def _render_table(
         Path(tmp_path).unlink(missing_ok=True)
 
 
+_CARD_TEMPLATES: dict[str, str] = {
+    "hero": "card_hero.html.j2",
+    "slider": "card_slider.html.j2",
+}
+
+
+def _render_dataset(
+    dataset: ChartDataset,
+    out_path: Path,
+    card: str | None = None,
+) -> str:
+    """Render a ChartDataset to a portrait PNG, picking the card from data shape.
+
+    Args:
+        dataset: The validated, role-typed dataset.
+        out_path: Destination PNG path.
+        card: Explicit card-type override; defaults to the selector's choice.
+
+    Returns:
+        The card type that was rendered.
+
+    Raises:
+        RenderError: If the chosen card has no template yet, or rendering fails.
+    """
+    chosen = card or select_card(dataset)
+    if chosen not in IMPLEMENTED_CARDS or chosen not in _CARD_TEMPLATES:
+        raise RenderError(
+            f"Card type {chosen!r} not renderable yet. "
+            f"Implemented: {', '.join(sorted(_CARD_TEMPLATES))}"
+        )
+
+    template = _JINJA_ENV.get_template(_CARD_TEMPLATES[chosen])
+    html = template.render(
+        title=dataset.title,
+        subtitle=dataset.subtitle,
+        as_of=str(dataset.as_of),
+        source=dataset.source,
+        hero=dataset.hero,
+        framing=dataset.framing,
+        population_label=dataset.population_label,
+        n=dataset.n,
+        dataset=json.dumps(dataset.model_dump(mode="json"), default=str),
+        **_token_kwargs(),
+    )
+
+    _html_to_png(html, out_path, CARD_VIEWPORT_W, CARD_VIEWPORT_H)
+    return chosen
+
+
 def render(
-    facts: TablePayload | SeriesPayload,
+    facts: TablePayload | SeriesPayload | ChartDataset,
     out_dir: Path,
     candidate_id: str,
     visual: str = "table",
+    card: str | None = None,
 ) -> Path:
     """Render a facts payload to ``out_dir/<candidate_id>.png``.
 
-    Same payload → same pixels (deterministic within a Chromium/matplotlib version).
+    Same payload → same pixels (deterministic within a Chromium version).
 
     Args:
         facts: Validated payload object.
         out_dir: Output directory. Created if absent.
         candidate_id: Used as the output filename stem.
-        visual: Card template type — "table" or "bar".
+        visual: Legacy TablePayload card type — "table" or "bars".
+        card: ChartDataset card-type override; defaults to the data-shape selector.
 
     Returns:
         Path to the rendered PNG.
@@ -255,7 +331,9 @@ def render(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{candidate_id}.png"
 
-    if isinstance(facts, TablePayload):
+    if isinstance(facts, ChartDataset):
+        _render_dataset(facts, out_path, card=card)
+    elif isinstance(facts, TablePayload):
         _render_table(facts, out_path, visual=visual)
     elif isinstance(facts, SeriesPayload):
         raise RenderError("SeriesPayload rendering not yet implemented (Phase 4)")
