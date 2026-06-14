@@ -78,7 +78,8 @@ distribution    = "empirical"
 reference_is_survivor_set = true
 population  = "qualified_batters_barrels"
 coverage    = "since_2015"
-lenses      = ["rank", "extremeness"]
+lenses      = ["rank", "extremeness", "milestone_proximity"]
+milestones  = [20.0, 25.0]
 
 [[metric]]
 id          = "sprint_speed"
@@ -101,7 +102,8 @@ distribution    = "empirical"
 reference_is_survivor_set = true
 population  = "qualified_sprinters"
 coverage    = "since_2015"
-lenses      = ["rank", "extremeness"]
+lenses      = ["rank", "extremeness", "milestone_proximity"]
+milestones  = [30.0, 29.0]
 
 [[metric]]
 id           = "xwoba_gap"
@@ -125,4 +127,5 @@ distribution    = "empirical"
 reference_is_survivor_set = true
 population   = "qualified_xwoba"
 coverage     = "since_2015"
-lenses       = ["rank", "extremeness"]
+lenses       = ["rank", "extremeness", "milestone_proximity"]
+milestones   = [0.050]

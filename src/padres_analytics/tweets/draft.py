@@ -15,6 +15,7 @@ from padres_analytics.render.cards import render
 from padres_analytics.tweets.models import TweetDraft
 from padres_analytics.tweets.verify import (
     VerificationError,
+    check_scope_upgrade,
     digit_audit,
     verify_path_a,
     verify_path_b,
@@ -101,6 +102,18 @@ def ingest_draft(
             f"Digit audit failed — these tokens in caption are not in facts_json: "
             f"{offenders}. Every number must originate from the verified payload."
         )
+
+    # 3b — Scope-upgrade guard (dataset payloads only; framing field carries the scope)
+    if facts_json.get("kind") == "dataset":
+        framing = facts_json.get("framing", "")
+        if framing:
+            scope_violations = check_scope_upgrade(framing, draft.text)
+            if scope_violations:
+                raise DraftIngestError(
+                    f"Scope upgrade detected — caption claims a broader scope than the "
+                    f"engine-selected framing: {scope_violations}. Use the framing string "
+                    f"verbatim or narrow the claim."
+                )
 
     # 4 — Render the card
     if payload_kind == "dataset":

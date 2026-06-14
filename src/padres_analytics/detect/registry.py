@@ -51,6 +51,7 @@ class MetricSpec(BaseModel):
     population: str
     coverage: str = "mlb_all"
     lenses: list[str] = Field(default_factory=lambda: ["rank"])
+    milestones: list[float] = Field(default_factory=list)
 
 
 class ScanConfig(BaseModel):

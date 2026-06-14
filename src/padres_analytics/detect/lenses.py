@@ -182,6 +182,63 @@ def pace_lens(
     return LensResult(rarity=rarity, framing=framing, claim_scope=claim_scope, lens="pace")
 
 
+def milestone_proximity_lens(
+    *,
+    focal_value: float,
+    milestone: float,
+    metric_label: str,
+    player_name: str,
+    value_format: str,
+    unit: str,
+    claim_scope: str,
+    proximity_pct: float = 0.10,
+) -> LensResult | None:
+    """'Within N of milestone' lens for counting and rate stats.
+
+    Fires when the player is within ``proximity_pct`` (default 10%) below the
+    threshold and not yet past it — close enough to be notable but not already
+    there (pace_lens handles the 'on pace' angle for counting stats).
+
+    Args:
+        focal_value: The Padre player's current value.
+        milestone: The notable threshold (e.g. 20.0 for barrel rate).
+        metric_label: Display label.
+        player_name: Humanized name.
+        value_format: Python format spec.
+        unit: Unit suffix.
+        claim_scope: Scope tag.
+        proximity_pct: Fraction below milestone that counts as "close".
+
+    Returns:
+        LensResult, or None if not within proximity or already past milestone.
+    """
+    if milestone <= 0:
+        return None
+    distance_pct = (milestone - focal_value) / milestone
+    if not (0.0 < distance_pct <= proximity_pct):
+        return None
+
+    remaining = milestone - focal_value
+    val_str = f"{focal_value:{value_format}}"
+    if unit:
+        val_str = f"{val_str} {unit}"
+    milestone_str = f"{milestone:{value_format}}"
+    if unit:
+        milestone_str = f"{milestone_str} {unit}"
+
+    remaining_str = f"{remaining:{value_format}}"
+    framing = (
+        f"{player_name} is {remaining_str}{' ' + unit if unit else ''} away from "
+        f"{milestone_str} in {metric_label} ({val_str} now)"
+    )
+    # Rarity scales linearly from 0.80 (at 10% away) to 0.95 (almost there)
+    rarity = 0.80 + 0.15 * (1.0 - distance_pct / proximity_pct)
+
+    return LensResult(
+        rarity=rarity, framing=framing, claim_scope=claim_scope, lens="milestone_proximity"
+    )
+
+
 def bh_surviving_indices(rarities: list[float], alpha: float = 0.05) -> set[int]:
     """Return original indices that survive Benjamini-Hochberg FDR correction.
 

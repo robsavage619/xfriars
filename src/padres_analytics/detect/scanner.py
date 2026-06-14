@@ -23,10 +23,12 @@ from padres_analytics.detect.candidates import (
     StatCandidate,
     make_candidate_id,
 )
+from padres_analytics.detect.conjunction import evaluate_franchise_scope, find_conjunctions
 from padres_analytics.detect.lenses import (
     LensResult,
     bh_surviving_indices,
     extremeness_lens,
+    milestone_proximity_lens,
     rank_lens,
 )
 from padres_analytics.detect.registry import MetricSpec, load_registry
@@ -156,6 +158,34 @@ def _run_metric(
                     unit=metric.unit,
                     claim_scope=metric.coverage,
                 )
+
+            elif lens_name == "milestone_proximity":
+                for threshold in metric.milestones:
+                    mlr = milestone_proximity_lens(
+                        focal_value=val,
+                        milestone=threshold,
+                        metric_label=metric.label,
+                        player_name=pname,
+                        value_format=metric.value_format,
+                        unit=metric.unit,
+                        claim_scope=metric.coverage,
+                    )
+                    if mlr is not None:
+                        hits.append(
+                            _Hit(
+                                lens_result=mlr,
+                                metric=metric,
+                                player_id=pid,
+                                player_name=pname,
+                                focal_value=val,
+                                rank=rank,
+                                population_size=pop_size,
+                                leaderboard=rows,
+                                resolved_table=src,
+                                metric_year=year,
+                            )
+                        )
+                continue
 
             else:
                 logger.debug("scan: unknown lens '%s' for metric=%s", lens_name, metric.id)
@@ -362,10 +392,46 @@ class GenericScanner:
             reg.scan.fdr_alpha,
         )
 
+        # Strengthen framing via franchise scope evaluator for surviving hits
+        surviving_hits = [h for i, h in enumerate(all_hits) if i in surviving]
+        for hit in surviving_hits:
+            try:
+                scope = evaluate_franchise_scope(
+                    conn=conn,
+                    metric=hit.metric,
+                    player_id=hit.player_id,
+                    player_name=hit.player_name,
+                    focal_value=hit.focal_value,
+                    year=hit.metric_year,
+                    base_framing=hit.lens_result.framing,
+                )
+                if scope.tier in ("franchise_record", "first_since"):
+                    hit.lens_result = LensResult(
+                        rarity=min(hit.lens_result.rarity + 0.05, 1.0),
+                        framing=scope.framing,
+                        claim_scope=hit.lens_result.claim_scope,
+                        lens=hit.lens_result.lens,
+                    )
+                    logger.debug(
+                        "scan: scope strengthened to %s for %s/%s",
+                        scope.tier,
+                        hit.player_name,
+                        hit.metric.id,
+                    )
+            except Exception as exc:
+                logger.debug("scan: scope eval failed: %s", exc)
+
+        # Log conjunction stories (multi-metric players) for future narrative use
+        conjunctions = find_conjunctions(surviving_hits)
+        if conjunctions:
+            logger.info(
+                "scan: %d conjunction group(s) found: %s",
+                len(conjunctions),
+                [g.combined_framing[:60] for g in conjunctions[:3]],
+            )
+
         candidates: list[StatCandidate] = []
-        for idx, hit in enumerate(all_hits):
-            if idx not in surviving:
-                continue
+        for hit in surviving_hits:
             try:
                 cand = _build_candidate(hit, as_of)
                 candidates.append(cand)

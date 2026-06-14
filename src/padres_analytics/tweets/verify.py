@@ -44,6 +44,10 @@ def verify_path_b(
     A draft flagged single_source=True because there is no second independent
     source to cross-check against (Path A requires two sources — Phase 2+).
 
+    Dataset-kind candidates (payload_kind == "dataset") emit structural provenance
+    (table + metric_id + lens) rather than raw SQL strings, so ``sql`` is not
+    required for those entries.
+
     Args:
         conn: A read-only connection to padres.db with hist attached.
         candidate_id: For logging.
@@ -61,14 +65,27 @@ def verify_path_b(
     # Sanity-range assertions — format-level checks that don't require re-query
     _sanity_check_facts(facts_json, checks)
 
-    # Provenance completeness: every entry must have required fields
+    is_dataset = facts_json.get("kind") == "dataset"
+
+    # Provenance completeness: every entry must have source_table and as_of.
+    # sql is only required for legacy TablePayload provenance (not dataset payloads).
+    required_always = ("source_table", "as_of")
+    required_legacy = ("sql",)
+
     for i, prov in enumerate(provenance_json):
-        for required_key in ("source_table", "sql", "as_of"):
-            if required_key not in prov:
+        for key in required_always:
+            if key not in prov:
                 raise VerificationError(
-                    f"Provenance entry {i} missing required key '{required_key}' "
+                    f"Provenance entry {i} missing required key '{key}' "
                     f"for candidate {candidate_id}"
                 )
+        if not is_dataset:
+            for key in required_legacy:
+                if key not in prov:
+                    raise VerificationError(
+                        f"Provenance entry {i} missing required key '{key}' "
+                        f"for candidate {candidate_id}"
+                    )
         checks.append(
             f"provenance[{i}]: source_table={prov['source_table']}, as_of={prov['as_of']}"
         )
@@ -304,6 +321,64 @@ def verify_path_a(
         "single_source": False,
         "detail": detail,
     }
+
+
+def check_scope_upgrade(framing: str, caption: str) -> list[str]:
+    """Detect scope upgrades: caption claiming broader scope than engine-selected framing.
+
+    The engine selects the strongest *provably true* scope tier and writes it into
+    ChartDataset.framing. The caption-writer (LLM) may use it verbatim but must never
+    promote the claim to a broader scope — e.g. turning "Statcast era" into "ever" or
+    "franchise history" into "MLB history."
+
+    Args:
+        framing: Engine-selected framing string from ChartDataset.framing.
+        caption: LLM-written tweet caption.
+
+    Returns:
+        List of violation descriptions. Empty list means no scope upgrade detected.
+    """
+    framing_lower = framing.lower()
+    caption_lower = caption.lower()
+
+    # Pairs: (framing indicator, forbidden caption phrases)
+    scope_rules: list[tuple[list[str], list[str]]] = [
+        # If framing is scoped to a single season, caption must not claim franchise or wider
+        (
+            ["this season", "current season", "season_best"],
+            [
+                "franchise",
+                "all-time",
+                "all time",
+                "ever",
+                "in history",
+                "statcast era",
+                "since 2015",
+            ],
+        ),
+        # If framing is Statcast-era scoped, caption must not claim all-time / franchise history
+        (
+            ["statcast era", "since 2015", "since_2015"],
+            ["all-time", "all time", "ever", "in history", "in franchise history"],
+        ),
+        # If framing is franchise scoped, caption must not claim MLB-wide all-time
+        (
+            ["franchise record", "franchise history", "best padre"],
+            ["all-time in mlb", "mlb history", "ever in major league", "ever in baseball history"],
+        ),
+    ]
+
+    violations: list[str] = []
+    for scope_markers, forbidden_phrases in scope_rules:
+        if not any(m in framing_lower for m in scope_markers):
+            continue
+        for phrase in forbidden_phrases:
+            if phrase in caption_lower:
+                marker_hit = next(m for m in scope_markers if m in framing_lower)
+                violations.append(
+                    f"Scope upgrade: caption uses '{phrase}' but framing scope is '{marker_hit}'"
+                )
+    return violations
 
 
 def digit_audit(text: str, facts_json: dict | str) -> list[str]:
