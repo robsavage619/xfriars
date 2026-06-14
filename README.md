@@ -4,14 +4,14 @@
 
 <p align="center">
   <b>Engine behind <a href="https://x.com/xFriars">@xFriars</a> — San Diego Padres analytics on X.</b><br/>
-  Franchise history, current-season Statcast leaderboards, crossjoin queries, branded stat cards.
+  Franchise history · Statcast leaderboards · generic scan engine · branded stat cards.
 </p>
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="python 3.12"/></a>
   <a href="https://duckdb.org/"><img src="https://img.shields.io/badge/store-DuckDB-fff100" alt="DuckDB"/></a>
   <a href="studio/"><img src="https://img.shields.io/badge/studio-React%2019-61dafb" alt="React 19"/></a>
-  <a href="src/padres_analytics/storage/schemas.py"><img src="https://img.shields.io/badge/schema-v3-informational" alt="schema v3"/></a>
+  <a href="src/padres_analytics/storage/schemas.py"><img src="https://img.shields.io/badge/schema-v4-informational" alt="schema v4"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT"/></a>
 </p>
 
@@ -32,15 +32,16 @@ The pipeline:
 
 ```
 ingest (MLB API + Baseball Savant → padres.db)
-  → detect (SQL detectors → stat_candidates)
+  → detect / scan (SQL detectors + generic scan engine → stat_candidates)
     → /padres-stat skill (judge + caption → inbox JSON)
-      → pad draft ingest (validate → render PNG → verify)
+      → pad draft ingest (validate → digit audit → scope guard → render PNG → verify)
         → pad queue → pad draft approve → pad post
 ```
 
-Every number that reaches a post card passed through the accuracy regime in
-`src/padres_analytics/detect/base.py`: provenance, coverage-bounded claims,
-and a two-path verification gate.
+Every number that reaches a post card passed through the accuracy regime:
+provenance, coverage-bounded claims, digit audit, and a two-path verification
+gate. The engine selects framing scope; Claude writes voice over it and may
+never upgrade the claim.
 
 ---
 
@@ -53,21 +54,29 @@ and a two-path verification gate.
 - **Coverage-bounded superlatives.** Claims are bounded to the data window that
   supports them (`since 1990`, `since 2015`). Only Baseball Reference WAR
   (1871–present) earns "all-time."
-- **Claude never computes numbers.** Detectors (SQL) compute; Claude writes
-  captions using only numbers present in the verified payload.
+- **Claude never computes numbers.** Detectors and the scan engine (SQL)
+  compute; Claude writes captions using only numbers present in the verified
+  payload.
+- **Engine chooses scope; Claude cannot upgrade it.** The scan engine selects
+  the strongest *provably true* framing tier (franchise record > first since >
+  Statcast era > season best). A scope-upgrade guard in `verify.py` blocks any
+  caption that promotes the claim further.
 - **Padres-anchored, league-aware.** The Padre is always the protagonist; the
   table is league-wide with the Padre row highlighted. Padres-only starves;
   league context gets shared by non-Padres fans.
-- **Fresh data, automatic.** A `_tbl()` resolver in every Statcast detector
-  prefers `main.{table}` (fresh ingest) over the historical attach. Run
-  `pad ingest statcast` and detectors silently upgrade.
+- **Fresh data, automatic.** A `resolve_table()` helper in every Statcast
+  detector and the scan engine prefers `main.{table}` (fresh ingest) over the
+  historical attach. Run `pad ingest statcast` and everything silently upgrades.
 
 ---
 
-## Detectors
+## Detectors + scan engine
 
-Detectors are SQL-first: a Python class wraps a query, validates provenance,
-and emits a `StatCandidate`. They register themselves at import time.
+Two discovery paths run in parallel:
+
+**Bespoke detectors** — SQL-first classes, one per stat. Each wraps a query,
+validates provenance, and emits a `StatCandidate`. They register themselves at
+import time via `detect/base.py`.
 
 | Detector | Type | Fires when |
 |---|---|---|
@@ -82,6 +91,17 @@ and emits a `StatCandidate`. They register themselves at import time.
 | `xstats_unlucky` | Statcast | any Padre in the MLB top 25 for xwOBA − wOBA gap (≥100 PA) |
 | `sprint_speed` | Statcast | any Padre in the MLB top 10 for sprint speed |
 | `barrel_rate` | Statcast | any Padre in the MLB top 10 for barrel rate |
+
+**Generic scan engine** (`pad scan run`) — declarative TOML metric registry
+drives the engine; no per-stat Python required. Each metric declares its
+population, lenses, milestones, and coverage window.
+
+| Layer | What it does |
+|---|---|
+| `detect/registry.py` | Loads `private/metrics.toml` (or `examples/metrics.example.toml`); validates `MetricSpec` / `PopulationSpec` / `ScanConfig` |
+| `detect/lenses.py` | `extremeness` (ECDF + empirical-Bayes shrinkage), `rank` (top-quartile cap), `pace` (milestone countdown), `milestone_proximity` (within 10% of threshold) |
+| `detect/conjunction.py` | Franchise scope evaluator (selects strongest true tier), named-anchor resolver ("first Padre since Gwynn (1997)"), conjunction grouper (multi-metric stories) |
+| `detect/scanner.py` | Iterates registry → lenses → BH FDR correction → scope strengthening → top-K `ChartDataset` candidates |
 
 ---
 
@@ -124,13 +144,14 @@ draft queue, and PNG card preview. `pad studio` launches it.
 ```
 src/padres_analytics/
 ├── app/         # FastAPI Studio backend
-├── detect/      # SQL detectors (base + leaderboards + crossjoin + statcast)
+├── detect/      # SQL detectors + generic scan engine (registry, lenses, conjunction, scanner)
 ├── ingest/      # MLB API, Statcast (Baseball Savant), ingest-run tracking
 ├── render/      # Playwright PNG renderer, Jinja2 templates, D3 bundle, MLB assets
 ├── storage/     # DuckDB schema, connection helpers
-└── tweets/      # Ammo file exporter, draft pipeline
+└── tweets/      # Ammo file exporter, draft pipeline, digit audit, scope guard
 studio/          # React SPA (candidate review + card preview)
-tests/           # pytest suite with snapshot tests
+tests/           # pytest suite (118 tests)
+examples/        # Public metric registry + anchor bank (private/ overrides)
 ```
 
 ---
@@ -147,10 +168,13 @@ uv run pad init                      # create padres.db, apply schema
 uv run pad ingest mlb                # MLB Stats API: schedule, box scores, leaders
 uv run pad ingest statcast           # Baseball Savant: percentile ranks, xStats, sprint, barrels
 
-# Run detectors
+# Run bespoke detectors
 uv run pad detect run statcast_profile    # Statcast tool card for each Padre
 uv run pad detect run xstats_unlucky      # xwOBA luck leaderboard
 uv run pad detect list                    # show all candidates with novelty scores
+
+# Run the generic scan engine
+uv run pad scan run                       # TOML registry → lenses → BH correction → top-K candidates
 
 # Draft and review
 uv run pad ammo                      # export ammo file for /padres-stat skill
