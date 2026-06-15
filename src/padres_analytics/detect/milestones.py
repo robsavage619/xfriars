@@ -7,7 +7,13 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 from padres_analytics.detect.base import register
-from padres_analytics.detect.candidates import StatCandidate, TablePayload, make_candidate_id
+from padres_analytics.detect.candidates import (
+    ChartDataset,
+    Column,
+    StatCandidate,
+    TablePayload,
+    make_candidate_id,
+)
 
 if TYPE_CHECKING:
     import duckdb
@@ -269,14 +275,6 @@ class MilestoneWatchDetector:
                 f"all-time among Padres"
             )
 
-            # Table: window around the chase, capped at _TABLE_ROWS
-            window_start = max(0, rank_0 - 6)
-            window = leaderboard[window_start : window_start + _TABLE_ROWS]
-            table_rows = []
-            for j, (_, p_name, p_war, p_first, p_last) in enumerate(window):
-                era = f"{p_first}-{p_last}" if p_first != p_last else str(p_first)
-                table_rows.append([str(window_start + j + 1), p_name, era, str(p_war)])
-
             novelty = 0.75
             if gap <= 0.5:
                 novelty += 0.15
@@ -289,43 +287,46 @@ class MilestoneWatchDetector:
             coverage = f"{_FRANCHISE_FOUNDED}-{current_yr}"
             claim = f"since_{_FRANCHISE_FOUNDED}"
 
-            payload = TablePayload(
-                title=f"The Chase for {_ordinal(target_rank)} All-Time",
+            # Hero card: the gap is the one big number; the chase is the story.
+            ordinal_rank = _ordinal(target_rank)
+            dataset = ChartDataset(
+                title=name.upper(),
                 subtitle=f"Career WAR as a Padre · through {as_of}",
                 as_of=as_of,
-                columns=["Rank", "Player", "Era", "WAR"],
-                rows=table_rows,
-                highlight_row=rank_0 - window_start,
+                columns=[
+                    Column(key="gap", label="WAR to next rank", role="measure", unit="WAR"),
+                ],
+                rows=[[gap]],
+                hero={
+                    "value": f"{gap}",
+                    "label": f"WAR from {ordinal_rank} all-time",
+                    "context": f"{career_war} WAR · passing {target_name} ({target_war})",
+                },
+                framing=headline,
                 source="Baseball Reference",
                 headline=headline,
                 claim_scope=claim,
+                card_hint="hero",
+                facts={
+                    "padre_player_id": mlb_id,
+                    "player_name": name,
+                    "career_sdp_war": float(career_war),
+                    "target_id": target_id,
+                    "target_name": target_name,
+                    "target_war": float(target_war),
+                    "target_rank": target_rank,
+                    "gap_war": float(gap),
+                },
             )
-
-            facts = {
-                **payload.model_dump(mode="json"),
-                "player_id": mlb_id,
-                "player_name": name,
-                "career_sdp_war": float(career_war),
-                "target_id": target_id,
-                "target_name": target_name,
-                "target_war": float(target_war),
-                "target_rank": target_rank,
-                "gap_war": float(gap),
-            }
 
             prov = [
                 {
-                    "source_table": "hist.bwar_player_seasons",
-                    "sql": (
-                        f"SELECT mlb_id, name_common, SUM(war) FROM hist.bwar_player_seasons "
-                        f"WHERE team_id='{_SD_BREF}' "
-                        f"GROUP BY 1,2 ORDER BY 3 DESC LIMIT {_WATCH_LEADERBOARD_N}"
-                    ),
+                    "source_table": "bwar_player_seasons",
                     "as_of": str(as_of),
                 }
             ]
 
-            cid = make_candidate_id(self.name, subject, facts)
+            cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
 
             candidates.append(
                 StatCandidate(
@@ -334,8 +335,8 @@ class MilestoneWatchDetector:
                     subject=subject,
                     as_of=as_of,
                     category="franchise",
-                    payload_kind="table",
-                    facts_json=facts,
+                    payload_kind="dataset",
+                    facts_json=dataset.model_dump(mode="json"),
                     provenance_json=prov,
                     coverage_window=coverage,
                     claim_scope=claim,
