@@ -813,7 +813,10 @@ class PowerClusterDetector:
 # ── Registration ──────────────────────────────────────────────────────────────
 
 register(StatcastProfileDetector())
-register(XStatsUnluckyDetector())
+# XStatsUnluckyDetector retired: the scan engine's "DUE FOR A BREAKOUT" leaderboard
+# (registry metric xwoba_gap) now owns the xwOBA-luck story with honest regression
+# framing. Keeping the class for reference; no longer registered (avoids duplicate
+# Cronenworth cards the fan panel flagged).
 register(SprintSpeedDetector())
 register(BarrelRateDetector())
 register(PowerClusterDetector())

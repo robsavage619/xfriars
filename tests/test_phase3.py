@@ -208,22 +208,24 @@ def test_franchise_war_emits_active_padres(hist_conn: duckdb.DuckDBPyConnection)
     det = FranchiseWarRankDetector()
     candidates = det.run(hist_conn, date(2026, 6, 9))
 
-    # Both Machado and Tatis are active in 2026 and in franchise top 10
-    assert len(candidates) >= 1
-    subjects = [c.subject or "" for c in candidates]
-    assert any("592518" in s for s in subjects)  # Machado
-    assert any("665487" in s for s in subjects)  # Tatis
+    # One collapsed leaderboard card; both active Padres highlighted on it
+    assert len(candidates) == 1
+    active = candidates[0].facts_json["facts"]["active_leaders"]
+    assert "Manny Machado" in active  # active 2026, franchise top N
+    assert "Fernando Tatis Jr." in active
 
 
 def test_franchise_war_does_not_emit_inactive(hist_conn: duckdb.DuckDBPyConnection) -> None:
     from padres_analytics.detect.milestones import FranchiseWarRankDetector
 
     det = FranchiseWarRankDetector()
-    candidates = det.run(hist_conn, date(2026, 6, 9))
+    c = det.run(hist_conn, date(2026, 6, 9))[0]
 
-    # Gwynn has no 2026 row → not active → should not be emitted
-    subjects = [c.subject or "" for c in candidates]
-    assert not any("100001" in s for s in subjects)
+    # Gwynn is the all-time leader (appears in the leaderboard rows) but is NOT
+    # active in 2026, so he is not highlighted as a current-Padre leader.
+    players = [r[0] for r in c.facts_json["rows"]]
+    assert "Tony Gwynn" in players
+    assert "Tony Gwynn" not in c.facts_json["facts"]["active_leaders"]
 
 
 def test_franchise_war_re_emit_gate(hist_conn: duckdb.DuckDBPyConnection) -> None:

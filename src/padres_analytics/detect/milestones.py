@@ -10,8 +10,8 @@ from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
+    Mark,
     StatCandidate,
-    TablePayload,
     make_candidate_id,
 )
 
@@ -103,100 +103,86 @@ class FranchiseWarRankDetector:
         current_yr = _current_season(conn)
         active_ids = _active_padre_ids(conn, current_yr)
 
-        table_rows = []
-        for i, (_, name, war, first_yr, last_yr) in enumerate(leaderboard):
-            era = f"{first_yr}-{last_yr}" if first_yr != last_yr else str(first_yr)
-            table_rows.append([str(i + 1), name, era, str(war)])
+        subject = "SDP|franchise_war_leaders"
+        if _recently_emitted(conn, subject, as_of):
+            logger.debug("franchise_war_rank: skipping — emitted recently")
+            return []
 
-        candidates: list[StatCandidate] = []
+        top = leaderboard[:_TABLE_ROWS]
+        # Active Padres currently on the all-time list (their rank within the top N).
+        active = [
+            (i, name, float(war))
+            for i, (mlb_id, name, war, _f, _l) in enumerate(top)
+            if mlb_id in active_ids and i < _ACTIVE_TOP_N
+        ]
+        if not active:
+            return []
 
-        for rank_0, (mlb_id, name, career_war, _first_yr, _last_yr) in enumerate(leaderboard):
-            if rank_0 >= _ACTIVE_TOP_N:
-                break
-            if mlb_id not in active_ids:
-                continue
+        rows: list[list[str | int | float | None]] = [
+            [name, round(float(war), 1)] for (_, name, war, _f, _l) in top
+        ]
+        highlights = [Mark(row_index=i, label=name) for (i, name, _w) in active]
 
-            rank = rank_0 + 1
-            subject = f"SDP|franchise_war|{mlb_id}"
-            if _recently_emitted(conn, subject, as_of):
-                logger.debug("franchise_war_rank: skipping %s — emitted recently", name)
-                continue
+        lead_i, lead_name, lead_war = active[0]
+        lead_rank = lead_i + 1
+        extra = ""
+        if len(active) > 1:
+            extra = "; also " + ", ".join(f"{n} ({_ordinal(i + 1)})" for (i, n, _w) in active[1:])
+        headline = (
+            f"{lead_name} is {_ordinal(lead_rank)} all-time in Padres franchise WAR "
+            f"({lead_war} WAR){extra}"
+        )
 
-            # Gap to the player ranked one above
-            gap_clause = ""
-            if rank_0 > 0:
-                above_name = leaderboard[rank_0 - 1][1]
-                above_war = leaderboard[rank_0 - 1][2]
-                gap = round(above_war - career_war, 1)
-                if gap > 0:
-                    gap_clause = f", {gap} behind {above_name}"
+        novelty = _NOVELTY_BASE
+        if lead_rank <= 5:
+            novelty += _NOVELTY_TOP5_BONUS
+        novelty = min(novelty, 0.95)
 
-            headline = (
-                f"{name} is {_ordinal(rank)} all-time in Padres franchise WAR "
-                f"({career_war} WAR as a Padre{gap_clause})"
-            )
+        coverage = f"{_FRANCHISE_FOUNDED}-{current_yr}"
+        claim = f"since_{_FRANCHISE_FOUNDED}"
 
-            novelty = _NOVELTY_BASE
-            if rank <= 5:
-                novelty += _NOVELTY_TOP5_BONUS
-            if rank_0 > 0 and (leaderboard[rank_0 - 1][2] - career_war) < 1.0:
-                novelty += _NOVELTY_CLOSE_BONUS
-            novelty = min(novelty, 0.95)
+        dataset = ChartDataset(
+            title="PADRES ALL-TIME WAR LEADERS",
+            subtitle=f"Career WAR as a Padre · through {as_of}",
+            as_of=as_of,
+            columns=[
+                Column(key="player", label="Player", role="dimension"),
+                Column(key="war", label="WAR", role="measure", format=".1f", higher_is_better=True),
+            ],
+            rows=rows,
+            highlight=highlights,
+            framing=headline,
+            source="Baseball Reference",
+            headline=headline,
+            claim_scope=claim,
+            population_label=f"Padres franchise, {_FRANCHISE_FOUNDED}-{current_yr}",
+            card_hint="bar",
+            facts={
+                "lead_player": lead_name,
+                "lead_rank": lead_rank,
+                "lead_war": lead_war,
+                "active_leaders": ", ".join(n for (_i, n, _w) in active),
+                "active_count": len(active),
+            },
+        )
 
-            coverage = f"{_FRANCHISE_FOUNDED}-{current_yr}"
-            claim = f"since_{_FRANCHISE_FOUNDED}"
+        cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
 
-            payload = TablePayload(
-                title="Padres All-Time WAR Leaders",
-                subtitle=f"Career WAR as a Padre · through {as_of}",
+        return [
+            StatCandidate(
+                candidate_id=cid,
+                detector=self.name,
+                subject=subject,
                 as_of=as_of,
-                columns=["Rank", "Player", "Era", "WAR"],
-                rows=table_rows,
-                highlight_row=rank_0,
-                source="Baseball Reference",
-                headline=headline,
+                category="franchise",
+                payload_kind="dataset",
+                facts_json=dataset.model_dump(mode="json"),
+                provenance_json=[{"source_table": "bwar_player_seasons", "as_of": str(as_of)}],
+                coverage_window=coverage,
                 claim_scope=claim,
+                novelty_score=novelty,
             )
-
-            facts = {
-                **payload.model_dump(mode="json"),
-                "player_id": mlb_id,
-                "player_name": name,
-                "career_sdp_war": float(career_war),
-                "franchise_rank": rank,
-            }
-
-            prov = [
-                {
-                    "source_table": "hist.bwar_player_seasons",
-                    "sql": (
-                        f"SELECT mlb_id, name_common, SUM(war) FROM hist.bwar_player_seasons "
-                        f"WHERE team_id='{_SD_BREF}' "
-                        f"GROUP BY 1,2 ORDER BY 3 DESC LIMIT {_TABLE_ROWS}"
-                    ),
-                    "as_of": str(as_of),
-                }
-            ]
-
-            cid = make_candidate_id(self.name, subject, facts)
-
-            candidates.append(
-                StatCandidate(
-                    candidate_id=cid,
-                    detector=self.name,
-                    subject=subject,
-                    as_of=as_of,
-                    category="franchise",
-                    payload_kind="table",
-                    facts_json=facts,
-                    provenance_json=prov,
-                    coverage_window=coverage,
-                    claim_scope=claim,
-                    novelty_score=novelty,
-                )
-            )
-
-        return candidates
+        ]
 
 
 _WATCH_GAP_MAX = 2.5  # fire only when within this many WAR of the next rank up

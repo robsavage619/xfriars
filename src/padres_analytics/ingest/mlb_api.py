@@ -276,8 +276,109 @@ class MlbStatsClient:
         )
         return rows
 
+    # ── Standings ─────────────────────────────────────────────────────────
+
+    def standings(self, season: int) -> list[dict[str, Any]]:
+        """Fetch regular-season standings for all 30 teams.
+
+        Args:
+            season: 4-digit year.
+
+        Returns:
+            List of dicts: team_id, team_abbr, team_name, division_id, wins,
+            losses, win_pct, games_back.
+        """
+        results: list[dict[str, Any]] = []
+        for league_id in (103, 104):  # AL, NL
+            data = self._get(
+                "standings",
+                leagueId=league_id,
+                season=season,
+                standingsTypes="regularSeason",
+            )
+            for rec in data.get("records", []):
+                division_id = (rec.get("division") or {}).get("id")
+                for t in rec.get("teamRecords", []):
+                    team = t.get("team") or {}
+                    results.append(
+                        {
+                            "team_id": team.get("id"),
+                            "team_abbr": team.get("abbreviation"),
+                            "team_name": team.get("name"),
+                            "division_id": division_id,
+                            "wins": t.get("wins"),
+                            "losses": t.get("losses"),
+                            "win_pct": float(t.get("winningPercentage", 0.0) or 0.0),
+                            "games_back": t.get("gamesBack"),
+                        }
+                    )
+        logger.info("standings: season=%d returned %d teams", season, len(results))
+        return results
+
 
 # ── DB-writing ingest functions ───────────────────────────────────────────────
+
+
+def ingest_standings(conn: duckdb.DuckDBPyConnection, season: int) -> int:
+    """Fetch live MLB standings and write them to main.standings.
+
+    Creates the table if absent and replaces the season snapshot. The standings
+    detector prefers this fresh main.standings over the simulated hist.standings.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: 4-digit year.
+
+    Returns:
+        Rows written.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS standings (
+            team_id     INTEGER NOT NULL,
+            team_abbr   VARCHAR,
+            team_name   VARCHAR,
+            division_id INTEGER,
+            season      INTEGER NOT NULL,
+            wins        INTEGER,
+            losses      INTEGER,
+            win_pct     DOUBLE,
+            games_back  VARCHAR,
+            source      VARCHAR,
+            ingested_at TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (team_id, season)
+        )
+        """
+    )
+    source = f"mlb-stats-api/standings/{season}"
+    with record_run(conn, source) as _run:
+        with MlbStatsClient() as client:
+            teams = client.standings(season)
+        conn.execute("DELETE FROM standings WHERE season = ?", [season])
+        for t in teams:
+            conn.execute(
+                """
+                INSERT INTO standings
+                    (team_id, team_abbr, team_name, division_id, season,
+                     wins, losses, win_pct, games_back, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                [
+                    t["team_id"],
+                    t["team_abbr"],
+                    t["team_name"],
+                    t["division_id"],
+                    season,
+                    t["wins"],
+                    t["losses"],
+                    t["win_pct"],
+                    str(t["games_back"]),
+                    source,
+                ],
+            )
+    logger.info("ingest_standings: season=%d wrote %d teams", season, len(teams))
+    return len(teams)
 
 
 def ingest_leaders(

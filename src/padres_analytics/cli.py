@@ -95,6 +95,7 @@ def detect_run(
     import padres_analytics.detect.historical
     import padres_analytics.detect.leaderboards
     import padres_analytics.detect.milestones
+    import padres_analytics.detect.standings
     import padres_analytics.detect.statcast  # noqa: F401
     from padres_analytics.detect.base import all_detectors, emit, get_detector
     from padres_analytics.storage.db import (
@@ -470,6 +471,35 @@ def ingest_statcast_cmd(
     for table, n in results.items():
         typer.echo(f"  {table}: {n} rows")
     typer.echo(f"Done. Season {ref_season} Statcast data refreshed.")
+
+
+# ── pad ingest standings ──────────────────────────────────────────────────────
+
+
+@ingest_app.command("standings")
+def ingest_standings_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Fetch live MLB standings from the Stats API into main.standings.
+
+    The nl_west_race detector prefers this fresh snapshot over the simulated
+    hist.standings, so the division race reflects the real season.
+    """
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_standings
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting MLB standings for season {ref_season} …")
+
+    with connect() as conn:
+        try:
+            n = ingest_standings(conn, ref_season)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} teams written to main.standings.")
 
 
 # ── pad scan ──────────────────────────────────────────────────────────────────
