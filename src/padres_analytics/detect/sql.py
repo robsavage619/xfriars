@@ -26,7 +26,8 @@ def ordinal(n: float | int) -> str:
     i = round(n)
     if 11 <= i % 100 <= 13:
         return f"{i}th"
-    return f"{i}{('st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th', 'th')[i % 10]}"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(i % 10, "th")
+    return f"{i}{suffix}"
 
 
 def resolve_table(conn: duckdb.DuckDBPyConnection, name: str) -> str:

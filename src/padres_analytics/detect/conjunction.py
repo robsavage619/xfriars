@@ -201,10 +201,30 @@ def _franchise_record_framing(player_name: str, value: float, metric: MetricSpec
     val_str = f"{value:{metric.value_format}}"
     if metric.unit:
         val_str = f"{val_str} {metric.unit}"
-    return (
-        f"{player_name} is the best Padre in the {metric.coverage.replace('_', ' ')} "
-        f"in {metric.label} ({val_str})"
-    )
+    scope = _coverage_phrase(metric.coverage)
+    return f"{player_name} has the best {metric.label} of any Padre {scope} ({val_str})"
+
+
+def _coverage_phrase(coverage: str) -> str:
+    """Render a coverage tag into clean prose (e.g. 'since_2015' -> 'since 2015').
+
+    Args:
+        coverage: A metric coverage tag.
+
+    Returns:
+        Human-readable scope phrase, never starting with a dangling article.
+    """
+    mapping = {
+        "since_2015": "in the Statcast era (since 2015)",
+        "statcast_era": "in the Statcast era",
+        "franchise_1969": "in franchise history",
+        "mlb_all": "",
+    }
+    if coverage in mapping:
+        return mapping[coverage]
+    if coverage.startswith("since_"):
+        return f"since {coverage.removeprefix('since_')}"
+    return coverage.replace("_", " ")
 
 
 def _first_since_framing(

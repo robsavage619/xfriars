@@ -103,7 +103,8 @@ def test_scope_franchise_record_beats_prior() -> None:
     metric = _make_metric()
     result = evaluate_franchise_scope(conn, metric, 1001, "Fernando Tatis Jr.", 22.5, 2024, "base")
     assert result.tier == "franchise_record"
-    assert "best Padre" in result.framing
+    assert "of any Padre" in result.framing
+    assert "in the since" not in result.framing  # regression: grammar leak
 
 
 def test_scope_first_since() -> None:
