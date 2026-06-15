@@ -102,6 +102,8 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ bg_de
   const f = d3.format(fmt);
 
   const hl = new Set((DS.highlight || []).map(m => m.row_index));
+  // Rank prefix ("1. ") only when row order is a true ranking (opt out via facts._no_rank).
+  const showRank = !(DS.facts && DS.facts._no_rank);
   const data = DS.rows.map((r, i) => ({
     label: String(r[dimIdx]), value: +r[valIdx], rank: i + 1, hot: hl.size ? hl.has(i) : true,
   })).filter(d => Number.isFinite(d.value));
@@ -139,7 +141,7 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ bg_de
     .attr("font-family", "Space Grotesk, sans-serif").attr("font-size", 14)
     .attr("font-weight", d => d.hot ? 700 : 500)
     .attr("fill", d => d.hot ? "#FFFFFF" : TEXTP).attr("fill-opacity", d => d.hot ? 1 : 0.7)
-    .text(d => `${d.rank}. ${d.label}`);
+    .text(d => showRank ? `${d.rank}. ${d.label}` : d.label);
 
   // Bar track
   rows.append("rect")
