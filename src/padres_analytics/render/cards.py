@@ -261,6 +261,37 @@ _CARD_TEMPLATES: dict[str, str] = {
 }
 
 
+_PLAYER_ID_KEYS = ("padre_player_id", "player_id", "subject_id")
+
+
+def _resolve_headshot(dataset: ChartDataset) -> str | None:
+    """Resolve an absolute headshot path from the dataset's audited player id.
+
+    Looks through the dataset's flat ``facts`` for a known player-id key and
+    downloads/caches the MLB headshot. Returns None when no id is present or the
+    fetch fails — the templates degrade gracefully to no photo.
+
+    Args:
+        dataset: The dataset being rendered.
+
+    Returns:
+        Absolute filesystem path to the headshot PNG, or None.
+    """
+    from padres_analytics.render.mlb_assets import player_photo_path
+
+    facts = dataset.facts or {}
+    for key in _PLAYER_ID_KEYS:
+        raw = facts.get(key)
+        if raw is None:
+            continue
+        try:
+            path = player_photo_path(int(raw))
+        except (ValueError, TypeError):
+            return None
+        return str(path) if path else None
+    return None
+
+
 def _render_dataset(
     dataset: ChartDataset,
     out_path: Path,
@@ -286,13 +317,20 @@ def _render_dataset(
             f"Implemented: {', '.join(sorted(_CARD_TEMPLATES))}"
         )
 
+    # Resolve the protagonist's headshot from the audited player id, if any.
+    photo = _resolve_headshot(dataset)
+    hero = dict(dataset.hero) if dataset.hero else None
+    if hero is not None and photo and not hero.get("photo"):
+        hero["photo"] = photo
+
     template = _JINJA_ENV.get_template(_CARD_TEMPLATES[chosen])
     html = template.render(
         title=dataset.title,
         subtitle=dataset.subtitle,
         as_of=str(dataset.as_of),
         source=dataset.source,
-        hero=dataset.hero,
+        hero=hero,
+        photo=photo,
         framing=dataset.framing,
         population_label=dataset.population_label,
         n=dataset.n,

@@ -38,9 +38,17 @@ html, body {
   padding: 24px 30px 14px;
   border-bottom: 1px solid rgba(255, 196, 37, 0.30);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
+}
+.header-left { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.headshot {
+  width: 76px; height: 76px; border-radius: 50%; object-fit: cover;
+  object-position: top center;
+  border: 2px solid rgba(255, 196, 37, 0.55);
+  box-shadow: 0 0 18px rgba(255, 196, 37, 0.20);
+  background: {{ bg_panel }}; flex-shrink: 0;
 }
 .kicker {
   font-weight: 600; font-size: 12px; color: {{ gold }};
@@ -78,9 +86,12 @@ html, body {
 
   <div class="header">
     <div class="header-left">
-      <div class="kicker">xFriars · Statcast</div>
-      <div class="title">{{ title }}</div>
-      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+      {% if photo %}<img class="headshot" src="file://{{ photo }}" alt="">{% endif %}
+      <div>
+        <div class="kicker">San Diego Padres · Statcast</div>
+        <div class="title">{{ title }}</div>
+        {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+      </div>
     </div>
     <div class="header-right">
       <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
@@ -119,6 +130,13 @@ html, body {
     return i + (["th","st","nd","rd","th","th","th","th","th","th"][i % 10]);
   };
 
+  // Baseball Savant percentile ramp: cold blue (low) → neutral gray → hot red (elite).
+  // Percentiles already encode good-direction, so high percentile = red regardless of stat.
+  const savant = d3.scaleLinear()
+    .domain([0, 50, 100])
+    .range(["#3b6bb5", "#9a9a9a", "#d22d49"])
+    .clamp(true);
+
   const container = document.getElementById("chart-area");
   const W = container.offsetWidth  || 540;
   const H = container.offsetHeight || 480;
@@ -136,10 +154,6 @@ html, body {
   const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
 
   const defs = svg.append("defs");
-  const grad = defs.append("linearGradient").attr("id", "fill")
-    .attr("x1", "0%").attr("y1", "0%").attr("x2", "100%").attr("y2", "0%");
-  grad.append("stop").attr("offset", "0%").attr("stop-color", GOLD).attr("stop-opacity", 0.20);
-  grad.append("stop").attr("offset", "100%").attr("stop-color", GOLD).attr("stop-opacity", 0.85);
   const glow = defs.append("filter").attr("id", "glow")
     .attr("x", "-80%").attr("y", "-80%").attr("width", "260%").attr("height", "260%");
   glow.append("feGaussianBlur").attr("in", "SourceGraphic").attr("stdDeviation", "4").attr("result", "b");
@@ -171,22 +185,22 @@ html, body {
     .attr("x1", x(50)).attr("x2", x(50)).attr("y1", cy - 10).attr("y2", cy + 10)
     .attr("stroke", "rgba(255,255,255,0.18)").attr("stroke-width", 1).attr("stroke-dasharray", "2 2");
 
-  // Filled portion
+  // Filled portion — colored by Savant percentile ramp
   rows.append("rect")
     .attr("x", trackX).attr("y", cy - 4)
     .attr("width", d => Math.max(x(d.pct) - trackX, 2)).attr("height", 8)
-    .attr("rx", 4).attr("fill", "url(#fill)");
+    .attr("rx", 4).attr("fill", d => savant(d.pct)).attr("fill-opacity", 0.85);
 
   // Thumb dot
   rows.append("circle")
     .attr("cx", d => x(d.pct)).attr("cy", cy).attr("r", dotR)
-    .attr("fill", GOLD).attr("filter", "url(#glow)");
+    .attr("fill", d => savant(d.pct)).attr("filter", "url(#glow)");
 
   // Percentile value
   rows.append("text")
     .attr("x", W - padR).attr("y", cy).attr("dy", "0.35em").attr("text-anchor", "end")
     .attr("font-family", "Space Grotesk, sans-serif")
-    .attr("font-size", 15).attr("font-weight", 700).attr("fill", GOLD)
+    .attr("font-size", 15).attr("font-weight", 700).attr("fill", d => savant(d.pct))
     .attr("font-variant-numeric", "tabular-nums")
     .text(d => ordinal(d.pct));
 

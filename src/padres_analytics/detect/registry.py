@@ -61,6 +61,10 @@ class ScanConfig(BaseModel):
     subject_filter: str = "padres"
     fdr_alpha: float = 0.05
     min_observation_n: int = 30
+    min_rarity: float = 0.85
+    """Rarity floor for surfacing a hit. The daily battery is ranked effect sizes,
+    not independent significance tests, so a floor + the Studio human kill-switch
+    guard against noise. BH FDR (fdr_alpha) is retained for opt-in strict mode."""
 
 
 class Registry(BaseModel):

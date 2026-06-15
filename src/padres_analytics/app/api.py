@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from padres_analytics.config import CARDS_DIR, DUCKDB_PATH
-from padres_analytics.detect.candidates import TablePayload
+from padres_analytics.detect.candidates import ChartDataset, TablePayload
 from padres_analytics.render.cards import RenderError, render
 from padres_analytics.render.mlb_assets import (
     BREF_TO_MLBAM,
@@ -172,10 +172,15 @@ def list_candidates(status: str = "new") -> list[dict[str, Any]]:
 
 
 @app.post("/api/candidates/{candidate_id}/render")
-async def render_candidate_card(candidate_id: str, visual: str = "table") -> dict[str, str]:
+async def render_candidate_card(
+    candidate_id: str, visual: str = "table", card: str | None = None
+) -> dict[str, str]:
     """Render a card PNG for a candidate (idempotent — overwrites existing).
 
-    Query param ``visual``: "table" (default) or "bars".
+    Query params:
+        visual: legacy TablePayload card type — "table" (default) or "bars".
+        card: ChartDataset card-type override; defaults to the data-shape selector.
+
     Playwright runs in a thread pool to avoid greenlet conflicts.
     """
     import asyncio
@@ -195,13 +200,18 @@ async def render_candidate_card(candidate_id: str, visual: str = "table") -> dic
     facts_raw, payload_kind = row
     facts: dict[str, Any] = json.loads(facts_raw) if isinstance(facts_raw, str) else facts_raw
 
-    if payload_kind != "table":
-        raise HTTPException(status_code=422, detail=f"Cannot render payload_kind={payload_kind!r}")
-
     try:
-        payload = TablePayload.model_validate(facts)
-        card_path = await asyncio.to_thread(render, payload, CARDS_DIR, candidate_id, visual)
-        return {"card_path": str(card_path), "visual": visual}
+        if payload_kind == "dataset":
+            dataset = ChartDataset.model_validate(facts)
+            card_path = await asyncio.to_thread(
+                render, dataset, CARDS_DIR, candidate_id, "table", card
+            )
+            return {"card_path": str(card_path), "visual": card or "auto"}
+        if payload_kind == "table":
+            payload = TablePayload.model_validate(facts)
+            card_path = await asyncio.to_thread(render, payload, CARDS_DIR, candidate_id, visual)
+            return {"card_path": str(card_path), "visual": visual}
+        raise HTTPException(status_code=422, detail=f"Cannot render payload_kind={payload_kind!r}")
     except RenderError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

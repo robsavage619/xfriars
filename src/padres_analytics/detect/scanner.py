@@ -26,7 +26,6 @@ from padres_analytics.detect.candidates import (
 from padres_analytics.detect.conjunction import evaluate_franchise_scope, find_conjunctions
 from padres_analytics.detect.lenses import (
     LensResult,
-    bh_surviving_indices,
     extremeness_lens,
     milestone_proximity_lens,
     rank_lens,
@@ -383,17 +382,25 @@ class GenericScanner:
         if not all_hits:
             return []
 
-        rarities = [h.lens_result.rarity for h in all_hits]
-        surviving = bh_surviving_indices(rarities, reg.scan.fdr_alpha)
+        # Gate: rarity floor, then dedup to the strongest hit per (player, metric, lens).
+        # The daily battery is ranked effect sizes, not independent significance tests,
+        # so BH FDR strangled everything; the floor + Studio human review guard noise.
+        floored = [h for h in all_hits if h.lens_result.rarity >= reg.scan.min_rarity]
+        best: dict[tuple[int, str, str], _Hit] = {}
+        for h in floored:
+            key = (h.player_id, h.metric.id, h.lens_result.lens)
+            if key not in best or h.lens_result.rarity > best[key].lens_result.rarity:
+                best[key] = h
+        surviving_hits = list(best.values())
         logger.info(
-            "scan: %d total hits, %d survive BH (alpha=%.2f)",
+            "scan: %d total hits, %d above floor=%.2f, %d after dedup",
             len(all_hits),
-            len(surviving),
-            reg.scan.fdr_alpha,
+            len(floored),
+            reg.scan.min_rarity,
+            len(surviving_hits),
         )
 
         # Strengthen framing via franchise scope evaluator for surviving hits
-        surviving_hits = [h for i, h in enumerate(all_hits) if i in surviving]
         for hit in surviving_hits:
             try:
                 scope = evaluate_franchise_scope(

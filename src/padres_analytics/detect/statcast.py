@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
+    ChartDataset,
+    Column,
     StatCandidate,
     TablePayload,
     make_candidate_id,
@@ -41,11 +43,11 @@ logger = logging.getLogger(__name__)
 # All columns are "higher = better" percentile ranks (0-100).
 _PROFILE_METRICS: list[tuple[str, str]] = [
     ("xwoba", "xwOBA"),
-    ("exit_velocity", "EXIT VELO"),
-    ("brl_percent", "BARREL %"),
-    ("hard_hit_percent", "HARD HIT %"),
-    ("sprint_speed", "SPRINT SPD"),
-    ("k_percent", "K-CONTROL"),
+    ("exit_velocity", "Exit Velo"),
+    ("brl_percent", "Barrel %"),
+    ("hard_hit_percent", "Hard Hit %"),
+    ("sprint_speed", "Sprint Speed"),
+    ("k_percent", "K-Control"),
 ]
 
 # Minimum qualifying thresholds
@@ -278,9 +280,6 @@ class StatcastProfileDetector:
             if len(valid) < _MIN_PROFILE_METRICS:
                 continue
 
-            # Build bar-chart rows: ["", label, percentile_value]
-            table_rows = [["", label, round(v, 0)] for label, v in valid]
-
             # Highlight the strongest metric
             best_idx = max(range(len(valid)), key=lambda i: valid[i][1])
 
@@ -297,30 +296,38 @@ class StatcastProfileDetector:
             )
 
             facts: dict = {
-                "player_id": player_id,
+                "padre_player_id": player_id,
                 "player_name": player_name,
                 "statcast_year": statcast_year,
                 "bwar_year": bwar_year,
                 "avg_percentile": round(avg_pctile, 1),
                 "best_metric": best_label,
                 "best_percentile": best_val,
-                "metrics": {label: v for label, v in valid},
+                **{label: v for label, v in valid},
             }
 
-            # "Fernando Tatis Jr." → "TATIS JR."
-            name_parts = player_name.split()
-            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else player_name
-
-            payload = TablePayload(
-                title=f"{last_name.upper()} — STATCAST PROFILE",
-                subtitle=f"{statcast_year} Season · Statcast Percentile Rankings",
+            # Slider-shaped dataset: one 0-100 measure, one row per metric → select_card → "slider"
+            dataset = ChartDataset(
+                title=player_name.upper(),
+                subtitle=f"{statcast_year} · Statcast Percentile Rankings",
                 as_of=as_of,
-                columns=["", "Metric", "Pctile"],
-                rows=table_rows,
-                highlight_row=best_idx,
+                columns=[
+                    Column(key="metric", label="Metric", role="dimension"),
+                    Column(
+                        key="percentile",
+                        label="Percentile",
+                        role="measure",
+                        domain=(0.0, 100.0),
+                        higher_is_better=True,
+                    ),
+                ],
+                rows=[[label, round(v, 0)] for label, v in valid],
+                framing=headline,
                 source="Baseball Savant",
                 headline=headline,
                 claim_scope="since_2015",
+                card_hint="slider",
+                facts=facts,
             )
 
             # Novelty: elite profiles and high-contrast profiles are more interesting
@@ -340,7 +347,7 @@ class StatcastProfileDetector:
             cid = make_candidate_id(
                 self.name,
                 f"SDP|{player_id}|{statcast_year}",
-                {**payload.model_dump(mode="json"), **facts},
+                dataset.model_dump(mode="json"),
             )
 
             candidates.append(
@@ -350,17 +357,11 @@ class StatcastProfileDetector:
                     subject=f"SDP|{player_id}|{statcast_year}",
                     as_of=as_of,
                     category="season",
-                    payload_kind="table",
-                    facts_json={**payload.model_dump(mode="json"), **facts},
+                    payload_kind="dataset",
+                    facts_json=dataset.model_dump(mode="json"),
                     provenance_json=[
                         {
-                            "source_table": "hist.statcast_batter_percentile_ranks",
-                            "sql": (
-                                "SELECT player_id, player_name, xwoba, exit_velocity, "
-                                "brl_percent, hard_hit_percent, sprint_speed, k_percent "
-                                f"FROM hist.statcast_batter_percentile_ranks "
-                                f"WHERE year = {statcast_year} AND player_id = {player_id}"
-                            ),
+                            "source_table": "statcast_batter_percentile_ranks",
                             "as_of": str(as_of),
                         }
                     ],
