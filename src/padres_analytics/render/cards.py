@@ -258,6 +258,7 @@ def _html_to_png(html: str, out_path: Path, viewport_w: int, viewport_h: int) ->
 _CARD_TEMPLATES: dict[str, str] = {
     "hero": "card_hero.html.j2",
     "slider": "card_slider.html.j2",
+    "scatter": "card_scatter.html.j2",
 }
 
 

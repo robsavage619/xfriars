@@ -87,6 +87,33 @@ def padre_ids(conn: duckdb.DuckDBPyConnection, year: int) -> set[int]:
         return set()
 
 
+def padre_ids_roster(conn: duckdb.DuckDBPyConnection, season: int) -> set[int]:
+    """Return Padre MLBAM IDs from the 40-man roster (team_rosters) for a season.
+
+    This is the authoritative roster source — ``team_rosters`` tracks active
+    membership (team_bref='SD', roster_type='40Man'), unlike
+    ``bwar_player_seasons`` which records WAR accrued for a team. Falls back to
+    an empty set if the table is absent.
+
+    Args:
+        conn: Connection with hist attached.
+        season: Roster season.
+
+    Returns:
+        Set of mlb_id integers on the SD 40-man that season.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT player_id FROM hist.team_rosters "
+            "WHERE team_bref = 'SD' AND season = ? AND roster_type = '40Man'",
+            [season],
+        ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        logger.debug("padre_ids_roster: team_rosters not available for season=%d", season)
+        return set()
+
+
 def padre_ids_latest(conn: duckdb.DuckDBPyConnection) -> set[int]:
     """Return Padre IDs from the most recent bwar year available.
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from padres_analytics.detect.candidates import ChartDataset, Column
+from padres_analytics.detect.candidates import ChartDataset, Column, Mark
 from padres_analytics.render.cards import render
 
 _FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -53,9 +53,43 @@ _HERO = ChartDataset(
     facts={"padre_value": 18.2, "padre_rank": 4},
 )
 
+_SCATTER = ChartDataset(
+    title="The Power Cluster",
+    subtitle="2024 · Exit Velo vs Barrel% · Qualified MLB Hitters",
+    as_of=date(2024, 6, 9),
+    columns=[
+        Column(key="player", label="Player", role="label"),
+        Column(key="exit_velo", label="Exit Velo", role="spatial_x", unit="mph"),
+        Column(key="barrel_pct", label="Barrel %", role="spatial_y", unit="%"),
+    ],
+    rows=[
+        ["League A", 87.1, 4.2],
+        ["League B", 89.0, 7.8],
+        ["League C", 90.5, 11.0],
+        ["League D", 86.0, 2.1],
+        ["Tatis Jr.", 92.4, 15.3],
+        ["Machado", 91.0, 12.1],
+        ["Merrill", 89.6, 9.4],
+    ],
+    highlight=[
+        Mark(row_index=4, label="Tatis Jr."),
+        Mark(row_index=5, label="Machado"),
+        Mark(row_index=6, label="Merrill"),
+    ],
+    framing="Padres power cluster",
+    source="Baseball Savant",
+    headline="Padres power cluster",
+    claim_scope="since_2015",
+    population_label="Qualified MLB hitters, 2024",
+    n=7,
+    card_hint="scatter",
+    facts={"lead_player": "Tatis Jr.", "lead_barrel_pct": 15.3},
+)
+
 _CASES = [
     ("slider", _SLIDER, "slider_card_reference.png"),
     ("hero", _HERO, "hero_card_reference.png"),
+    ("scatter", _SCATTER, "scatter_card_reference.png"),
 ]
 
 

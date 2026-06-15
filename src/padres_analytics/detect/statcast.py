@@ -667,9 +667,153 @@ class BarrelRateDetector:
         return [cand] if cand else []
 
 
+# ── power_cluster (scatter) ────────────────────────────────────────────────────
+
+_MIN_BBE_SCATTER = 50  # batted-ball events to qualify for the power cluster
+
+
+class PowerClusterDetector:
+    """League-wide Exit Velo vs Barrel% scatter with Padres highlighted.
+
+    A Baseball-Savant-style "power cluster": every qualified MLB hitter is a
+    background dot; the Padres are hot, labeled dots. Emits a ChartDataset with
+    spatial_x/spatial_y roles, which the selector routes to the scatter card.
+    """
+
+    name = "power_cluster"
+
+    def run(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        as_of: date,
+    ) -> list[StatCandidate]:
+        """Build the power-cluster scatter candidate.
+
+        Args:
+            conn: Read-only padres.db connection with hist attached.
+            as_of: Reference date.
+
+        Returns:
+            A single-element list (or empty if data is unavailable).
+        """
+        from padres_analytics.detect.candidates import Mark
+        from padres_analytics.detect.sql import padre_ids_roster
+
+        year = _max_year(conn, "statcast_batter_exitvelo_barrels")
+        if year is None:
+            logger.warning("power_cluster: no statcast_batter_exitvelo_barrels data")
+            return []
+
+        src = _tbl(conn, "statcast_batter_exitvelo_barrels")
+        rows = conn.execute(
+            f"""
+            SELECT player_id, player_name, avg_hit_speed, brl_percent
+            FROM {src}
+            WHERE year = ? AND attempts >= ?
+              AND avg_hit_speed IS NOT NULL AND brl_percent IS NOT NULL
+            ORDER BY brl_percent DESC
+            """,
+            [year, _MIN_BBE_SCATTER],
+        ).fetchall()
+        if len(rows) < 20:
+            logger.debug("power_cluster: too few qualified hitters (%d)", len(rows))
+            return []
+
+        roster = padre_ids_roster(conn, min(year, as_of.year))
+        if not roster:
+            roster = _padre_ids(conn, min(year, as_of.year))
+
+        data_rows: list[list[str | int | float | None]] = []
+        highlights: list[Mark] = []
+        padres: list[tuple[str, float, float]] = []
+        for pid, raw_name, ev, brl in rows:
+            name = _fmt_name(str(raw_name))
+            data_rows.append([name, round(float(ev), 1), round(float(brl), 1)])
+            if pid in roster:
+                # Label by surname to keep the plot legible
+                surname = name.split()[-1] if name.split() else name
+                highlights.append(Mark(row_index=len(data_rows) - 1, label=surname, note=None))
+                padres.append((name, float(ev), float(brl)))
+
+        if not padres:
+            logger.debug("power_cluster: no Padres in qualified set for year=%d", year)
+            return []
+
+        # Lead Padre = highest barrel rate (rows are barrel-sorted, Padres preserve order)
+        lead_name, lead_ev, lead_brl = max(padres, key=lambda p: p[2])
+        league_ev = sum(r[1] for r in data_rows) / len(data_rows)  # type: ignore[misc]
+        headline = (
+            f"{lead_name} sits in the Padres' power cluster — {lead_brl:.1f}% barrels "
+            f"at {lead_ev:.1f} mph exit velo ({year}, vs {league_ev:.1f} MLB avg)"
+        )
+
+        dataset = ChartDataset(
+            title="THE POWER CLUSTER",
+            subtitle=f"{year} · Exit Velo vs Barrel% · Qualified MLB Hitters",
+            as_of=as_of,
+            columns=[
+                Column(key="player", label="Player", role="label"),
+                Column(key="exit_velo", label="Exit Velo", role="spatial_x", unit="mph"),
+                Column(key="barrel_pct", label="Barrel %", role="spatial_y", unit="%"),
+            ],
+            rows=data_rows,
+            highlight=highlights,
+            framing=headline,
+            source="Baseball Savant",
+            headline=headline,
+            claim_scope="since_2015",
+            population_label=f"Qualified MLB hitters, {year}",
+            n=len(data_rows),
+            card_hint="scatter",
+            facts={
+                "lead_player": lead_name,
+                "lead_exit_velo": round(lead_ev, 1),
+                "lead_barrel_pct": round(lead_brl, 1),
+                "league_avg_exit_velo": round(league_ev, 1),
+                "padres_count": len(padres),
+                "metric_year": year,
+            },
+        )
+
+        rarity = min(0.80 + lead_brl / 100.0, 0.97)
+        score, components = novelty_score(
+            {
+                "rarity": rarity,
+                "magnitude": min(lead_brl / 25.0, 0.95),
+                "timeliness": 0.80,
+                "rootability": 0.88,
+                "legibility": 0.85,
+            },
+            detector=self.name,
+        )
+        cid = make_candidate_id(
+            self.name, f"SDP|power_cluster|{year}", dataset.model_dump(mode="json")
+        )
+
+        return [
+            StatCandidate(
+                candidate_id=cid,
+                detector=self.name,
+                subject=f"SDP|power_cluster|{year}",
+                as_of=as_of,
+                category="season",
+                payload_kind="dataset",
+                facts_json=dataset.model_dump(mode="json"),
+                provenance_json=[
+                    {"source_table": "statcast_batter_exitvelo_barrels", "as_of": str(as_of)}
+                ],
+                coverage_window=f"{year}-{year}",
+                claim_scope="since_2015",
+                novelty_score=score,
+                novelty_components=components,
+            )
+        ]
+
+
 # ── Registration ──────────────────────────────────────────────────────────────
 
 register(StatcastProfileDetector())
 register(XStatsUnluckyDetector())
 register(SprintSpeedDetector())
 register(BarrelRateDetector())
+register(PowerClusterDetector())
