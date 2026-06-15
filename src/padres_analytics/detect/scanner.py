@@ -332,6 +332,138 @@ def _build_candidate(hit: _Hit, as_of: date) -> StatCandidate:
     )
 
 
+# Collapse a metric into one ranked leaderboard card once this many Padres fire it.
+_MIN_LEADERBOARD = 3
+# Extremeness rarity that counts as genuinely league-elite (≈ top 5%).
+_HERO_ELITE_RARITY = 0.95
+# Marquee Padres — a non-elite stat still earns a standalone card for these names.
+# TODO: move to private config (the "closed brain") alongside the metric registry.
+_STAR_IDS: frozenset[int] = frozenset(
+    {
+        665487,  # Fernando Tatis Jr.
+        592518,  # Manny Machado
+        701538,  # Jackson Merrill
+        593428,  # Xander Bogaerts
+        630105,  # Jake Cronenworth
+        650333,  # Luis Arraez
+    }
+)
+
+# Per-metric editorial presentation. Generic fallback used when a metric is absent.
+_METRIC_PRESENTATION: dict[str, dict[str, str]] = {
+    "sprint_speed": {
+        "title": "FASTEST PADRES",
+        "lead": "is the fastest Padre",
+    },
+    "xwoba_gap": {
+        "title": "DUE FOR A BREAKOUT",
+        "subtitle": "Biggest gap between expected and actual production · regression coming",
+        "lead": "has the biggest gap between expected and actual production on the Padres",
+    },
+}
+
+
+def _passes_hero_gate(hit: _Hit) -> bool:
+    """True if a single-player hit deserves a standalone (hero) card.
+
+    Per editorial policy: a standalone card requires a genuinely league-elite
+    mark (extremeness in roughly the top 5%) OR a marquee player. Everything
+    else rolls into a leaderboard or is suppressed — no hero cards for
+    dead-average numbers on bench players.
+    """
+    if hit.player_id in _STAR_IDS:
+        return True
+    return hit.lens_result.lens == "extremeness" and hit.lens_result.rarity >= _HERO_ELITE_RARITY
+
+
+def _build_leaderboard_candidate(
+    metric: MetricSpec,
+    hits: list[_Hit],
+    as_of: date,
+) -> StatCandidate:
+    """Collapse multiple same-metric Padre hits into one ranked bar leaderboard.
+
+    Args:
+        metric: The shared metric.
+        hits: All surviving Padre hits for this metric (>= _MIN_LEADERBOARD).
+        as_of: Reference date.
+
+    Returns:
+        A single StatCandidate carrying a ranked bar ChartDataset.
+    """
+    higher = metric.direction == "higher"
+    ranked = sorted(hits, key=lambda h: h.focal_value, reverse=higher)
+    year = ranked[0].metric_year
+    pres = _METRIC_PRESENTATION.get(metric.id, {})
+
+    title = pres.get("title", f"PADRES {metric.label.upper()} LEADERS")
+    subtitle = pres.get("subtitle", f"{year} · {metric.label} · ranked")
+    leader = ranked[0]
+    val_str = f"{leader.focal_value:{metric.value_format}}"
+    if metric.unit:
+        val_str = f"{val_str} {metric.unit}"
+    lead_phrase = pres.get("lead", f"leads the Padres in {metric.label}")
+    headline = f"{leader.player_name} {lead_phrase} ({val_str}, {year})"
+
+    measure = Column(
+        key="value",
+        label=metric.label,
+        role="measure",
+        unit=metric.unit or None,
+        format=metric.value_format,
+        higher_is_better=higher,
+    )
+    dataset = ChartDataset(
+        title=title,
+        subtitle=subtitle,
+        as_of=as_of,
+        columns=[Column(key="player", label="Player", role="dimension"), measure],
+        rows=[[h.player_name, round(h.focal_value, 3)] for h in ranked],
+        framing=headline,
+        source="Baseball Savant",
+        headline=headline,
+        claim_scope=metric.coverage,
+        population_label=f"Padres roster, {year}",
+        card_hint="bar",
+        facts={
+            "metric_id": metric.id,
+            "metric_year": year,
+            "leader_name": leader.player_name,
+            "leader_value": round(leader.focal_value, 3),
+            "n_padres": len(ranked),
+        },
+    )
+
+    score, components = novelty_score(
+        {
+            "rarity": leader.lens_result.rarity,
+            "magnitude": min(leader.lens_result.rarity, 0.95),
+            "timeliness": 0.80,
+            "rootability": 0.85,
+            "legibility": 0.92,
+        },
+        detector="scan",
+    )
+    subject = f"SDP|{metric.id}|leaderboard|{year}"
+    cid = make_candidate_id("scan", subject, dataset.model_dump(mode="json"))
+    return StatCandidate(
+        candidate_id=cid,
+        detector="scan",
+        subject=subject,
+        as_of=as_of,
+        category="season",
+        payload_kind="dataset",
+        facts_json=dataset.model_dump(mode="json"),
+        provenance_json=[
+            {"source_table": ranked[0].resolved_table, "metric_id": metric.id, "as_of": str(as_of)}
+        ],
+        coverage_window=f"{year}-{year}",
+        claim_scope=metric.coverage,
+        novelty_score=score,
+        novelty_components=components,
+    )
+
+
 class GenericScanner:
     """Runs the TOML metric registry through statistical lenses.
 
@@ -382,18 +514,17 @@ class GenericScanner:
         if not all_hits:
             return []
 
-        # Gate: rarity floor, then dedup to the strongest hit per (player, metric, lens).
-        # The daily battery is ranked effect sizes, not independent significance tests,
-        # so BH FDR strangled everything; the floor + Studio human review guard noise.
+        # Gate: rarity floor, then dedup to ONE strongest hit per (player, metric).
+        # Collapsing across lenses kills the "same player, same metric, 3 cards" spam.
         floored = [h for h in all_hits if h.lens_result.rarity >= reg.scan.min_rarity]
-        best: dict[tuple[int, str, str], _Hit] = {}
+        best: dict[tuple[int, str], _Hit] = {}
         for h in floored:
-            key = (h.player_id, h.metric.id, h.lens_result.lens)
+            key = (h.player_id, h.metric.id)
             if key not in best or h.lens_result.rarity > best[key].lens_result.rarity:
                 best[key] = h
         surviving_hits = list(best.values())
         logger.info(
-            "scan: %d total hits, %d above floor=%.2f, %d after dedup",
+            "scan: %d total hits, %d above floor=%.2f, %d after per-(player,metric) dedup",
             len(all_hits),
             len(floored),
             reg.scan.min_rarity,
@@ -437,18 +568,30 @@ class GenericScanner:
                 [g.combined_framing[:60] for g in conjunctions[:3]],
             )
 
-        candidates: list[StatCandidate] = []
+        # Group by metric: >= _MIN_LEADERBOARD Padres collapse into ONE ranked card;
+        # otherwise emit standalone cards gated by elite-or-star.
+        by_metric: dict[str, list[_Hit]] = {}
         for hit in surviving_hits:
+            by_metric.setdefault(hit.metric.id, []).append(hit)
+
+        candidates: list[StatCandidate] = []
+        for metric_id, hits in by_metric.items():
             try:
-                cand = _build_candidate(hit, as_of)
-                candidates.append(cand)
+                if len(hits) >= _MIN_LEADERBOARD:
+                    candidates.append(_build_leaderboard_candidate(hits[0].metric, hits, as_of))
+                    continue
+                for hit in hits:
+                    if _passes_hero_gate(hit):
+                        candidates.append(_build_candidate(hit, as_of))
+                    else:
+                        logger.debug(
+                            "scan: suppressed non-elite/non-star %s/%s (rarity=%.2f)",
+                            hit.player_name,
+                            metric_id,
+                            hit.lens_result.rarity,
+                        )
             except Exception as exc:
-                logger.warning(
-                    "scan: build_candidate failed metric=%s player=%s: %s",
-                    hit.metric.id,
-                    hit.player_name,
-                    exc,
-                )
+                logger.warning("scan: candidate build failed metric=%s: %s", metric_id, exc)
 
         candidates.sort(key=lambda c: c.novelty_score, reverse=True)
         return candidates[: reg.scan.top_k]

@@ -259,6 +259,7 @@ _CARD_TEMPLATES: dict[str, str] = {
     "hero": "card_hero.html.j2",
     "slider": "card_slider.html.j2",
     "scatter": "card_scatter.html.j2",
+    "bar": "card_bar.html.j2",
 }
 
 

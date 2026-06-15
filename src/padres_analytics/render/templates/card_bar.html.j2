@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ bg_deep }}; }
+
+.card {
+  width: 540px; height: 675px; display: flex; flex-direction: column;
+  background: radial-gradient(ellipse 120% 60% at 50% -5%, #241a12 0%, #14100c 64%);
+  font-family: "Space Grotesk", sans-serif; color: {{ text_primary }};
+}
+
+.header {
+  padding: 24px 30px 14px; border-bottom: 1px solid rgba(255, 196, 37, 0.30);
+  display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0;
+}
+.kicker {
+  font-weight: 600; font-size: 12px; color: {{ gold }};
+  letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px;
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 900; font-size: 42px; line-height: 0.94; color: #FFFFFF;
+  letter-spacing: 0.03em; text-transform: uppercase;
+}
+.subtitle {
+  font-size: 12px; color: {{ text_secondary }}; margin-top: 6px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 32px; width: auto; opacity: 0.92; }
+.as-of { font-size: 11px; color: {{ text_secondary }}; opacity: 0.65; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+.footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 30px 18px; border-top: 1px solid rgba(255, 255, 255, 0.07); flex-shrink: 0;
+}
+.source { font-size: 10px; color: {{ text_secondary }}; opacity: 0.55; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ gold }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_secondary }}; opacity: 0.4; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres · Statcast</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}{% if population_label %} · {{ population_label }}{% endif %}</span>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+      <span class="handle">@xFriars</span>
+      <span class="tagline">San Diego Baseball Intelligence</span>
+    </div>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const DS    = {{ dataset | safe }};
+  const GOLD  = "{{ gold }}";
+  const TEXTP = "{{ text_primary }}";
+  const TEXTS = "{{ text_secondary }}";
+
+  const dimIdx = DS.columns.findIndex(c => c.role === "dimension" || c.role === "label");
+  const valIdx = DS.columns.findIndex(c => c.role === "measure");
+  const valCol = DS.columns[valIdx];
+  const fmt = valCol.format || ".1f";
+  const unit = valCol.unit ? " " + valCol.unit : "";
+
+  // d3 format spec (e.g. ".1f", "+.3f") via d3.format
+  const f = d3.format(fmt);
+
+  const hl = new Set((DS.highlight || []).map(m => m.row_index));
+  const data = DS.rows.map((r, i) => ({
+    label: String(r[dimIdx]), value: +r[valIdx], rank: i + 1, hot: hl.size ? hl.has(i) : true,
+  })).filter(d => Number.isFinite(d.value));
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth || 540;
+  const H = container.offsetHeight || 470;
+
+  const padL = 30, padR = 30, labelW = 150, valueW = 70;
+  const barX = padL + labelW;
+  const barMaxW = W - barX - valueW - padR;
+
+  const n = data.length;
+  const rowH = Math.floor(H / n);
+  const barH = Math.min(22, Math.floor(rowH * 0.52));
+
+  // Bars scale to the max value (zoomed to the cluster, not zero) for visible spread.
+  const lo = d3.min(data, d => d.value), hi = d3.max(data, d => d.value);
+  const base = lo - (hi - lo) * 0.55;
+  const x = d3.scaleLinear().domain([base, hi]).range([barX, barX + barMaxW]);
+
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+  const defs = svg.append("defs");
+  const grad = defs.append("linearGradient").attr("id", "fill").attr("x1", "0%").attr("x2", "100%");
+  grad.append("stop").attr("offset", "0%").attr("stop-color", GOLD).attr("stop-opacity", 0.30);
+  grad.append("stop").attr("offset", "100%").attr("stop-color", GOLD).attr("stop-opacity", 0.92);
+
+  const rows = svg.selectAll(".row").data(data).join("g")
+    .attr("transform", (d, i) => `translate(0, ${i * rowH})`);
+  const cy = rowH / 2;
+
+  // Rank + name
+  rows.append("text")
+    .attr("x", padL).attr("y", cy).attr("dy", "0.35em")
+    .attr("font-family", "Space Grotesk, sans-serif").attr("font-size", 14)
+    .attr("font-weight", d => d.hot ? 700 : 500)
+    .attr("fill", d => d.hot ? "#FFFFFF" : TEXTP).attr("fill-opacity", d => d.hot ? 1 : 0.7)
+    .text(d => `${d.rank}. ${d.label}`);
+
+  // Bar track
+  rows.append("rect")
+    .attr("x", barX).attr("y", cy - barH / 2).attr("width", barMaxW).attr("height", barH)
+    .attr("rx", 4).attr("fill", "rgba(255,255,255,0.05)");
+
+  // Filled bar
+  rows.append("rect")
+    .attr("x", barX).attr("y", cy - barH / 2)
+    .attr("width", d => Math.max(x(d.value) - barX, 3)).attr("height", barH)
+    .attr("rx", 4)
+    .attr("fill", d => d.hot ? "url(#fill)" : "rgba(245,239,230,0.18)");
+
+  // Value
+  rows.append("text")
+    .attr("x", W - padR).attr("y", cy).attr("dy", "0.35em").attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk, sans-serif").attr("font-size", 15).attr("font-weight", 700)
+    .attr("fill", d => d.hot ? GOLD : TEXTS).attr("font-variant-numeric", "tabular-nums")
+    .text(d => f(d.value) + unit);
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>
