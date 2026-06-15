@@ -258,10 +258,12 @@ def verify_path_a(
     Raises:
         VerificationError: On value mismatch exceeding tolerance.
     """
-    stat_type = facts_json.get("stat_type")
-    season = facts_json.get("season")
-    padre_rank = facts_json.get("padre_rank")
-    padre_value_raw = facts_json.get("padre_value_raw")
+    # Dataset payloads nest the cross-check keys under "facts"; tables keep them flat.
+    src = facts_json.get("facts", facts_json) if facts_json.get("kind") == "dataset" else facts_json
+    stat_type = src.get("stat_type")
+    season = src.get("season")
+    padre_rank = src.get("padre_rank")
+    padre_value_raw = src.get("padre_value_raw")
 
     if not (stat_type and season and padre_rank is not None and padre_value_raw is not None):
         # Not a leaderboard candidate — fall back to Path B

@@ -32,7 +32,13 @@ from padres_analytics.detect.lenses import (
 )
 from padres_analytics.detect.registry import MetricSpec, load_registry
 from padres_analytics.detect.scoring import novelty_score
-from padres_analytics.detect.sql import fmt_name, max_year, padre_ids, resolve_table
+from padres_analytics.detect.sql import (
+    fmt_name,
+    max_year,
+    padre_ids,
+    padre_ids_roster,
+    resolve_table,
+)
 
 if TYPE_CHECKING:
     import duckdb
@@ -501,10 +507,11 @@ class GenericScanner:
                 logger.debug("scan: metric=%s table=%s not found", metric.id, metric.table)
                 continue
 
-            bwar_year = metric_year if metric_year <= as_of.year else as_of.year
-            padres = padre_ids(conn, bwar_year)
+            roster_year = metric_year if metric_year <= as_of.year else as_of.year
+            # Prefer the real 40-man (main.team_rosters); fall back to bwar team assignments.
+            padres = padre_ids_roster(conn, roster_year) or padre_ids(conn, roster_year)
             if not padres:
-                logger.debug("scan: no Padre IDs for year=%d", bwar_year)
+                logger.debug("scan: no Padre IDs for year=%d", roster_year)
                 continue
 
             hits = _run_metric(conn, metric, metric_year, padres, reg.scan.min_observation_n)

@@ -88,31 +88,41 @@ def padre_ids(conn: duckdb.DuckDBPyConnection, year: int) -> set[int]:
         return set()
 
 
-def padre_ids_roster(conn: duckdb.DuckDBPyConnection, season: int) -> set[int]:
-    """Return Padre MLBAM IDs from the 40-man roster (team_rosters) for a season.
+_SD_MLBAM = 135
 
-    This is the authoritative roster source — ``team_rosters`` tracks active
-    membership (team_bref='SD', roster_type='40Man'), unlike
-    ``bwar_player_seasons`` which records WAR accrued for a team. Falls back to
-    an empty set if the table is absent.
+
+def padre_ids_roster(conn: duckdb.DuckDBPyConnection, season: int) -> set[int]:
+    """Return Padre MLBAM IDs from the 40-man roster for a season.
+
+    The 40-man (``team_rosters``) is the authoritative membership source, unlike
+    ``bwar_player_seasons`` which records WAR accrued for a team. Prefers the
+    freshly-ingested real ``main.team_rosters`` (``pad ingest roster``) over the
+    simulated ``hist.team_rosters`` so non-Padres can't leak into Padre cards.
 
     Args:
         conn: Connection with hist attached.
         season: Roster season.
 
     Returns:
-        Set of mlb_id integers on the SD 40-man that season.
+        Set of mlb_id integers on the SD 40-man that season, or empty if absent.
     """
-    try:
-        rows = conn.execute(
-            "SELECT player_id FROM hist.team_rosters "
-            "WHERE team_bref = 'SD' AND season = ? AND roster_type = '40Man'",
-            [season],
-        ).fetchall()
-        return {r[0] for r in rows}
-    except Exception:
-        logger.debug("padre_ids_roster: team_rosters not available for season=%d", season)
-        return set()
+    queries = (
+        ("team_rosters", "team_id = ?", [_SD_MLBAM, season]),  # fresh real ingest (main)
+        ("hist.team_rosters", "team_bref = 'SD'", [season]),  # simulated fallback
+    )
+    for table, team_clause, params in queries:
+        try:
+            rows = conn.execute(
+                f"SELECT player_id FROM {table} "
+                f"WHERE {team_clause} AND season = ? AND roster_type = '40Man'",
+                params,
+            ).fetchall()
+        except Exception:
+            continue
+        if rows:
+            return {r[0] for r in rows}
+    logger.debug("padre_ids_roster: no team_rosters available for season=%d", season)
+    return set()
 
 
 def padre_ids_latest(conn: duckdb.DuckDBPyConnection) -> set[int]:

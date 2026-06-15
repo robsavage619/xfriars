@@ -502,6 +502,36 @@ def ingest_standings_cmd(
     typer.echo(f"Done. {n} teams written to main.standings.")
 
 
+# ── pad ingest roster ─────────────────────────────────────────────────────────
+
+
+@ingest_app.command("roster")
+def ingest_roster_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    roster_type: str = typer.Option("40Man", "--type", help="Roster type (40Man, active, …)."),
+) -> None:
+    """Fetch the live Padres roster into main.team_rosters.
+
+    The scan engine prefers this real 40-man over the simulated hist.team_rosters,
+    so non-Padres can't surface in Padre-only cards.
+    """
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_roster
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting Padres {roster_type} roster for season {ref_season} …")
+
+    with connect() as conn:
+        try:
+            n = ingest_roster(conn, ref_season, roster_type=roster_type)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} players written to main.team_rosters.")
+
+
 # ── pad scan ──────────────────────────────────────────────────────────────────
 
 

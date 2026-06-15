@@ -315,8 +315,124 @@ class MlbStatsClient:
         logger.info("standings: season=%d returned %d teams", season, len(results))
         return results
 
+    # ── Roster ────────────────────────────────────────────────────────────
+
+    def roster(
+        self,
+        team_id: int = PADRES_TEAM_ID,
+        season: int | None = None,
+        roster_type: str = "40Man",
+    ) -> list[dict[str, Any]]:
+        """Fetch a team's roster.
+
+        Args:
+            team_id: MLB team ID.
+            season: 4-digit year. Defaults to current season.
+            roster_type: e.g. ``"40Man"``, ``"active"``, ``"fullRoster"``.
+
+        Returns:
+            List of dicts: player_id, player_name, position_code, position_name,
+            status, jersey_number.
+        """
+        params: dict[str, Any] = {"rosterType": roster_type}
+        if season:
+            params["season"] = season
+        data = self._get(f"teams/{team_id}/roster", **params)
+        results = []
+        for entry in data.get("roster", []):
+            person = entry.get("person") or {}
+            pos = entry.get("position") or {}
+            status = entry.get("status") or {}
+            results.append(
+                {
+                    "player_id": person.get("id"),
+                    "player_name": person.get("fullName"),
+                    "position_code": pos.get("abbreviation"),
+                    "position_name": pos.get("name"),
+                    "status": status.get("description"),
+                    "jersey_number": entry.get("jerseyNumber"),
+                }
+            )
+        logger.info(
+            "roster: team=%d type=%s returned %d players", team_id, roster_type, len(results)
+        )
+        return results
+
 
 # ── DB-writing ingest functions ───────────────────────────────────────────────
+
+
+def ingest_roster(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    team_id: int = PADRES_TEAM_ID,
+    roster_type: str = "40Man",
+) -> int:
+    """Fetch a live team roster and write it to main.team_rosters.
+
+    Creates the table if absent and replaces the (team, season, roster_type)
+    snapshot. The scan engine prefers this real roster over the simulated
+    hist.team_rosters so non-Padres can't leak into Padre-only cards.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: 4-digit year.
+        team_id: MLB team ID (default Padres).
+        roster_type: Roster type to fetch.
+
+    Returns:
+        Rows written.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_rosters (
+            team_id       INTEGER NOT NULL,
+            season        INTEGER NOT NULL,
+            roster_type   VARCHAR NOT NULL,
+            player_id     INTEGER NOT NULL,
+            player_name   VARCHAR,
+            position_code VARCHAR,
+            position_name VARCHAR,
+            status        VARCHAR,
+            jersey_number VARCHAR,
+            source        VARCHAR,
+            ingested_at   TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (team_id, season, roster_type, player_id)
+        )
+        """
+    )
+    source = f"mlb-stats-api/roster/{team_id}/{season}"
+    with record_run(conn, source, note=roster_type) as _run:
+        with MlbStatsClient() as client:
+            players = client.roster(team_id, season, roster_type)
+        conn.execute(
+            "DELETE FROM team_rosters WHERE team_id = ? AND season = ? AND roster_type = ?",
+            [team_id, season, roster_type],
+        )
+        for p in players:
+            conn.execute(
+                """
+                INSERT INTO team_rosters
+                    (team_id, season, roster_type, player_id, player_name,
+                     position_code, position_name, status, jersey_number, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                [
+                    team_id,
+                    season,
+                    roster_type,
+                    p["player_id"],
+                    p["player_name"],
+                    p["position_code"],
+                    p["position_name"],
+                    p["status"],
+                    p["jersey_number"],
+                    source,
+                ],
+            )
+    logger.info("ingest_roster: team=%d season=%d wrote %d players", team_id, season, len(players))
+    return len(players)
 
 
 def ingest_standings(conn: duckdb.DuckDBPyConnection, season: int) -> int:
