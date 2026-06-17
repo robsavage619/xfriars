@@ -486,6 +486,35 @@ class MlbStatsClient:
         logger.info("team_season_pitching: team=%d season=%d -> %d", team_id, season, len(out))
         return out
 
+    # ── Affiliates (farm system) ────────────────────────────────────────────
+
+    def org_affiliates(self, parent_id: int, season: int) -> list[dict[str, Any]]:
+        """Return a club's minor-league affiliate teams (AAA→Rookie).
+
+        Args:
+            parent_id: Parent MLB team id.
+            season: Season year.
+
+        Returns:
+            List of dicts: team_id, name, level (sport name), sport_id.
+        """
+        data = self._get("teams/affiliates", teamIds=parent_id, season=season)
+        levels = {11: "AAA", 12: "AA", 13: "High-A", 14: "Single-A", 16: "Rookie"}
+        out = []
+        for t in data.get("teams", []):
+            sport_id = (t.get("sport") or {}).get("id")
+            if sport_id in levels:
+                out.append(
+                    {
+                        "team_id": t.get("id"),
+                        "name": t.get("name"),
+                        "level": levels[sport_id],
+                        "sport_id": sport_id,
+                    }
+                )
+        logger.info("org_affiliates: parent=%d season=%d -> %d", parent_id, season, len(out))
+        return out
+
     # ── Roster ────────────────────────────────────────────────────────────
 
     def roster(
@@ -777,6 +806,98 @@ def ingest_pitcher_seasons(
                     )
                 total += len(rows)
     logger.info("ingest_pitcher_seasons: %d-%d wrote %d rows", start_season, end_season, total)
+    return total
+
+
+def ingest_milb(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    parent_id: int = PADRES_TEAM_ID,
+) -> int:
+    """Ingest real minor-league hitting stats across the org's affiliates.
+
+    Pulls each affiliate team's players (MLBAM-native — no id bridge) so the
+    prospect/farm engine runs on real, current MiLB performance. Writes
+    main.milb_batting, replacing the season snapshot.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: Season year.
+        parent_id: Parent MLB team id.
+
+    Returns:
+        Total MiLB player rows written.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS milb_batting (
+            player_id INTEGER NOT NULL, player_name VARCHAR, season INTEGER NOT NULL,
+            affiliate_id INTEGER NOT NULL, affiliate VARCHAR, level VARCHAR,
+            games INTEGER, pa INTEGER, ab INTEGER, runs INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, hr INTEGER, rbi INTEGER, sb INTEGER,
+            bb INTEGER, so INTEGER, avg VARCHAR, obp VARCHAR, slg VARCHAR, ops VARCHAR,
+            source VARCHAR, ingested_at TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (player_id, season, affiliate_id)
+        )
+        """
+    )
+    total = 0
+    source = f"mlb-stats-api/milb/{parent_id}/{season}"
+    with record_run(conn, source, note=f"parent={parent_id}") as _run:  # noqa: SIM117
+        with MlbStatsClient() as client:
+            affiliates = client.org_affiliates(parent_id, season)
+            conn.execute(
+                "DELETE FROM milb_batting WHERE season = ? AND affiliate_id IN "
+                f"({','.join(str(a['team_id']) for a in affiliates) or '0'})",
+                [season],
+            )
+            for aff in affiliates:
+                try:
+                    rows = client.team_season_hitting(aff["team_id"], season)
+                except MlbApiError as exc:
+                    logger.error("milb %s failed: %s", aff["name"], exc)
+                    continue
+                for r in rows:
+                    if r["player_id"] is None:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO milb_batting (
+                            player_id, player_name, season, affiliate_id, affiliate, level,
+                            games, pa, ab, runs, hits, doubles, triples, hr, rbi, sb, bb, so,
+                            avg, obp, slg, ops, source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                  ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        [
+                            r["player_id"],
+                            r["player_name"],
+                            season,
+                            aff["team_id"],
+                            aff["name"],
+                            aff["level"],
+                            r["games"],
+                            r["pa"],
+                            r["ab"],
+                            r["runs"],
+                            r["hits"],
+                            r["doubles"],
+                            r["triples"],
+                            r["hr"],
+                            r["rbi"],
+                            r["sb"],
+                            r["bb"],
+                            r["so"],
+                            r["avg"],
+                            r["obp"],
+                            r["slg"],
+                            r["ops"],
+                            source,
+                        ],
+                    )
+                total += len(rows)
+    logger.info("ingest_milb: parent=%d season=%d wrote %d rows", parent_id, season, total)
     return total
 
 

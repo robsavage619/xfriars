@@ -52,6 +52,7 @@ _DETECTOR_MODULES = (
     "historical",
     "leaderboards",
     "milestones",
+    "prospects",  # farm_performance
     "standings",
     "statcast",
     "struggles",  # cold_streak, weakness
@@ -548,6 +549,29 @@ def ingest_history_cmd(
             raise typer.Exit(ERR) from exc
 
     typer.echo(f"Done. {n_bat} batting + {n_pit} pitching player-season rows written.")
+
+
+# ── pad ingest milb ───────────────────────────────────────────────────────────
+
+
+@ingest_app.command("milb")
+def ingest_milb_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Ingest real minor-league hitting across the Padres' affiliates (farm/prospect watch)."""
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_milb
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting Padres MiLB stats for {ref_season} …")
+    with connect() as conn:
+        try:
+            n = ingest_milb(conn, ref_season)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+    typer.echo(f"Done. {n} MiLB player rows written to main.milb_batting.")
 
 
 # ── pad ingest gamelogs ───────────────────────────────────────────────────────
