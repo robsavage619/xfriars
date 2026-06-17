@@ -77,3 +77,29 @@ def test_no_active_player_no_gem() -> None:
 
 def test_no_data_returns_empty() -> None:
     assert CareerChaseDetector().run(duckdb.connect(), date(2026, 6, 16)) == []
+
+
+# ── MilestoneClubDetector ─────────────────────────────────────────────────────
+
+
+def test_milestone_club_exclusive_fires() -> None:
+    from padres_analytics.detect.gems import MilestoneClubDetector
+
+    # Active star at 195 HR (5 from the 200 club); only 1 retired legend already at 200.
+    rows = [(900, "Legend", 1990, 250), (1, "Active Star", 2026, 195)]
+    cands = MilestoneClubDetector().run(_conn(rows), date(2026, 6, 16))
+    hr = next(c for c in cands if c.facts_json["facts"]["stat"] == "HR")
+    assert hr.facts_json["facts"]["milestone"] == 200
+    assert hr.facts_json["facts"]["gap"] == 5
+    assert hr.facts_json["facts"]["would_be_nth"] == 2  # 2nd ever
+    assert "2nd Padre ever to reach 200" in hr.facts_json["headline"]
+
+
+def test_milestone_club_non_exclusive_suppressed() -> None:
+    from padres_analytics.detect.gems import MilestoneClubDetector
+
+    # 20 legends already past 100 HR; an active player 5 away is the 21st — not a gem.
+    rows = [(900 + i, f"Legend {i}", 1990, 120) for i in range(20)]
+    rows.append((1, "Active Star", 2026, 95))
+    cands = MilestoneClubDetector().run(_conn(rows), date(2026, 6, 16))
+    assert not any(c.facts_json["facts"]["stat"] == "HR" for c in cands)
