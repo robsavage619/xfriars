@@ -24,13 +24,15 @@ from padres_analytics.detect.candidates import (
     make_candidate_id,
 )
 from padres_analytics.detect.conjunction import evaluate_franchise_scope, find_conjunctions
+from padres_analytics.detect.discovery import discover_metrics
 from padres_analytics.detect.lenses import (
     LensResult,
     extremeness_lens,
     milestone_proximity_lens,
+    percentile_elite_lens,
     rank_lens,
 )
-from padres_analytics.detect.registry import MetricSpec, load_registry
+from padres_analytics.detect.registry import MetricSpec, ScanConfig, load_registry
 from padres_analytics.detect.scoring import novelty_score
 from padres_analytics.detect.sql import (
     fmt_name,
@@ -150,6 +152,14 @@ def _run_metric(
                     unit=metric.unit,
                     claim_scope=metric.coverage,
                     stabilization_n=metric.stabilization_n,
+                )
+
+            elif lens_name == "percentile_elite":
+                lr = percentile_elite_lens(
+                    percentile=val,
+                    metric_label=metric.label,
+                    player_name=pname,
+                    claim_scope=metric.coverage,
                 )
 
             elif lens_name == "rank":
@@ -495,13 +505,19 @@ class GenericScanner:
         """
         try:
             reg = load_registry()
-        except FileNotFoundError as exc:
-            logger.error("scan: registry not found: %s", exc)
-            return []
+        except FileNotFoundError:
+            reg = None
+
+        # Source of metrics is the live schema (discovery), not a hand-typed list.
+        # A *private* registry may add extra metrics; the public example would only
+        # duplicate discovered ones, so it is ignored as a metric source.
+        metrics = discover_metrics(conn)
+        scan_cfg = reg.scan if reg is not None else ScanConfig()
+        logger.info("scan: %d metrics discovered from schema", len(metrics))
 
         all_hits: list[_Hit] = []
 
-        for metric in reg.metrics:
+        for metric in metrics:
             metric_year = max_year(conn, metric.table)
             if metric_year is None:
                 logger.debug("scan: metric=%s table=%s not found", metric.id, metric.table)
@@ -514,7 +530,7 @@ class GenericScanner:
                 logger.debug("scan: no Padre IDs for year=%d", roster_year)
                 continue
 
-            hits = _run_metric(conn, metric, metric_year, padres, reg.scan.min_observation_n)
+            hits = _run_metric(conn, metric, metric_year, padres, scan_cfg.min_observation_n)
             logger.debug("scan: metric=%s year=%d hits=%d", metric.id, metric_year, len(hits))
             all_hits.extend(hits)
 
@@ -523,7 +539,7 @@ class GenericScanner:
 
         # Gate: rarity floor, then dedup to ONE strongest hit per (player, metric).
         # Collapsing across lenses kills the "same player, same metric, 3 cards" spam.
-        floored = [h for h in all_hits if h.lens_result.rarity >= reg.scan.min_rarity]
+        floored = [h for h in all_hits if h.lens_result.rarity >= scan_cfg.min_rarity]
         best: dict[tuple[int, str], _Hit] = {}
         for h in floored:
             key = (h.player_id, h.metric.id)
@@ -534,7 +550,7 @@ class GenericScanner:
             "scan: %d total hits, %d above floor=%.2f, %d after per-(player,metric) dedup",
             len(all_hits),
             len(floored),
-            reg.scan.min_rarity,
+            scan_cfg.min_rarity,
             len(surviving_hits),
         )
 
@@ -601,7 +617,7 @@ class GenericScanner:
                 logger.warning("scan: candidate build failed metric=%s: %s", metric_id, exc)
 
         candidates.sort(key=lambda c: c.novelty_score, reverse=True)
-        return candidates[: reg.scan.top_k]
+        return candidates[: scan_cfg.top_k]
 
 
 register(GenericScanner())

@@ -239,6 +239,49 @@ def milestone_proximity_lens(
     )
 
 
+def percentile_elite_lens(
+    *,
+    percentile: float,
+    metric_label: str,
+    player_name: str,
+    claim_scope: str,
+    threshold: float = 85.0,
+) -> LensResult | None:
+    """Fire when a player sits in an elite percentile of a pre-oriented metric.
+
+    Savant percentile tables are already direction-oriented (higher = better),
+    so this needs no direction config — it reads the percentile straight and
+    frames it in native Statcast language. Powers schema-discovered metrics.
+
+    Args:
+        percentile: The 0-100 Savant percentile (higher always better).
+        metric_label: Humanized metric label.
+        player_name: Humanized player name.
+        claim_scope: Scope tag.
+        threshold: Minimum percentile to fire (default 85th).
+
+    Returns:
+        LensResult, or None below threshold.
+    """
+    from padres_analytics.detect.sql import ordinal
+
+    if percentile < threshold:
+        return None
+    pct_from_top = round(100 - percentile)
+    tier = "elite" if percentile >= 95 else "well above average"
+    tail = "the best in MLB" if pct_from_top <= 0 else f"top {pct_from_top}% in MLB"
+    framing = (
+        f"{player_name} ranks in the {ordinal(percentile)} percentile in "
+        f"{metric_label} — {tail} ({tier})"
+    )
+    return LensResult(
+        rarity=min(percentile / 100.0, 0.99),
+        framing=framing,
+        claim_scope=claim_scope,
+        lens="percentile_elite",
+    )
+
+
 def bh_surviving_indices(rarities: list[float], alpha: float = 0.05) -> set[int]:
     """Return original indices that survive Benjamini-Hochberg FDR correction.
 
