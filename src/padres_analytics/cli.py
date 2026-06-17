@@ -502,6 +502,36 @@ def ingest_standings_cmd(
     typer.echo(f"Done. {n} teams written to main.standings.")
 
 
+# ── pad ingest history ────────────────────────────────────────────────────────
+
+
+@ingest_app.command("history")
+def ingest_history_cmd(
+    start: int = typer.Option(1969, "--start", help="First season (Padres began 1969)."),
+    end: int = typer.Option(0, "--end", help="Last season. Defaults to current year."),
+) -> None:
+    """Ingest full franchise player-season hitting history into main.
+
+    The gem data layer: real HR/H/RBI/etc. per Padre per year, powering
+    "first Padre with X since [legend]" and "Nth season in franchise history" gems.
+    """
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_player_seasons
+    from padres_analytics.storage.db import connect
+
+    ref_end = end or _la_today().year
+    typer.echo(f"Ingesting Padres player-season history {start}-{ref_end} …")
+
+    with connect() as conn:
+        try:
+            n = ingest_player_seasons(conn, start, ref_end)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} player-season rows written to main.player_season_batting.")
+
+
 # ── pad ingest roster ─────────────────────────────────────────────────────────
 
 

@@ -315,6 +315,73 @@ class MlbStatsClient:
         logger.info("standings: season=%d returned %d teams", season, len(results))
         return results
 
+    # ── Team-season hitting (historical) ───────────────────────────────────
+
+    def team_season_hitting(
+        self,
+        team_id: int,
+        season: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch every hitter's season counting stats for a team-season.
+
+        The foundation for franchise "first since [legend]" gems — pulls real
+        season HR/H/RBI/etc. for all players who appeared for the team that year.
+
+        Args:
+            team_id: MLB team ID.
+            season: 4-digit year.
+
+        Returns:
+            List of dicts: player_id, player_name, and counting/rate stats.
+        """
+        data = self._get(
+            "stats",
+            stats="season",
+            group="hitting",
+            season=season,
+            teamId=team_id,
+            gameType="R",
+            playerPool="all",
+            limit=1000,
+            hydrate="person",
+        )
+        splits = data.get("stats", [{}])[0].get("splits", [])
+        out = []
+        for s in splits:
+            player = s.get("player") or s.get("person") or {}
+            st = s.get("stat", {})
+
+            def _i(key: str, st: dict = st) -> int:
+                try:
+                    return int(st.get(key, 0) or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            out.append(
+                {
+                    "player_id": player.get("id"),
+                    "player_name": player.get("fullName"),
+                    "games": _i("gamesPlayed"),
+                    "pa": _i("plateAppearances"),
+                    "ab": _i("atBats"),
+                    "runs": _i("runs"),
+                    "hits": _i("hits"),
+                    "doubles": _i("doubles"),
+                    "triples": _i("triples"),
+                    "hr": _i("homeRuns"),
+                    "rbi": _i("rbi"),
+                    "sb": _i("stolenBases"),
+                    "bb": _i("baseOnBalls"),
+                    "so": _i("strikeOuts"),
+                    "avg": str(st.get("avg", "") or ""),
+                    "obp": str(st.get("obp", "") or ""),
+                    "slg": str(st.get("slg", "") or ""),
+                    "ops": str(st.get("ops", "") or ""),
+                }
+            )
+        logger.info("team_season_hitting: team=%d season=%d -> %d", team_id, season, len(out))
+        return out
+
     # ── Roster ────────────────────────────────────────────────────────────
 
     def roster(
@@ -433,6 +500,103 @@ def ingest_roster(
             )
     logger.info("ingest_roster: team=%d season=%d wrote %d players", team_id, season, len(players))
     return len(players)
+
+
+def ingest_player_seasons(
+    conn: duckdb.DuckDBPyConnection,
+    start_season: int,
+    end_season: int,
+    team_id: int = PADRES_TEAM_ID,
+) -> int:
+    """Ingest a franchise's full player-season hitting history into main.
+
+    This is the gem data layer: real season counting stats per player per year,
+    enabling "first Padre with X since [legend] (year)" and "Nth N-HR season in
+    franchise history" gems. Replaces the (season, team) snapshot each run.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        start_season: First year (Padres franchise began 1969).
+        end_season: Last year (inclusive).
+        team_id: MLB team ID (default Padres).
+
+    Returns:
+        Total player-season rows written.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_season_batting (
+            player_id   INTEGER NOT NULL,
+            player_name VARCHAR,
+            season      INTEGER NOT NULL,
+            team_id     INTEGER NOT NULL,
+            games INTEGER, pa INTEGER, ab INTEGER, runs INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, hr INTEGER, rbi INTEGER, sb INTEGER,
+            bb INTEGER, so INTEGER, avg VARCHAR, obp VARCHAR, slg VARCHAR, ops VARCHAR,
+            source VARCHAR, ingested_at TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (player_id, season, team_id)
+        )
+        """
+    )
+    total = 0
+    source = f"mlb-stats-api/team_season_hitting/{team_id}"
+    with record_run(conn, source, note=f"{start_season}-{end_season}") as _run:  # noqa: SIM117
+        with MlbStatsClient() as client:
+            for season in range(start_season, end_season + 1):
+                try:
+                    rows = client.team_season_hitting(team_id, season)
+                except MlbApiError as exc:
+                    logger.error("player_seasons %d failed: %s", season, exc)
+                    continue
+                conn.execute(
+                    "DELETE FROM player_season_batting WHERE season = ? AND team_id = ?",
+                    [season, team_id],
+                )
+                for r in rows:
+                    if r["player_id"] is None:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO player_season_batting (
+                            player_id, player_name, season, team_id, games, pa, ab,
+                            runs, hits, doubles, triples, hr, rbi, sb, bb, so,
+                            avg, obp, slg, ops, source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        [
+                            r["player_id"],
+                            r["player_name"],
+                            season,
+                            team_id,
+                            r["games"],
+                            r["pa"],
+                            r["ab"],
+                            r["runs"],
+                            r["hits"],
+                            r["doubles"],
+                            r["triples"],
+                            r["hr"],
+                            r["rbi"],
+                            r["sb"],
+                            r["bb"],
+                            r["so"],
+                            r["avg"],
+                            r["obp"],
+                            r["slg"],
+                            r["ops"],
+                            source,
+                        ],
+                    )
+                total += len(rows)
+    logger.info(
+        "ingest_player_seasons: team=%d %d-%d wrote %d rows",
+        team_id,
+        start_season,
+        end_season,
+        total,
+    )
+    return total
 
 
 def ingest_standings(conn: duckdb.DuckDBPyConnection, season: int) -> int:
