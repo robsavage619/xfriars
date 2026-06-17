@@ -151,3 +151,51 @@ def test_hit_streak_below_threshold_suppressed() -> None:
 
     games = [(i, f"2026-06-{1 + i:02d}", 4, 1) for i in range(5)]  # only 5
     assert HitStreakDetector().run(_game_conn(games), date(2026, 6, 16)) == []
+
+
+# ── CareerConjunctionDetector ─────────────────────────────────────────────────
+
+
+def _conn_hr_sb(rows: list[tuple[int, str, int, int, int]]) -> duckdb.DuckDBPyConnection:
+    """rows = (player_id, name, season, hr, sb)."""
+    conn = duckdb.connect()
+    conn.execute("""
+        CREATE TABLE player_season_batting (
+            player_id INTEGER, player_name VARCHAR, season INTEGER, team_id INTEGER,
+            games INTEGER, pa INTEGER, ab INTEGER, runs INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, hr INTEGER, rbi INTEGER, sb INTEGER,
+            bb INTEGER, so INTEGER, avg VARCHAR, obp VARCHAR, slg VARCHAR, ops VARCHAR
+        )
+    """)
+    for pid, name, season, hr, sb in rows:
+        conn.execute(
+            "INSERT INTO player_season_batting (player_id, player_name, season, team_id, hr, sb, "
+            "hits) VALUES (?, ?, ?, 135, ?, ?, 0)",
+            [pid, name, season, hr, sb],
+        )
+    return conn
+
+
+def test_conjunction_only_padre_ever() -> None:
+    from padres_analytics.detect.gems import CareerConjunctionDetector
+
+    # Active star uniquely has 200+ HR and 50+ SB; legends miss one leg.
+    rows = [
+        (900, "Power Only", 1990, 300, 10),  # HR yes, SB no
+        (901, "Speed Only", 1990, 50, 300),  # SB yes, HR no
+        (1, "Active Star", 2026, 206, 61),  # both
+    ]
+    cands = CareerConjunctionDetector().run(_conn_hr_sb(rows), date(2026, 6, 16))
+    hr_sb = next(c for c in cands if c.facts_json["facts"]["club_size"] == 1)
+    assert "ONLY Padre ever with 200+ HR and 50+ SB" in hr_sb.facts_json["headline"]
+    assert hr_sb.facts_json["facts"]["padre_player_id"] == 1
+
+
+def test_conjunction_non_exclusive_club_suppressed() -> None:
+    from padres_analytics.detect.gems import CareerConjunctionDetector
+
+    # 10 players all in the 100-HR/50-SB club → not exclusive (> _MAX_CONJ_CLUB).
+    rows = [(900 + i, f"P{i}", 1990, 120, 80) for i in range(10)]
+    rows.append((1, "Active Star", 2026, 130, 90))
+    cands = CareerConjunctionDetector().run(_conn_hr_sb(rows), date(2026, 6, 16))
+    assert not any(c.facts_json["facts"].get("club_size", 99) <= 6 for c in cands)

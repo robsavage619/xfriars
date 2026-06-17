@@ -462,3 +462,160 @@ class HitStreakDetector:
 
 
 register(HitStreakDetector())
+
+
+# Round thresholds per stat, for flooring a career total to a "club" line.
+_THRESHOLDS: dict[str, tuple[int, ...]] = {
+    "hr": (100, 150, 200, 250, 300),
+    "sb": (50, 100, 150, 200, 250),
+    "hits": (500, 1000, 1500, 2000, 2500, 3000),
+    "doubles": (150, 200, 250, 300),
+    "rbi": (500, 750, 1000, 1250),
+}
+# Career stat pairs that make a compelling "rare club" (label A, col_a, label B, col_b).
+_CONJ_PAIRS: tuple[tuple[str, str, str, str], ...] = (
+    ("HR", "hr", "SB", "sb"),  # power / speed — the classic
+    ("HR", "hr", "H", "hits"),
+)
+_MAX_CONJ_CLUB = 6  # only surface genuinely exclusive joint clubs
+
+
+def _floor_to(value: int, steps: tuple[int, ...]) -> int | None:
+    """Largest round step <= value, or None if below the smallest."""
+    hit = [s for s in steps if s <= value]
+    return max(hit) if hit else None
+
+
+class CareerConjunctionDetector:
+    """'Only N Padres ever with X and Y' — career rare-club conjunction gems."""
+
+    name = "career_conjunction"
+
+    def run(self, conn: duckdb.DuckDBPyConnection, as_of: date) -> list[StatCandidate]:
+        """Emit conjunction gems for active Padres in exclusive 2-stat career clubs.
+
+        Args:
+            conn: Read-mode padres.db connection.
+            as_of: Reference date.
+
+        Returns:
+            Conjunction gem cards (deduped to one per player).
+        """
+        from padres_analytics.detect.sql import fmt_name
+
+        try:
+            active = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT player_id FROM player_season_batting WHERE season = ?",
+                    [as_of.year],
+                ).fetchall()
+            }
+        except Exception:
+            return []
+        if not active:
+            return []
+
+        # Career totals for all stats we pair on, per player.
+        cols = sorted({c for _, c, _, c2 in _CONJ_PAIRS for c in (c, c2)})
+        sums = ", ".join(f"SUM({c}) AS {c}" for c in cols)
+        rows = conn.execute(
+            f"SELECT player_id, MAX(player_name) AS name, {sums} "
+            f"FROM player_season_batting GROUP BY player_id"
+        ).fetchall()
+        # rows: (pid, name, <cols...>) — index cols by position
+        col_idx = {c: 2 + i for i, c in enumerate(cols)}
+        totals = [(r[0], r[1], r) for r in rows]
+
+        out: list[StatCandidate] = []
+        seen_players: set[int] = set()
+        for label_a, col_a, label_b, col_b in _CONJ_PAIRS:
+            best: tuple | None = None  # (club_size, pid, name, val_a, val_b, t_a, t_b)
+            for pid, name, r in totals:
+                if pid not in active or pid in seen_players:
+                    continue
+                val_a, val_b = int(r[col_idx[col_a]] or 0), int(r[col_idx[col_b]] or 0)
+                t_a = _floor_to(val_a, _THRESHOLDS[col_a])
+                t_b = _floor_to(val_b, _THRESHOLDS[col_b])
+                if t_a is None or t_b is None:
+                    continue
+                club = sum(
+                    1
+                    for _p, _n, rr in totals
+                    if (rr[col_idx[col_a]] or 0) >= t_a and (rr[col_idx[col_b]] or 0) >= t_b
+                )
+                if club <= _MAX_CONJ_CLUB and (best is None or club < best[0]):
+                    best = (club, pid, fmt_name(name), val_a, val_b, t_a, t_b)
+            if best is None:
+                continue
+            club, pid, pname, val_a, val_b, t_a, t_b = best
+            seen_players.add(pid)
+            if club == 1:
+                lead = f"{pname} is the ONLY Padre ever with {t_a}+ {label_a} and {t_b}+ {label_b}"
+            else:
+                lead = (
+                    f"{pname} is one of only {club} Padres ever with "
+                    f"{t_a}+ {label_a} and {t_b}+ {label_b}"
+                )
+            headline = f"{lead} ({val_a} {label_a}, {val_b} {label_b})"
+
+            dataset = ChartDataset(
+                title=pname.upper(),
+                subtitle=f"Career {label_a} & {label_b} · Padres franchise",
+                as_of=as_of,
+                columns=[Column(key="club", label="Club size", role="measure", format="d")],
+                rows=[[club]],
+                hero={
+                    "value": "ONLY" if club == 1 else str(club),
+                    "label": f"{t_a}+ {label_a} & {t_b}+ {label_b}, Padres history",
+                    "context": f"{pname}: {val_a} {label_a}, {val_b} {label_b}",
+                },
+                framing=headline,
+                source="MLB Stats API",
+                headline=headline,
+                claim_scope="franchise_1969",
+                card_hint="hero",
+                facts={
+                    "padre_player_id": pid,
+                    "player_name": pname,
+                    "club_size": club,
+                    f"career_{col_a}": val_a,
+                    f"career_{col_b}": val_b,
+                    "threshold_a": t_a,
+                    "threshold_b": t_b,
+                },
+            )
+            score, components = novelty_score(
+                {
+                    "rarity": min(0.97, 0.99 - (club - 1) * 0.03),
+                    "magnitude": 0.85,
+                    "timeliness": 0.8,
+                    "rootability": 0.92,
+                    "legibility": 0.92,
+                },
+                detector=self.name,
+            )
+            subject = f"SDP|conj_{col_a}_{col_b}|{pid}"
+            cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
+            out.append(
+                StatCandidate(
+                    candidate_id=cid,
+                    detector=self.name,
+                    subject=subject,
+                    as_of=as_of,
+                    category="franchise",
+                    payload_kind="dataset",
+                    facts_json=dataset.model_dump(mode="json"),
+                    provenance_json=[
+                        {"source_table": "player_season_batting", "as_of": str(as_of)}
+                    ],
+                    coverage_window=f"1969-{as_of.year}",
+                    claim_scope="franchise_1969",
+                    novelty_score=score,
+                    novelty_components=components,
+                )
+            )
+        return out
+
+
+register(CareerConjunctionDetector())
