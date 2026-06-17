@@ -517,7 +517,7 @@ def ingest_history_cmd(
     "first Padre with X since [legend]" and "Nth season in franchise history" gems.
     """
     configure_logging()
-    from padres_analytics.ingest.mlb_api import ingest_player_seasons
+    from padres_analytics.ingest.mlb_api import ingest_pitcher_seasons, ingest_player_seasons
     from padres_analytics.storage.db import connect
 
     ref_end = end or _la_today().year
@@ -525,12 +525,13 @@ def ingest_history_cmd(
 
     with connect() as conn:
         try:
-            n = ingest_player_seasons(conn, start, ref_end)
+            n_bat = ingest_player_seasons(conn, start, ref_end)
+            n_pit = ingest_pitcher_seasons(conn, start, ref_end)
         except Exception as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(ERR) from exc
 
-    typer.echo(f"Done. {n} player-season rows written to main.player_season_batting.")
+    typer.echo(f"Done. {n_bat} batting + {n_pit} pitching player-season rows written.")
 
 
 # ── pad ingest gamelogs ───────────────────────────────────────────────────────

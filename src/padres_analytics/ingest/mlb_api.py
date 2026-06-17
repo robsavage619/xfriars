@@ -432,6 +432,60 @@ class MlbStatsClient:
             )
         return out
 
+    # ── Team-season pitching (historical) ──────────────────────────────────
+
+    def team_season_pitching(self, team_id: int, season: int) -> list[dict[str, Any]]:
+        """Fetch every pitcher's season counting stats for a team-season.
+
+        Args:
+            team_id: MLB team ID.
+            season: 4-digit year.
+
+        Returns:
+            List of dicts: player_id, player_name, and pitching counting stats.
+        """
+        data = self._get(
+            "stats",
+            stats="season",
+            group="pitching",
+            season=season,
+            teamId=team_id,
+            gameType="R",
+            playerPool="all",
+            limit=1000,
+            hydrate="person",
+        )
+        splits = data.get("stats", [{}])[0].get("splits", [])
+        out = []
+        for s in splits:
+            player = s.get("player") or s.get("person") or {}
+            st = s.get("stat", {})
+
+            def _i(key: str, st: dict = st) -> int:
+                try:
+                    return int(st.get(key, 0) or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            out.append(
+                {
+                    "player_id": player.get("id"),
+                    "player_name": player.get("fullName"),
+                    "games": _i("gamesPlayed"),
+                    "gs": _i("gamesStarted"),
+                    "wins": _i("wins"),
+                    "losses": _i("losses"),
+                    "saves": _i("saves"),
+                    "so": _i("strikeOuts"),
+                    "bb": _i("baseOnBalls"),
+                    "ip": str(st.get("inningsPitched", "") or ""),
+                    "era": str(st.get("era", "") or ""),
+                    "whip": str(st.get("whip", "") or ""),
+                }
+            )
+        logger.info("team_season_pitching: team=%d season=%d -> %d", team_id, season, len(out))
+        return out
+
     # ── Roster ────────────────────────────────────────────────────────────
 
     def roster(
@@ -646,6 +700,83 @@ def ingest_player_seasons(
         end_season,
         total,
     )
+    return total
+
+
+def ingest_pitcher_seasons(
+    conn: duckdb.DuckDBPyConnection,
+    start_season: int,
+    end_season: int,
+    team_id: int = PADRES_TEAM_ID,
+) -> int:
+    """Ingest a franchise's full pitcher-season history into main.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        start_season: First year.
+        end_season: Last year (inclusive).
+        team_id: MLB team ID.
+
+    Returns:
+        Total pitcher-season rows written.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_season_pitching (
+            player_id INTEGER NOT NULL, player_name VARCHAR,
+            season INTEGER NOT NULL, team_id INTEGER NOT NULL,
+            games INTEGER, gs INTEGER, wins INTEGER, losses INTEGER, saves INTEGER,
+            so INTEGER, bb INTEGER, ip VARCHAR, era VARCHAR, whip VARCHAR,
+            source VARCHAR, ingested_at TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (player_id, season, team_id)
+        )
+        """
+    )
+    total = 0
+    source = f"mlb-stats-api/team_season_pitching/{team_id}"
+    with record_run(conn, source, note=f"{start_season}-{end_season}") as _run:  # noqa: SIM117
+        with MlbStatsClient() as client:
+            for season in range(start_season, end_season + 1):
+                try:
+                    rows = client.team_season_pitching(team_id, season)
+                except MlbApiError as exc:
+                    logger.error("pitcher_seasons %d failed: %s", season, exc)
+                    continue
+                conn.execute(
+                    "DELETE FROM player_season_pitching WHERE season = ? AND team_id = ?",
+                    [season, team_id],
+                )
+                for r in rows:
+                    if r["player_id"] is None:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO player_season_pitching (
+                            player_id, player_name, season, team_id, games, gs, wins,
+                            losses, saves, so, bb, ip, era, whip, source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        [
+                            r["player_id"],
+                            r["player_name"],
+                            season,
+                            team_id,
+                            r["games"],
+                            r["gs"],
+                            r["wins"],
+                            r["losses"],
+                            r["saves"],
+                            r["so"],
+                            r["bb"],
+                            r["ip"],
+                            r["era"],
+                            r["whip"],
+                            source,
+                        ],
+                    )
+                total += len(rows)
+    logger.info("ingest_pitcher_seasons: %d-%d wrote %d rows", start_season, end_season, total)
     return total
 
 
