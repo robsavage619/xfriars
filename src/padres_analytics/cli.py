@@ -55,6 +55,7 @@ _DETECTOR_MODULES = (
     "standings",
     "statcast",
     "struggles",  # cold_streak, weakness
+    "trades",  # deadline_history
 )
 
 
