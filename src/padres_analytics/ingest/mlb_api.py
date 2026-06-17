@@ -382,6 +382,56 @@ class MlbStatsClient:
         logger.info("team_season_hitting: team=%d season=%d -> %d", team_id, season, len(out))
         return out
 
+    # ── Game logs ──────────────────────────────────────────────────────────
+
+    def player_game_log(
+        self,
+        player_id: int,
+        season: int,
+        group: str = "hitting",
+    ) -> list[dict[str, Any]]:
+        """Fetch a player's per-game hitting log for a season, oldest-first.
+
+        Powers active-streak gems (hit streaks, on-base streaks).
+
+        Args:
+            player_id: MLBAM id.
+            season: 4-digit year.
+            group: stat group.
+
+        Returns:
+            List of dicts: game_date, game_pk, ab, hits, bb, hbp.
+        """
+        data = self._get(
+            f"people/{player_id}/stats",
+            stats="gameLog",
+            season=season,
+            group=group,
+            gameType="R",
+        )
+        splits = data.get("stats", [{}])[0].get("splits", [])
+        out = []
+        for s in splits:
+            st = s.get("stat", {})
+
+            def _i(key: str, st: dict = st) -> int:
+                try:
+                    return int(st.get(key, 0) or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            out.append(
+                {
+                    "game_date": s.get("date"),
+                    "game_pk": (s.get("game") or {}).get("gamePk"),
+                    "ab": _i("atBats"),
+                    "hits": _i("hits"),
+                    "bb": _i("baseOnBalls"),
+                    "hbp": _i("hitByPitch"),
+                }
+            )
+        return out
+
     # ── Roster ────────────────────────────────────────────────────────────
 
     def roster(
@@ -596,6 +646,81 @@ def ingest_player_seasons(
         end_season,
         total,
     )
+    return total
+
+
+def ingest_game_logs(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    team_id: int = PADRES_TEAM_ID,
+) -> int:
+    """Ingest per-game hitting logs for the team's current-season hitters.
+
+    Writes main.player_game_batting (typed for streak queries). Only pulls
+    players who have batted this season (from player_season_batting), keeping
+    it to ~20 API calls.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: Season year.
+        team_id: MLB team id.
+
+    Returns:
+        Total game-log rows written.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_game_batting (
+            player_id INTEGER NOT NULL, player_name VARCHAR, season INTEGER NOT NULL,
+            game_date DATE NOT NULL, game_pk INTEGER,
+            ab INTEGER, hits INTEGER, bb INTEGER, hbp INTEGER,
+            source VARCHAR, ingested_at TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (player_id, game_date, game_pk)
+        )
+        """
+    )
+    hitters = conn.execute(
+        "SELECT player_id, MAX(player_name) FROM player_season_batting "
+        "WHERE season = ? AND team_id = ? AND ab > 0 GROUP BY player_id",
+        [season, team_id],
+    ).fetchall()
+    total = 0
+    source = f"mlb-stats-api/gameLog/{team_id}/{season}"
+    with record_run(conn, source, note=f"{len(hitters)} hitters") as _run:  # noqa: SIM117
+        with MlbStatsClient() as client:
+            conn.execute("DELETE FROM player_game_batting WHERE season = ?", [season])
+            for pid, pname in hitters:
+                try:
+                    games = client.player_game_log(pid, season)
+                except MlbApiError as exc:
+                    logger.error("game_log %s failed: %s", pid, exc)
+                    continue
+                for g in games:
+                    if not g["game_date"]:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO player_game_batting
+                            (player_id, player_name, season, game_date, game_pk,
+                             ab, hits, bb, hbp, source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        [
+                            pid,
+                            pname,
+                            season,
+                            g["game_date"],
+                            g["game_pk"],
+                            g["ab"],
+                            g["hits"],
+                            g["bb"],
+                            g["hbp"],
+                            source,
+                        ],
+                    )
+                total += len(games)
+    logger.info("ingest_game_logs: season=%d wrote %d game-rows", season, total)
     return total
 
 

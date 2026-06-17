@@ -103,3 +103,51 @@ def test_milestone_club_non_exclusive_suppressed() -> None:
     rows.append((1, "Active Star", 2026, 95))
     cands = MilestoneClubDetector().run(_conn(rows), date(2026, 6, 16))
     assert not any(c.facts_json["facts"]["stat"] == "HR" for c in cands)
+
+
+# ── HitStreakDetector ─────────────────────────────────────────────────────────
+
+
+def _game_conn(games: list[tuple[int, str, int, int]]) -> duckdb.DuckDBPyConnection:
+    """games = (day_offset, game_date, ab, hits) for one player (id 1)."""
+    conn = duckdb.connect()
+    conn.execute("""
+        CREATE TABLE player_game_batting (
+            player_id INTEGER, player_name VARCHAR, season INTEGER,
+            game_date DATE, game_pk INTEGER, ab INTEGER, hits INTEGER, bb INTEGER, hbp INTEGER
+        )
+    """)
+    for i, (_d, gdate, ab, hits) in enumerate(games):
+        conn.execute(
+            "INSERT INTO player_game_batting VALUES (1, 'Streak Guy', 2026, ?, ?, ?, ?, 0, 0)",
+            [gdate, 1000 + i, ab, hits],
+        )
+    return conn
+
+
+def test_hit_streak_fires_and_counts() -> None:
+    from padres_analytics.detect.gems import HitStreakDetector
+
+    # 9 straight games with a hit (chronological); streak = 9
+    games = [(i, f"2026-06-{1 + i:02d}", 4, 1) for i in range(9)]
+    cands = HitStreakDetector().run(_game_conn(games), date(2026, 6, 16))
+    assert len(cands) == 1
+    assert cands[0].facts_json["facts"]["streak_games"] == 9
+    assert "9 straight games" in cands[0].facts_json["headline"]
+
+
+def test_hit_streak_no_ab_game_does_not_break() -> None:
+    from padres_analytics.detect.gems import HitStreakDetector
+
+    # 8 hits, then a walk-only game (0 AB) most recent — streak stays 8, not broken
+    games = [(i, f"2026-06-{1 + i:02d}", 4, 1) for i in range(8)]
+    games.append((8, "2026-06-09", 0, 0))  # walk-only, most recent
+    cands = HitStreakDetector().run(_game_conn(games), date(2026, 6, 16))
+    assert cands and cands[0].facts_json["facts"]["streak_games"] == 8
+
+
+def test_hit_streak_below_threshold_suppressed() -> None:
+    from padres_analytics.detect.gems import HitStreakDetector
+
+    games = [(i, f"2026-06-{1 + i:02d}", 4, 1) for i in range(5)]  # only 5
+    assert HitStreakDetector().run(_game_conn(games), date(2026, 6, 16)) == []

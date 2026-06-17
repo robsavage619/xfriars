@@ -342,3 +342,123 @@ class MilestoneClubDetector:
 
 
 register(MilestoneClubDetector())
+
+
+_MIN_HIT_STREAK = 8  # games — below this isn't gem-worthy
+
+
+class HitStreakDetector:
+    """Active hit-streak gems from current-season game logs.
+
+    A game with no official at-bat (walk-only, pinch-run) neither extends nor
+    breaks the streak — the standard MLB hit-streak rule.
+    """
+
+    name = "hit_streak"
+
+    def run(self, conn: duckdb.DuckDBPyConnection, as_of: date) -> list[StatCandidate]:
+        """Emit the longest active Padres hit streak, if >= _MIN_HIT_STREAK.
+
+        Args:
+            conn: Read-mode padres.db connection.
+            as_of: Reference date.
+
+        Returns:
+            A single-element list (the longest active streak), or empty.
+        """
+        from padres_analytics.detect.sql import fmt_name
+
+        try:
+            rows = conn.execute(
+                """
+                SELECT player_id, player_name, game_date, ab, hits
+                FROM player_game_batting
+                WHERE season = ?
+                ORDER BY player_id, game_date
+                """,
+                [as_of.year],
+            ).fetchall()
+        except Exception as exc:
+            logger.warning("hit_streak: no player_game_batting (%s)", exc)
+            return []
+        if not rows:
+            return []
+
+        by_player: dict[int, list[tuple]] = {}
+        names: dict[int, str] = {}
+        for pid, name, gdate, ab, hits in rows:
+            by_player.setdefault(pid, []).append((gdate, int(ab), int(hits)))
+            names[pid] = name
+
+        best_pid, best_streak = None, 0
+        for pid, games in by_player.items():
+            streak = 0
+            for _gdate, ab, hits in reversed(games):  # newest first
+                if ab == 0:
+                    continue  # no AB: neither extends nor breaks
+                if hits >= 1:
+                    streak += 1
+                else:
+                    break
+            if streak > best_streak:
+                best_pid, best_streak = pid, streak
+
+        if best_pid is None or best_streak < _MIN_HIT_STREAK:
+            return []
+
+        pname = fmt_name(names[best_pid])
+        headline = f"{pname} has hit safely in {best_streak} straight games"
+
+        dataset = ChartDataset(
+            title=pname.upper(),
+            subtitle=f"Active hit streak · {as_of.year}",
+            as_of=as_of,
+            columns=[Column(key="games", label="Games", role="measure", format="d")],
+            rows=[[best_streak]],
+            hero={
+                "value": str(best_streak),
+                "label": "Game hit streak",
+                "context": "Active — and counting",
+            },
+            framing=headline,
+            source="MLB Stats API",
+            headline=headline,
+            claim_scope=f"{as_of.year}",
+            card_hint="hero",
+            facts={
+                "padre_player_id": best_pid,
+                "player_name": pname,
+                "streak_games": best_streak,
+            },
+        )
+        score, components = novelty_score(
+            {
+                "rarity": min(0.80 + (best_streak - _MIN_HIT_STREAK) * 0.02, 0.97),
+                "magnitude": min(best_streak / 30.0, 1.0),
+                "timeliness": 1.0,
+                "rootability": 0.9,
+                "legibility": 0.95,
+            },
+            detector=self.name,
+        )
+        subject = f"SDP|hit_streak|{best_pid}|{as_of.year}"
+        cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
+        return [
+            StatCandidate(
+                candidate_id=cid,
+                detector=self.name,
+                subject=subject,
+                as_of=as_of,
+                category="season",
+                payload_kind="dataset",
+                facts_json=dataset.model_dump(mode="json"),
+                provenance_json=[{"source_table": "player_game_batting", "as_of": str(as_of)}],
+                coverage_window=f"{as_of.year}-{as_of.year}",
+                claim_scope=f"{as_of.year}",
+                novelty_score=score,
+                novelty_components=components,
+            )
+        ]
+
+
+register(HitStreakDetector())

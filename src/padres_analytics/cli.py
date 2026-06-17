@@ -92,7 +92,7 @@ def detect_run(
     # Import here to trigger detector registration
     import padres_analytics.detect.crossjoin
     import padres_analytics.detect.first_since
-    import padres_analytics.detect.gems
+    import padres_analytics.detect.gems  # career_chase, milestone_club, hit_streak
     import padres_analytics.detect.historical
     import padres_analytics.detect.leaderboards
     import padres_analytics.detect.milestones
@@ -531,6 +531,29 @@ def ingest_history_cmd(
             raise typer.Exit(ERR) from exc
 
     typer.echo(f"Done. {n} player-season rows written to main.player_season_batting.")
+
+
+# ── pad ingest gamelogs ───────────────────────────────────────────────────────
+
+
+@ingest_app.command("gamelogs")
+def ingest_gamelogs_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Ingest current-season per-game hitting logs (powers active-streak gems)."""
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_game_logs
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting Padres game logs for {ref_season} …")
+    with connect() as conn:
+        try:
+            n = ingest_game_logs(conn, ref_season)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+    typer.echo(f"Done. {n} game-rows written to main.player_game_batting.")
 
 
 # ── pad ingest roster ─────────────────────────────────────────────────────────
