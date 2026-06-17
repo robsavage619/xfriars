@@ -43,6 +43,29 @@ def _la_today() -> date:
     return datetime.now(_TZ).date()
 
 
+# Detector modules that self-register on import. Loaded via importlib so the
+# side-effect imports can't be stripped by lint autofix.
+_DETECTOR_MODULES = (
+    "crossjoin",
+    "first_since",
+    "gems",  # career_chase, milestone_club, hit_streak, career_conjunction, pitcher_career_chase
+    "historical",
+    "leaderboards",
+    "milestones",
+    "standings",
+    "statcast",
+    "struggles",  # cold_streak, weakness
+)
+
+
+def _load_detectors() -> None:
+    """Import every detector module so its register() side effect runs."""
+    import importlib
+
+    for mod in _DETECTOR_MODULES:
+        importlib.import_module(f"padres_analytics.detect.{mod}")
+
+
 # ── pad init ───────────────────────────────────────────────────────────────────
 
 
@@ -89,15 +112,7 @@ def detect_run(
 ) -> None:
     """Run detector(s) and emit candidates to padres.db."""
     configure_logging()
-    # Import here to trigger detector registration
-    import padres_analytics.detect.crossjoin
-    import padres_analytics.detect.first_since
-    import padres_analytics.detect.gems  # career_chase, milestone_club, hit_streak
-    import padres_analytics.detect.historical
-    import padres_analytics.detect.leaderboards
-    import padres_analytics.detect.milestones
-    import padres_analytics.detect.standings
-    import padres_analytics.detect.statcast  # noqa: F401
+    _load_detectors()
     from padres_analytics.detect.base import all_detectors, emit, get_detector
     from padres_analytics.storage.db import (
         TradesDbNotFoundError,
