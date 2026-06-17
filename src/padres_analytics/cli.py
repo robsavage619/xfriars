@@ -92,6 +92,7 @@ def detect_run(
     # Import here to trigger detector registration
     import padres_analytics.detect.crossjoin
     import padres_analytics.detect.first_since
+    import padres_analytics.detect.gems
     import padres_analytics.detect.historical
     import padres_analytics.detect.leaderboards
     import padres_analytics.detect.milestones
