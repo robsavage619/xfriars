@@ -141,6 +141,98 @@ def ingest_batted_balls(
     return len(rows)
 
 
+def ingest_pitches(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    pitcher_id: int,
+    pitcher_name: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+) -> int:
+    """Fetch one pitcher's pitch-by-pitch data for a season and store it.
+
+    Keeps every pitch carrying a ``pitch_type`` and movement (``pfx_x``/``pfx_z``),
+    plus location (``plate_x``/``plate_z``) and release — the raw inputs for
+    arsenal/movement, zones, and location heatmaps.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: Season year.
+        pitcher_id: MLBAM pitcher id.
+        pitcher_name: Display name; resolved from the data when omitted.
+        start: ISO start date; defaults to ``{season}-03-01``.
+        end: ISO end date; defaults to ``{season}-11-30``.
+
+    Returns:
+        Number of pitch rows inserted.
+    """
+    import pybaseball
+
+    start = start or f"{season}-03-01"
+    end = end or f"{season}-11-30"
+
+    df = pybaseball.statcast_pitcher(start, end, pitcher_id)
+    if df is None or df.empty:
+        logger.warning("pitches: empty response for pitcher=%d season=%d", pitcher_id, season)
+        conn.execute(
+            "DELETE FROM statcast_pitches WHERE pitcher_id = ? AND season = ?",
+            [pitcher_id, season],
+        )
+        return 0
+
+    df = df.query("pitch_type.notna()", engine="python")
+    if df.empty:
+        conn.execute(
+            "DELETE FROM statcast_pitches WHERE pitcher_id = ? AND season = ?",
+            [pitcher_id, season],
+        )
+        return 0
+
+    name = pitcher_name
+    if name is None and "player_name" in df.columns:
+        name = str(df.iloc[0]["player_name"])
+
+    now = _now()
+    rows = [
+        (
+            pitcher_id,
+            name,
+            season,
+            _s(r.get("game_type")),
+            r.get("game_date"),
+            int(r["game_pk"]),
+            int(r["at_bat_number"]),
+            int(r["pitch_number"]),
+            _s(r.get("pitch_type")),
+            _f(r.get("release_speed")),
+            _f(r.get("pfx_x")),
+            _f(r.get("pfx_z")),
+            _f(r.get("plate_x")),
+            _f(r.get("plate_z")),
+            _f(r.get("sz_top")),
+            _f(r.get("sz_bot")),
+            _f(r.get("release_pos_x")),
+            _f(r.get("release_pos_z")),
+            _s(r.get("description")),
+            _s(r.get("stand")),
+            _s(r.get("p_throws")),
+            now,
+        )
+        for r in df.to_dict(orient="records")
+    ]
+
+    conn.execute(
+        "DELETE FROM statcast_pitches WHERE pitcher_id = ? AND season = ?",
+        [pitcher_id, season],
+    )
+    conn.executemany(
+        "INSERT INTO statcast_pitches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    logger.info("pitches: inserted %d rows for pitcher=%d season=%d", len(rows), pitcher_id, season)
+    return len(rows)
+
+
 def ingest_batted_balls_for(
     conn: duckdb.DuckDBPyConnection,
     season: int,

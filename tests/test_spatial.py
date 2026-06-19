@@ -6,7 +6,62 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from padres_analytics.detect.candidates import SpatialDataset
-from padres_analytics.detect.spatial import build_hr_spray, build_launch, build_spray
+from padres_analytics.detect.spatial import (
+    build_arsenal,
+    build_hr_spray,
+    build_launch,
+    build_spray,
+)
+
+_PITCH_COLS = (
+    "pitcher_id, pitcher_name, season, game_type, game_date, game_pk, at_bat_number, "
+    "pitch_number, pitch_type, release_speed, pfx_x, pfx_z, plate_x, plate_z, sz_top, "
+    "sz_bot, release_pos_x, release_pos_z, description, stand, p_throws, ingested_at"
+)
+
+
+def _insert_pitch(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    pid: int = 1,
+    season: int = 2024,
+    game_type: str = "R",
+    ab: int = 1,
+    pitch: int = 1,
+    pitch_type: str = "FF",
+    velo: float = 97.0,
+    pfx_x: float = 1.0,
+    pfx_z: float = 1.4,
+) -> None:
+    conn.execute(
+        f"INSERT INTO statcast_pitches ({_PITCH_COLS}) VALUES "
+        "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            pid,
+            "Cease, Dylan",
+            season,
+            game_type,
+            date(season, 5, 1),
+            100,
+            ab,
+            pitch,
+            pitch_type,
+            velo,
+            pfx_x,
+            pfx_z,
+            0.0,
+            2.5,
+            3.4,
+            1.6,
+            -1.8,
+            6.0,
+            "ball",
+            "R",
+            "R",
+            datetime(2024, 5, 1, 0, 0, 0),
+        ],
+    )
+
 
 if TYPE_CHECKING:
     import duckdb
@@ -135,6 +190,30 @@ def test_hr_spray_none_without_home_runs(padres_db: duckdb.DuckDBPyConnection) -
     """No home runs → no card."""
     _insert(padres_db, events="single")
     assert build_hr_spray(padres_db, 1, 2024) is None
+
+
+def test_arsenal_families_and_inch_transform(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Pitch types map to families; pfx feet convert to inches (x12)."""
+    for i in range(5):
+        _insert_pitch(padres_db, ab=i + 1, pitch_type="FF", velo=97.0, pfx_x=1.0, pfx_z=1.5)
+    _insert_pitch(padres_db, ab=10, pitch_type="SL", velo=88.0, pfx_x=-0.5, pfx_z=0.1)
+    _insert_pitch(padres_db, ab=11, pitch_type="CH", velo=89.0, pfx_x=1.2, pfx_z=0.5)
+    ds = build_arsenal(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "movement"
+    assert ds.n == 7
+    assert ds.pov == "Catcher's POV"
+    ff = next(p for p in ds.points if p.label == "FF")
+    assert ff.kind == "fastball"
+    assert ff.x == 12.0 and ff.y == 18.0  # 1.0*12, 1.5*12
+    assert next(p for p in ds.points if p.label == "SL").kind == "breaking"
+    assert next(p for p in ds.points if p.label == "CH").kind == "offspeed"
+    assert ds.hero is not None and ds.hero["value"] == "97"  # avg fastball
+
+
+def test_arsenal_none_without_pitches(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """No stored pitches → no card."""
+    assert build_arsenal(padres_db, 999, 2024) is None
 
 
 def test_launch_barrel_rate_uses_statcast_flag(padres_db: duckdb.DuckDBPyConnection) -> None:

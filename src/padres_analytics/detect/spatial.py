@@ -122,6 +122,119 @@ def build_spray(
     )
 
 
+_FASTBALL = {"FF", "FA", "FT", "SI", "FC"}
+_BREAKING = {"SL", "ST", "SV", "CU", "KC", "CS", "SC", "Sla", "KN"}
+_OFFSPEED = {"CH", "FS", "FO", "EP"}
+
+
+def _pitch_family(pt: str | None) -> str:
+    if pt in _FASTBALL:
+        return "fastball"
+    if pt in _BREAKING:
+        return "breaking"
+    if pt in _OFFSPEED:
+        return "offspeed"
+    return "other"
+
+
+def build_arsenal(
+    conn: duckdb.DuckDBPyConnection,
+    pitcher_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a pitch-movement (arsenal) ``SpatialDataset`` for one pitcher.
+
+    Each point is one pitch: ``x`` = horizontal break, ``y`` = induced vertical
+    break, both in INCHES (``pfx`` is feet → x12). Plotted from the catcher's POV
+    for a single pitcher — no LHP/RHP mirroring, which would only matter when
+    overlaying pitchers of opposite hands. Points carry their ``pitch_type`` (label)
+    and ``release_speed`` (value) so the template can label clusters in-situ.
+
+    Args:
+        conn: Read connection to padres.db.
+        pitcher_id: MLBAM pitcher id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="movement"), or ``None`` when the
+        pitcher has no regular-season pitches with movement data.
+    """
+    rows = conn.execute(
+        """
+        SELECT pitcher_name, pitch_type, pfx_x, pfx_z, release_speed
+        FROM statcast_pitches
+        WHERE pitcher_id = ? AND season = ? AND game_type = 'R'
+          AND pfx_x IS NOT NULL AND pfx_z IS NOT NULL AND pitch_type IS NOT NULL
+        """,
+        [pitcher_id, season],
+    ).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    points: list[SpatialPoint] = []
+    counts: dict[str, int] = {}
+    fb_velo: list[float] = []
+    for _name, pt, pfx_x, pfx_z, velo in rows:
+        points.append(
+            SpatialPoint(
+                x=round(pfx_x * 12.0, 1),  # feet → inches
+                y=round(pfx_z * 12.0, 1),
+                kind=_pitch_family(pt),
+                label=pt,
+                value=round(velo, 1) if velo is not None else None,
+            )
+        )
+        counts[pt] = counts.get(pt, 0) + 1
+        if _pitch_family(pt) == "fastball" and velo is not None:
+            fb_velo.append(velo)
+
+    n = len(points)
+    primary = max(counts, key=lambda k: counts[k])
+    primary_pct = counts[primary] / n
+    n_types = len([pt for pt, c in counts.items() if c / n >= 0.02])  # ignore <2% noise
+    avg_fb = sum(fb_velo) / len(fb_velo) if fb_velo else None
+
+    if avg_fb is not None:
+        hero = {
+            "value": f"{avg_fb:.0f}",
+            "label": "Avg Fastball (mph)",
+            "context": f"{n_types} pitches · {primary} {primary_pct:.0%}",
+        }
+    else:
+        hero = {
+            "value": str(n_types),
+            "label": "Pitch Types",
+            "context": f"{primary} {primary_pct:.0%} primary",
+        }
+
+    note = "Horizontal & induced vertical break (in) · catcher's POV"
+    if n < 200:
+        note = f"Small sample ({n} pitches) — illustrative · {note}"
+
+    name = _display_name(name_raw, str(pitcher_id))
+    return SpatialDataset(
+        card="movement",
+        title=name,
+        subtitle=f"Pitch arsenal · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero=hero,
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        pov="Catcher's POV",
+        note=note,
+        source="Baseball Savant",
+        headline=f"{name} {season} arsenal ({n} pitches)",
+        claim_scope=f"{season} season",
+    )
+
+
 def build_launch(
     conn: duckdb.DuckDBPyConnection,
     player_id: int,

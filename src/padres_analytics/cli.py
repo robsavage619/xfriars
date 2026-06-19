@@ -516,6 +516,31 @@ def ingest_batted_balls_cmd(
     typer.echo(f"Done. {n} batted balls written to statcast_batted_balls.")
 
 
+@ingest_app.command("pitches")
+def ingest_pitches_cmd(
+    player: int = typer.Option(..., "--player", help="MLBAM pitcher id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Fetch one pitcher's event-level pitches (movement/location) for arsenal cards."""
+    configure_logging()
+    from padres_analytics.ingest.statcast_events import ingest_pitches
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting pitches for pitcher {player}, season {ref_season} …")
+
+    with connect() as conn:
+        initialize(conn)
+        try:
+            n = ingest_pitches(conn, ref_season, player)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} pitches written to statcast_pitches.")
+
+
 @app.command()
 def spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
@@ -617,6 +642,39 @@ def launch(
         raise typer.Exit(ERR) from exc
 
     typer.echo(f"Rendered {dataset.n}-BBE launch profile → {out}")
+
+
+@app.command()
+def arsenal(
+    player: int = typer.Option(..., "--player", help="MLBAM pitcher id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a pitch-movement (arsenal) card from stored pitches."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_arsenal
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        dataset = build_arsenal(conn, player, ref_season)
+
+    if dataset is None:
+        typer.echo(
+            f"No pitches with movement data for pitcher {player}, season {ref_season}. "
+            f"Run 'pad ingest pitches --player {player} --season {ref_season}' first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(dataset, CARDS_DIR, f"arsenal_{player}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-pitch arsenal → {out}")
 
 
 # ── pad ingest standings ──────────────────────────────────────────────────────

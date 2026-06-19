@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
+
+.card {
+  width: 540px; height: 675px; display: flex; flex-direction: column;
+  background: {{ paper }};
+  font-family: "Space Grotesk", sans-serif; color: {{ ink }};
+}
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header {
+  padding: 24px 30px 14px;
+  display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0;
+}
+.kicker { font-weight: 600; font-size: 12px; color: {{ brown_dim }}; letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px; }
+.title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }}; letter-spacing: 0.01em; text-transform: uppercase; }
+.subtitle { font-size: 12px; color: {{ text_muted }}; margin-top: 6px; letter-spacing: 0.14em; text-transform: uppercase; }
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 32px; width: auto; }
+.as-of { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+.hero-line { display: flex; align-items: baseline; justify-content: center; gap: 12px; padding: 0 30px; flex-shrink: 0; }
+.hero-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 52px; line-height: 0.9; color: {{ ink }}; font-variant-numeric: tabular-nums; }
+.hero-label { font-weight: 600; font-size: 13px; color: {{ ink_soft }}; letter-spacing: 0.2em; text-transform: uppercase; }
+.hero-context { font-size: 13px; color: {{ text_muted }}; letter-spacing: 0.04em; }
+
+.legend { display: flex; justify-content: center; gap: 16px; padding: 8px 30px 0; flex-shrink: 0; }
+.legend span { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.06em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+.harness { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px; padding: 8px 30px 4px; flex-shrink: 0; }
+.chip { font-size: 11px; color: {{ ink_soft }}; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.chip b { color: {{ ink }}; font-weight: 700; }
+.note { padding: 2px 30px 0; text-align: center; font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.02em; flex-shrink: 0; }
+
+.footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0; margin-top: 8px; }
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres · Statcast</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  {% if hero %}
+  <div class="hero-line">
+    <span class="hero-value">{{ hero.value }}</span>
+    <div style="display:flex;flex-direction:column">
+      <span class="hero-label">{{ hero.label }}</span>
+      {% if hero.context %}<span class="hero-context">{{ hero.context }}</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="legend">
+    <span><i class="dot" style="background:{{ hr_fill }}"></i>Fastball</span>
+    <span><i class="dot" style="background:{{ slate }}"></i>Breaking</span>
+    <span><i class="dot" style="background:{{ xbh_fill }}"></i>Offspeed</span>
+  </div>
+
+  <div class="harness">
+    <span class="chip"><b>{{ n }}</b> Pitches</span>
+    <span class="chip">{{ coverage }}</span>
+    <span class="chip">{{ pov }}</span>
+    <span class="chip">{{ park }}</span>
+  </div>
+  {% if note %}<div class="note">{{ note }}</div>{% endif %}
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+      <span class="handle">@xFriars</span>
+      <span class="tagline">San Diego Baseball Intelligence</span>
+    </div>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const PTS = {{ points | safe }};
+  const FILL = { fastball: "{{ hr_fill }}", breaking: "{{ slate }}", offspeed: "{{ xbh_fill }}", other: "{{ out_fill }}" };
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth || 540, H = container.offsetHeight || 380;
+  const cx = W / 2, cy = H / 2;
+  const R = 25; // inches half-range
+  const sc = Math.min((W - 60) / (2 * R), (H - 40) / (2 * R));
+  const X = v => cx + v * sc, Y = v => cy - v * sc;
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+
+  // Crosshair + tick rings at 6/12/18 in.
+  [6, 12, 18].forEach(r => svg.append("circle").attr("cx", cx).attr("cy", cy).attr("r", r * sc)
+    .attr("fill", "none").attr("stroke", "rgba(28,23,20,0.10)").attr("stroke-width", 1));
+  svg.append("line").attr("x1", X(-R)).attr("x2", X(R)).attr("y1", cy).attr("y2", cy)
+    .attr("stroke", "rgba(28,23,20,0.30)").attr("stroke-width", 1);
+  svg.append("line").attr("x1", cx).attr("x2", cx).attr("y1", Y(-R)).attr("y2", Y(R))
+    .attr("stroke", "rgba(28,23,20,0.30)").attr("stroke-width", 1);
+  svg.append("text").attr("x", X(R) - 2).attr("y", cy - 6).attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}").text("HORIZONTAL BREAK (in)");
+  svg.append("text").attr("x", cx + 6).attr("y", Y(R) + 12)
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}").text("VERTICAL BREAK (in)");
+
+  // Pitches
+  svg.append("g").selectAll("circle.p").data(PTS).join("circle")
+    .attr("cx", d => X(d.x)).attr("cy", d => Y(d.y)).attr("r", 3)
+    .attr("fill", d => FILL[d.kind] || FILL.other).attr("fill-opacity", 0.55);
+
+  // Per-pitch-type centroid labels (in-situ, no legend hunt).
+  const groups = d3.rollups(PTS, v => ({
+    x: d3.mean(v, d => d.x), y: d3.mean(v, d => d.y),
+    velo: d3.mean(v.filter(d => d.value != null), d => d.value), n: v.length, kind: v[0].kind,
+  }), d => d.label).filter(g => g[1].n / PTS.length >= 0.02);
+
+  const lab = svg.append("g").selectAll("g.lab").data(groups).join("g");
+  lab.append("circle").attr("cx", d => X(d[1].x)).attr("cy", d => Y(d[1].y)).attr("r", 5.5)
+    .attr("fill", d => FILL[d[1].kind] || FILL.other).attr("stroke", "{{ paper }}").attr("stroke-width", 1.5);
+  lab.append("text").attr("x", d => X(d[1].x) + 9).attr("y", d => Y(d[1].y) + 4)
+    .attr("font-family", "Space Grotesk").attr("font-size", 13).attr("font-weight", 700).attr("fill", "{{ ink }}")
+    .attr("paint-order", "stroke").attr("stroke", "{{ paper }}").attr("stroke-width", 3)
+    .text(d => d[1].velo != null ? `${d[0]} ${d[1].velo.toFixed(0)}` : d[0]);
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>
