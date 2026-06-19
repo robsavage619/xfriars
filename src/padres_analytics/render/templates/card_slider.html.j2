@@ -39,14 +39,14 @@ html, body {
   padding: 24px 30px 16px;
   border-bottom: 1px solid {{ hairline }};
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   flex-shrink: 0;
 }
 .header-left { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .headshot {
   width: 76px; height: 76px; border-radius: 50%; object-fit: cover;
-  object-position: top center;
+  object-position: center 20%;
   border: 1px solid rgba(28, 23, 20, 0.18);
   background: {{ paper_panel }}; flex-shrink: 0;
 }
