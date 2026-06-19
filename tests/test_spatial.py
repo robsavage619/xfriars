@@ -12,6 +12,7 @@ from padres_analytics.detect.spatial import (
     build_hr_spray,
     build_launch,
     build_release,
+    build_rolling,
     build_spray,
     build_zone,
 )
@@ -244,6 +245,25 @@ def test_release_height_hero_and_families(padres_db: duckdb.DuckDBPyConnection) 
 def test_release_none_without_pitches(padres_db: duckdb.DuckDBPyConnection) -> None:
     """No stored pitches → no release card."""
     assert build_release(padres_db, 999, 2024) is None
+
+
+def test_rolling_builds_form_line(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Rolling card traces a trailing-window xwOBA line with a season-mean hero."""
+    for i in range(25):
+        _insert(padres_db, ab=i + 1, xwoba=0.55)
+    ds = build_rolling(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "rolling"
+    assert ds.n == 25
+    assert ds.hero is not None and ds.hero["value"] == "0.550"
+    assert len(ds.points) >= 1
+
+
+def test_rolling_none_when_too_few(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Fewer than 20 batted balls → no trend card."""
+    for i in range(5):
+        _insert(padres_db, ab=i + 1)
+    assert build_rolling(padres_db, 1, 2024) is None
 
 
 def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection) -> None:

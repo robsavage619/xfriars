@@ -122,6 +122,11 @@ def build_spray(
     )
 
 
+# League-average xwOBA on contact (xwOBACON), the neutral midpoint for hot/cold
+# shading and the rolling reference line. ~.370 in the modern game.
+_LEAGUE_XWOBACON = 0.370
+_ROLL_WINDOW = 50  # batted balls in the rolling-xwOBA window
+
 _FASTBALL = {"FF", "FA", "FT", "SI", "FC"}
 _BREAKING = {"SL", "ST", "SV", "CU", "KC", "CS", "SC", "Sla", "KN"}
 _OFFSPEED = {"CH", "FS", "FO", "EP"}
@@ -344,6 +349,79 @@ def build_hot_cold(
         note=note,
         source="Baseball Savant",
         headline=f"{name} {season} hot/cold zones ({n} BBE)",
+        claim_scope=f"{season} season",
+    )
+
+
+def build_rolling(
+    conn: duckdb.DuckDBPyConnection,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a rolling-xwOBA ``SpatialDataset`` for one hitter (Savant-style form).
+
+    A line of the trailing-``_ROLL_WINDOW``-BBE mean of ``estimated_woba``, in
+    chronological order — the "is he heating up or cooling off" curve. Each point
+    is ``x`` = batted-ball index, ``y`` = rolling xwOBA on contact.
+
+    Args:
+        conn: Read connection to padres.db.
+        player_id: MLBAM batter id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="rolling"), or ``None`` when too few
+        batted balls exist to trace a trend.
+    """
+    rows = conn.execute(
+        """
+        SELECT player_name, estimated_woba
+        FROM statcast_batted_balls
+        WHERE player_id = ? AND season = ? AND game_type = 'R' AND estimated_woba IS NOT NULL
+        ORDER BY game_date, at_bat_number, pitch_number
+        """,
+        [player_id, season],
+    ).fetchall()
+    if len(rows) < 20:
+        return None
+
+    name_raw = rows[0][0]
+    vals = [r[1] for r in rows]
+    n = len(vals)
+    window = min(_ROLL_WINDOW, max(10, n // 4))
+
+    points: list[SpatialPoint] = []
+    for i in range(window, n + 1):
+        mean = sum(vals[i - window : i]) / window
+        points.append(SpatialPoint(x=float(i), y=round(mean, 3)))
+
+    season_x = sum(vals) / n
+    note = f"{window}-BBE rolling xwOBA on contact · MLB avg ~{_LEAGUE_XWOBACON:.3f}"
+    if n < 100:
+        note = f"Small sample ({n} BBE) — illustrative · {note}"
+
+    name = _display_name(name_raw, str(player_id))
+    return SpatialDataset(
+        card="rolling",
+        title=name,
+        subtitle=f"Rolling xwOBACON · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={
+            "value": f"{season_x:.3f}",
+            "label": "xwOBA / Contact",
+            "context": f"{n} BBE · {window}-BBE window",
+        },
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        note=note,
+        source="Baseball Savant",
+        headline=f"{name} {season} rolling xwOBACON ({n} BBE)",
         claim_scope=f"{season} season",
     )
 

@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <script src="file://{{ d3_js }}"></script>
-<script src="file://{{ baseball_js }}"></script>
 <style>
 @font-face {
   font-family: "Big Shoulders Display";
@@ -34,22 +33,17 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
 .chart-area { flex: 1; overflow: hidden; position: relative; }
 
 .hero-line { display: flex; align-items: baseline; justify-content: center; gap: 12px; padding: 0 30px; flex-shrink: 0; }
-.hero-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 50px; line-height: 0.9; color: {{ ink }}; font-variant-numeric: tabular-nums; }
+.hero-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 52px; line-height: 0.9; color: {{ ink }}; font-variant-numeric: tabular-nums; }
 .hero-label { font-weight: 600; font-size: 13px; color: {{ ink_soft }}; letter-spacing: 0.2em; text-transform: uppercase; }
 .hero-context { font-size: 13px; color: {{ text_muted }}; letter-spacing: 0.04em; }
 
-.key { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 8px 30px 0; flex-shrink: 0; }
-.key span { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
-.ramp i { width: 26px; height: 9px; display: inline-block; }
-
-.harness { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px; padding: 8px 30px 4px; flex-shrink: 0; }
+.harness { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 30px 4px; flex-shrink: 0; }
 .chip { font-size: 11px; color: {{ ink_soft }}; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
 .chip b { color: {{ ink }}; font-weight: 700; }
 .note { padding: 2px 30px 0; text-align: center; font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.02em; flex-shrink: 0; }
 
 .footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0; margin-top: 8px; }
 .source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
-.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
 .tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
 </style>
 </head>
@@ -81,16 +75,10 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
   </div>
   {% endif %}
 
-  <div class="key">
-    <span>Cold</span>
-    <span class="ramp"><i style="background:{{ slate }}"></i><i style="background:{{ paper_panel }}"></i><i style="background:{{ hr_fill }}"></i></span>
-    <span>Hot</span>
-  </div>
-
   <div class="harness">
     <span class="chip"><b>{{ n }}</b> BBE</span>
     <span class="chip">{{ coverage }}</span>
-    <span class="chip">{{ pov }}</span>
+    <span class="chip">{{ handedness }}</span>
   </div>
   {% if note %}<div class="note">{{ note }}</div>{% endif %}
 
@@ -104,58 +92,52 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
 
 <script>
 (function() {
-  const CELLS = {{ points | safe }};
-  const SLATE = "{{ slate }}", PAPER = "{{ paper }}", HOT = "{{ hr_fill }}", INK = "{{ ink }}";
+  const PTS = {{ points | safe }};
+  const LEAGUE = 0.370;  // MLB xwOBACON reference
 
   const container = document.getElementById("chart-area");
   const W = container.offsetWidth || 540, H = container.offsetHeight || 380;
+  const m = { t: 18, r: 24, b: 34, l: 50 };
   const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
 
-  // The 3x3 grid is the hero — size it to fill the chart area at the true zone
-  // aspect (1.66 ft wide x 2.0 ft tall), leaving room for the dashed shadow zone.
-  const marginY = 34;
-  const boxH = H - 2 * marginY;
-  const boxW = boxH * (1.66 / 2.0);
-  const T = marginY, B = T + boxH;
-  const cx = W / 2, L = cx - boxW / 2, R = cx + boxW / 2;
-  const cw = boxW / 3, ch = boxH / 3;
-  const brown = "{{ brown }}";
+  const xs = PTS.map(d => d.x), ys = PTS.map(d => d.y);
+  const xd = [d3.min(xs), d3.max(xs)];
+  // y-domain padded around the line and the league reference.
+  let lo = Math.min(d3.min(ys), LEAGUE) - 0.02, hi = Math.max(d3.max(ys), LEAGUE) + 0.02;
+  const X = v => m.l + (v - xd[0]) / (xd[1] - xd[0]) * (W - m.r - m.l);
+  const Y = v => (H - m.b) - (v - lo) / (hi - lo) * (H - m.b - m.t);
 
-  // Diverging xwOBACON scale centered on the MLB-average ~.370 (paper), cold
-  // (slate) below, hot (red) above — so above-average doesn't read as scorching.
-  const color = d3.scaleLinear().domain([0.290, 0.370, 0.460]).range([SLATE, PAPER, HOT]).clamp(true);
-
-  const cells = svg.append("g");
-  CELLS.forEach(c => {
-    const x = L + c.x * cw, y = T + c.y * ch;
-    const filled = c.value != null;
-    cells.append("rect").attr("x", x).attr("y", y).attr("width", cw).attr("height", ch)
-      .attr("fill", filled ? color(c.value) : "rgba(28,23,20,0.05)");
-    if (filled) {
-      cells.append("text").attr("x", x + cw / 2).attr("y", y + ch / 2 + 9).attr("text-anchor", "middle")
-        .attr("font-family", "Space Grotesk").attr("font-size", 26).attr("font-weight", 700).attr("fill", INK)
-        .attr("font-variant-numeric", "tabular-nums").text(c.value.toFixed(3).replace(/^0/, ""));
-    } else {
-      cells.append("text").attr("x", x + cw / 2).attr("y", y + ch / 2 + 5).attr("text-anchor", "middle")
-        .attr("font-family", "Space Grotesk").attr("font-size", 14).attr("fill", "{{ text_muted }}")
-        .text("n=" + c.label);
-    }
+  // Axes
+  svg.append("line").attr("x1", m.l).attr("x2", W - m.r).attr("y1", H - m.b).attr("y2", H - m.b)
+    .attr("stroke", "rgba(28,23,20,0.25)").attr("stroke-width", 1);
+  svg.append("line").attr("x1", m.l).attr("x2", m.l).attr("y1", m.t).attr("y2", H - m.b)
+    .attr("stroke", "rgba(28,23,20,0.25)").attr("stroke-width", 1);
+  d3.ticks(lo, hi, 4).forEach(t => {
+    svg.append("text").attr("x", m.l - 6).attr("y", Y(t) + 3).attr("text-anchor", "end")
+      .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+      .attr("font-variant-numeric", "tabular-nums").text(t.toFixed(3).replace(/^0/, ""));
   });
 
-  // Dashed shadow zone (one ball-width outside), then the box + 3x3 hairlines.
-  const offX = boxW * (0.121 / 1.66), offY = boxH * (0.121 / 2.0);
-  svg.append("rect").attr("x", L - offX).attr("y", T - offY)
-    .attr("width", boxW + 2 * offX).attr("height", boxH + 2 * offY)
-    .attr("fill", "none").attr("stroke", brown).attr("stroke-opacity", 0.25)
-    .attr("stroke-width", 0.5).attr("stroke-dasharray", "4 4");
-  svg.append("rect").attr("x", L).attr("y", T).attr("width", boxW).attr("height", boxH)
-    .attr("fill", "none").attr("stroke", brown).attr("stroke-width", 1.5);
-  [1, 2].forEach(i => {
-    svg.append("line").attr("x1", L + cw * i).attr("x2", L + cw * i).attr("y1", T).attr("y2", B)
-      .attr("stroke", brown).attr("stroke-opacity", 0.4).attr("stroke-width", 0.75);
-    svg.append("line").attr("x1", L).attr("x2", R).attr("y1", T + ch * i).attr("y2", T + ch * i)
-      .attr("stroke", brown).attr("stroke-opacity", 0.4).attr("stroke-width", 0.75);
-  });
+  // League reference line.
+  svg.append("line").attr("x1", m.l).attr("x2", W - m.r).attr("y1", Y(LEAGUE)).attr("y2", Y(LEAGUE))
+    .attr("stroke", "{{ brown_dim }}").attr("stroke-width", 1).attr("stroke-dasharray", "4 4").attr("stroke-opacity", 0.6);
+  svg.append("text").attr("x", W - m.r).attr("y", Y(LEAGUE) - 5).attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ brown_dim }}")
+    .text("MLB avg .370");
+
+  // The rolling line.
+  const line = d3.line().x(d => X(d.x)).y(d => Y(d.y)).curve(d3.curveMonotoneX);
+  svg.append("path").datum(PTS).attr("d", line)
+    .attr("fill", "none").attr("stroke", "{{ ink }}").attr("stroke-width", 2.5);
+
+  // Gold "now" dot at the latest value.
+  const last = PTS[PTS.length - 1];
+  svg.append("circle").attr("cx", X(last.x)).attr("cy", Y(last.y)).attr("r", 5)
+    .attr("fill", "{{ gold }}").attr("stroke", "{{ paper }}").attr("stroke-width", 1.5);
+
+  svg.append("text").attr("x", (m.l + W - m.r) / 2).attr("y", H - 8).attr("text-anchor", "middle")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+    .attr("letter-spacing", "0.12em").text("SEASON PROGRESSION (BATTED BALLS) →");
 
   document.getElementById("chart-ready").style.display = "block";
 })();

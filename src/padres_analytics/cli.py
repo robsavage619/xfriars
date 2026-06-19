@@ -613,6 +613,38 @@ def hotcold(
 
 
 @app.command()
+def rolling(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a rolling-xwOBA (form) card from stored batted balls."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_rolling
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        dataset = build_rolling(conn, player, ref_season)
+
+    if dataset is None:
+        typer.echo(
+            f"Too few batted balls for a rolling trend for player {player}, season {ref_season}.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(dataset, CARDS_DIR, f"rolling_{player}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-BBE rolling xwOBA → {out}")
+
+
+@app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
