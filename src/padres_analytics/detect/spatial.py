@@ -122,6 +122,89 @@ def build_spray(
     )
 
 
+def build_launch(
+    conn: duckdb.DuckDBPyConnection,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a launch-angle / exit-velo ``SpatialDataset`` for one hitter.
+
+    Each point is ``x=launch_angle`` (deg), ``y=launch_speed`` (mph). Barrels are
+    Statcast's own classification (``launch_speed_angle == 6``) — not an eyeballed
+    EV/LA wedge — so the barrel rate is authoritative. The template draws only the
+    fixed reference lines (sweet-spot band 8-32 deg, hard-hit 95 mph).
+
+    Args:
+        conn: Read connection to padres.db.
+        player_id: MLBAM batter id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="launch"), or ``None`` when the hitter
+        has no batted balls with both launch angle and exit velocity.
+    """
+    rows = conn.execute(
+        """
+        SELECT player_name, launch_angle, launch_speed, launch_speed_angle, events
+        FROM statcast_batted_balls
+        WHERE player_id = ? AND season = ? AND game_type = 'R'
+          AND launch_angle IS NOT NULL AND launch_speed IS NOT NULL
+        """,
+        [player_id, season],
+    ).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    points: list[SpatialPoint] = []
+    barrels = 0
+    hard = 0
+    for _name, la, ev, lsa, _events in rows:
+        if lsa == 6:
+            barrels += 1
+            kind = "barrel"
+        elif ev >= 95:
+            kind = "hard_hit"
+        else:
+            kind = "soft"
+        if ev >= 95:
+            hard += 1  # hard-hit% includes barrels
+        points.append(SpatialPoint(x=round(la, 1), y=round(ev, 1), kind=kind))
+
+    n = len(points)
+    brl_pct = barrels / n if n else 0.0
+    hh_pct = hard / n if n else 0.0
+
+    note = "Barrel = Statcast classification · sweet spot 8-32° · hard-hit 95+ mph"
+    if n < 40:
+        note = f"Small sample ({n} BBE) — illustrative, not predictive · {note}"
+
+    name = _display_name(name_raw, str(player_id))
+    return SpatialDataset(
+        card="launch",
+        title=name,
+        subtitle=f"Launch angle / exit velo · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={
+            "value": f"{brl_pct:.1%}",
+            "label": "Barrel Rate",
+            "context": f"{barrels} barrels · {hh_pct:.0%} hard-hit",
+        },
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        note=note,
+        source="Baseball Savant",
+        headline=f"{name} {season} launch profile ({n} BBE)",
+        claim_scope=f"{season} season",
+    )
+
+
 def build_hr_spray(
     conn: duckdb.DuckDBPyConnection,
     player_id: int,

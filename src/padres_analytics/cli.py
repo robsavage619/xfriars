@@ -586,6 +586,39 @@ def hr_spray(
     typer.echo(f"Rendered {dataset.n}-HR spray → {out}")
 
 
+@app.command()
+def launch(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a launch-angle / exit-velo card from stored batted balls."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_launch
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        dataset = build_launch(conn, player, ref_season)
+
+    if dataset is None:
+        typer.echo(
+            f"No batted balls with launch data for player {player}, season {ref_season}. "
+            f"Run 'pad ingest batted-balls --player {player} --season {ref_season}' first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(dataset, CARDS_DIR, f"launch_{player}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-BBE launch profile → {out}")
+
+
 # ── pad ingest standings ──────────────────────────────────────────────────────
 
 

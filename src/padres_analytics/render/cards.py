@@ -301,6 +301,7 @@ _CARD_TEMPLATES: dict[str, str] = {
 _SPATIAL_TEMPLATES: dict[str, str] = {
     "spray": "card_spray.html.j2",
     "hr": "card_hr.html.j2",
+    "launch": "card_launch.html.j2",
 }
 
 

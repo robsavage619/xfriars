@@ -40,6 +40,10 @@ def _f(v: object) -> float | None:
     return None if _nan(v) else float(v)  # type: ignore[arg-type]
 
 
+def _i(v: object) -> int | None:
+    return None if _nan(v) else int(float(v))  # type: ignore[arg-type]
+
+
 def _s(v: object) -> str | None:
     return None if v is None or _nan(v) else str(v)
 
@@ -112,6 +116,7 @@ def ingest_batted_balls(
             _f(r.get("hc_y")),
             _f(r.get("launch_speed")),
             _f(r.get("launch_angle")),
+            _i(r.get("launch_speed_angle")),
             _f(r.get("hit_distance_sc")),
             _f(r.get("estimated_woba_using_speedangle")),
             now,
@@ -126,7 +131,7 @@ def ingest_batted_balls(
     conn.executemany(
         """
         INSERT INTO statcast_batted_balls VALUES
-        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         rows,
     )

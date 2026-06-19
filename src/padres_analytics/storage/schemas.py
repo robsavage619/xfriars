@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -289,6 +289,7 @@ DDL_STATEMENTS: tuple[str, ...] = (
         hc_y             DOUBLE,
         launch_speed     DOUBLE,
         launch_angle     DOUBLE,
+        launch_speed_angle INTEGER,
         hit_distance_sc  DOUBLE,
         estimated_woba   DOUBLE,
         ingested_at      TIMESTAMP,

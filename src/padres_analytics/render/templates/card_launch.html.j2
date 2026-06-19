@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
+
+.card {
+  width: 540px; height: 675px; display: flex; flex-direction: column;
+  background: {{ paper }};
+  font-family: "Space Grotesk", sans-serif; color: {{ ink }};
+}
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header {
+  padding: 24px 30px 14px;
+  display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0;
+}
+.kicker {
+  font-weight: 600; font-size: 12px; color: {{ brown_dim }};
+  letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px;
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }};
+  letter-spacing: 0.01em; text-transform: uppercase;
+}
+.subtitle {
+  font-size: 12px; color: {{ text_muted }}; margin-top: 6px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 32px; width: auto; }
+.as-of { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+.hero-line { display: flex; align-items: baseline; justify-content: center; gap: 12px; padding: 0 30px; flex-shrink: 0; }
+.hero-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 52px; line-height: 0.9; color: {{ ink }}; font-variant-numeric: tabular-nums; }
+.hero-label { font-weight: 600; font-size: 13px; color: {{ ink_soft }}; letter-spacing: 0.2em; text-transform: uppercase; }
+.hero-context { font-size: 13px; color: {{ text_muted }}; letter-spacing: 0.04em; }
+
+.legend { display: flex; justify-content: center; gap: 16px; padding: 8px 30px 0; flex-shrink: 0; }
+.legend span { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.06em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+.harness { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px; padding: 8px 30px 4px; flex-shrink: 0; }
+.chip { font-size: 11px; color: {{ ink_soft }}; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.chip b { color: {{ ink }}; font-weight: 700; }
+.note { padding: 2px 30px 0; text-align: center; font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.02em; flex-shrink: 0; }
+
+.footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0; margin-top: 8px;
+}
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres · Statcast</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  {% if hero %}
+  <div class="hero-line">
+    <span class="hero-value">{{ hero.value }}</span>
+    <div style="display:flex;flex-direction:column">
+      <span class="hero-label">{{ hero.label }}</span>
+      {% if hero.context %}<span class="hero-context">{{ hero.context }}</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="legend">
+    <span><i class="dot" style="background:{{ hr_fill }}"></i>Barrel</span>
+    <span><i class="dot" style="background:{{ xbh_fill }}"></i>Hard-hit</span>
+    <span><i class="dot" style="background:{{ out_fill }}"></i>Other</span>
+  </div>
+
+  <div class="harness">
+    <span class="chip"><b>{{ n }}</b> BBE</span>
+    <span class="chip">{{ coverage }}</span>
+    <span class="chip">{{ handedness }}</span>
+    <span class="chip">{{ park }}</span>
+  </div>
+  {% if note %}<div class="note">{{ note }}</div>{% endif %}
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+      <span class="handle">@xFriars</span>
+      <span class="tagline">San Diego Baseball Intelligence</span>
+    </div>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const PTS = {{ points | safe }};
+  const FILL = { barrel: "{{ hr_fill }}", hard_hit: "{{ xbh_fill }}", soft: "{{ out_fill }}" };
+  const ORD = { soft: 0, hard_hit: 1, barrel: 2 };
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth || 540, H = container.offsetHeight || 380;
+  const m = { t: 16, r: 26, b: 44, l: 50 };
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+
+  const x = d3.scaleLinear().domain([-40, 70]).range([m.l, W - m.r]);   // launch angle, deg
+  const y = d3.scaleLinear().domain([40, 120]).range([H - m.b, m.t]);   // exit velo, mph
+
+  // Sweet-spot launch-angle band (8–32°) — a fixed Statcast definition.
+  svg.append("rect")
+    .attr("x", x(8)).attr("y", m.t).attr("width", x(32) - x(8)).attr("height", (H - m.b) - m.t)
+    .attr("fill", "rgba(201,154,46,0.10)");
+  svg.append("text").attr("x", (x(8) + x(32)) / 2).attr("y", m.t + 12).attr("text-anchor", "middle")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ brown_dim }}")
+    .attr("letter-spacing", "0.1em").text("SWEET SPOT");
+
+  // Hard-hit reference line at 95 mph (fixed Statcast definition).
+  svg.append("line").attr("x1", m.l).attr("x2", W - m.r).attr("y1", y(95)).attr("y2", y(95))
+    .attr("stroke", "rgba(28,23,20,0.30)").attr("stroke-width", 1).attr("stroke-dasharray", "3 4");
+  svg.append("text").attr("x", W - m.r).attr("y", y(95) - 5).attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+    .text("95 mph · hard-hit");
+
+  // Axes
+  const xAxis = d3.axisBottom(x).ticks(6).tickSize(0).tickPadding(8).tickFormat(d => d + "°");
+  const yAxis = d3.axisLeft(y).ticks(5).tickSize(0).tickPadding(8);
+  const gx = svg.append("g").attr("transform", `translate(0,${H - m.b})`).call(xAxis);
+  const gy = svg.append("g").attr("transform", `translate(${m.l},0)`).call(yAxis);
+  [gx, gy].forEach(g => {
+    g.select(".domain").attr("stroke", "rgba(28,23,20,0.25)");
+    g.selectAll("text").attr("fill", "{{ text_muted }}").attr("font-family", "Space Grotesk").attr("font-size", 11);
+  });
+  svg.append("text").attr("x", (m.l + W - m.r) / 2).attr("y", H - 8).attr("text-anchor", "middle")
+    .attr("fill", "{{ text_muted }}").attr("font-size", 11).attr("font-weight", 600)
+    .attr("letter-spacing", "0.12em").text("LAUNCH ANGLE");
+  svg.append("text").attr("transform", "rotate(-90)").attr("x", -(m.t + H - m.b) / 2).attr("y", 15)
+    .attr("text-anchor", "middle").attr("fill", "{{ text_muted }}").attr("font-size", 11)
+    .attr("font-weight", 600).attr("letter-spacing", "0.12em").text("EXIT VELO");
+
+  const pts = PTS.slice().sort((a, b) => (ORD[a.kind] || 0) - (ORD[b.kind] || 0));
+  svg.append("g").selectAll("circle").data(pts).join("circle")
+    .attr("cx", d => x(d.x)).attr("cy", d => y(d.y))
+    .attr("r", d => d.kind === "barrel" ? 4.5 : 3.4)
+    .attr("fill", d => FILL[d.kind] || FILL.soft)
+    .attr("stroke", d => d.kind === "barrel" ? "{{ paper }}" : "none").attr("stroke-width", 1);
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

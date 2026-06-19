@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from padres_analytics.detect.candidates import SpatialDataset
-from padres_analytics.detect.spatial import build_hr_spray, build_spray
+from padres_analytics.detect.spatial import build_hr_spray, build_launch, build_spray
 
 if TYPE_CHECKING:
     import duckdb
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 _COLS = (
     "player_id, player_name, season, game_type, game_date, game_pk, at_bat_number, "
     "pitch_number, events, bb_type, description, stand, p_throws, hc_x, hc_y, "
-    "launch_speed, launch_angle, hit_distance_sc, estimated_woba, ingested_at"
+    "launch_speed, launch_angle, launch_speed_angle, hit_distance_sc, estimated_woba, ingested_at"
 )
 
 
@@ -32,10 +32,13 @@ def _insert(
     hc_x: float | None = 125.42,
     hc_y: float | None = 198.27,
     dist: float = 380.0,
+    ev: float = 95.0,
+    la: float = 22.0,
+    lsa: int | None = None,
 ) -> None:
     conn.execute(
         f"INSERT INTO statcast_batted_balls ({_COLS}) VALUES "
-        "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
             pid,
             "Test, Player",
@@ -52,8 +55,9 @@ def _insert(
             p_throws,
             hc_x,
             hc_y,
-            95.0,
-            22.0,
+            ev,
+            la,
+            lsa,
             dist,
             0.55,
             datetime(2024, 5, 1, 0, 0, 0),
@@ -131,3 +135,19 @@ def test_hr_spray_none_without_home_runs(padres_db: duckdb.DuckDBPyConnection) -
     """No home runs → no card."""
     _insert(padres_db, events="single")
     assert build_hr_spray(padres_db, 1, 2024) is None
+
+
+def test_launch_barrel_rate_uses_statcast_flag(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Barrels come from launch_speed_angle==6; rate is barrels / BBE."""
+    _insert(padres_db, ab=1, ev=104.0, la=28.0, lsa=6)  # barrel
+    _insert(padres_db, ab=2, ev=98.0, la=12.0, lsa=5)  # hard-hit, not barrel
+    _insert(padres_db, ab=3, ev=80.0, la=5.0, lsa=2)  # soft
+    _insert(padres_db, ab=4, ev=70.0, la=-5.0, lsa=1)  # soft
+    ds = build_launch(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "launch"
+    assert ds.n == 4
+    assert ds.hero is not None and ds.hero["value"] == "25.0%"  # 1 of 4
+    assert "1 barrels" in ds.hero["context"]
+    kinds = sorted(p.kind for p in ds.points if p.kind)
+    assert kinds == ["barrel", "hard_hit", "soft", "soft"]
