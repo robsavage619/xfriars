@@ -491,6 +491,68 @@ def ingest_statcast_cmd(
     typer.echo(f"Done. Season {ref_season} Statcast data refreshed.")
 
 
+@ingest_app.command("batted-balls")
+def ingest_batted_balls_cmd(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Fetch one hitter's event-level batted balls (hc_x/hc_y) for spray charts."""
+    configure_logging()
+    from padres_analytics.ingest.statcast_events import ingest_batted_balls
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting batted balls for player {player}, season {ref_season} …")
+
+    with connect() as conn:
+        initialize(conn)
+        try:
+            n = ingest_batted_balls(conn, ref_season, player)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} batted balls written to statcast_batted_balls.")
+
+
+@app.command()
+def spray(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    vs_hand: str = typer.Option("", "--vs", help="Filter pitcher hand: R or L (blank = all)."),
+) -> None:
+    """Render a spray-chart card from stored batted balls to the cards dir."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_spray
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    hand = vs_hand.upper() or None
+
+    with connect(read_only=True) as conn:
+        dataset = build_spray(conn, player, ref_season, vs_hand=hand)
+
+    if dataset is None:
+        typer.echo(
+            f"No plottable batted balls for player {player}, season {ref_season}. "
+            f"Run 'pad ingest batted-balls --player {player} --season {ref_season}' first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    cid = f"spray_{player}_{ref_season}" + (f"_{hand}" if hand else "")
+    try:
+        out = render_card(dataset, CARDS_DIR, cid)
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-BBE spray → {out}")
+
+
 # ── pad ingest standings ──────────────────────────────────────────────────────
 
 

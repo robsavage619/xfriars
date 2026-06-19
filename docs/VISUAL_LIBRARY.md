@@ -62,13 +62,15 @@ square spaces (movement, LA fan, rolling). Field = home-plate pentagon + outfiel
 foul lines, nothing else. Zone = one true-proportion box, 3×3 hairline split, faint dashed
 shadow-zone, catcher's POV.
 
-## Data layer (unbuilt)
-New event-level ingest via `pybaseball.statcast_batter(start,end,id)` /
-`statcast_pitcher(...)`. New storage tables for batted-ball events (hc_x, hc_y,
-launch_speed, launch_angle, hit_distance_sc, events, bb_type, estimated_woba_using_speedangle,
-p_throws, game_date) and pitch events (plate_x, plate_z, sz_top, sz_bot, pfx_x, pfx_z,
-release_*, pitch_type, description, p_throws, stand). Keyed by player + date range; gitignored
-cache like other Statcast pulls.
+## Data layer
+- ✅ **Batted balls (batter):** `pad ingest batted-balls --player <id> --season <yr>` →
+  `ingest_batted_balls` (`ingest/statcast_events.py`) via `pybaseball.statcast_batter`, stored
+  in `statcast_batted_balls` (hc_x/hc_y, launch_speed, launch_angle, hit_distance_sc, events,
+  bb_type, stand, p_throws, estimated_woba, **game_type**). `build_spray` (`detect/spatial.py`)
+  filters to `game_type='R'` — "season" = regular season, never spring/postseason.
+- ❌ **Pitch events (pitcher):** still unbuilt — `statcast_pitcher(...)` → table for plate_x,
+  plate_z, sz_top, sz_bot, pfx_x, pfx_z, release_*, pitch_type, description, p_throws, stand.
+  Needed for arsenal/movement, zones, and location heatmaps.
 
 ## Render layer
 New `SpatialDataset` payload (points + rigor fields) dispatched in `render/cards.py`.
