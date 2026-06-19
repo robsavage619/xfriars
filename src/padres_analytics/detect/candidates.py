@@ -131,7 +131,7 @@ class SpatialDataset(BaseModel):
     """
 
     kind: Literal["spatial"] = "spatial"
-    card: Literal["spray", "zone", "movement", "hr", "launch", "rolling"]
+    card: Literal["spray", "zone", "movement", "hr", "launch", "rolling", "hotcold"]
     title: str
     subtitle: str | None = None
     as_of: date

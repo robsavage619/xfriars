@@ -114,6 +114,8 @@ def ingest_batted_balls(
             _s(r.get("p_throws")),
             _f(r.get("hc_x")),
             _f(r.get("hc_y")),
+            _f(r.get("plate_x")),
+            _f(r.get("plate_z")),
             _f(r.get("launch_speed")),
             _f(r.get("launch_angle")),
             _i(r.get("launch_speed_angle")),
@@ -131,7 +133,7 @@ def ingest_batted_balls(
     conn.executemany(
         """
         INSERT INTO statcast_batted_balls VALUES
-        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         rows,
     )

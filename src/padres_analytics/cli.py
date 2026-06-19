@@ -579,6 +579,40 @@ def spray(
 
 
 @app.command()
+def hotcold(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a hot/cold zone card (xwOBA on contact by zone) from stored batted balls."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_hot_cold
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        dataset = build_hot_cold(conn, player, ref_season)
+
+    if dataset is None:
+        typer.echo(
+            f"No in-zone contact with location for player {player}, season {ref_season}. "
+            f"Re-run 'pad ingest batted-balls --player {player} --season {ref_season}' "
+            f"(plate_x/plate_z needed).",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(dataset, CARDS_DIR, f"hotcold_{player}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-BBE hot/cold → {out}")
+
+
+@app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),

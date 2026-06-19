@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from padres_analytics.detect.candidates import SpatialDataset
 from padres_analytics.detect.spatial import (
     build_arsenal,
+    build_hot_cold,
     build_hr_spray,
     build_launch,
     build_spray,
@@ -72,7 +73,8 @@ if TYPE_CHECKING:
 _COLS = (
     "player_id, player_name, season, game_type, game_date, game_pk, at_bat_number, "
     "pitch_number, events, bb_type, description, stand, p_throws, hc_x, hc_y, "
-    "launch_speed, launch_angle, launch_speed_angle, hit_distance_sc, estimated_woba, ingested_at"
+    "plate_x, plate_z, launch_speed, launch_angle, launch_speed_angle, hit_distance_sc, "
+    "estimated_woba, ingested_at"
 )
 
 
@@ -93,10 +95,13 @@ def _insert(
     ev: float = 95.0,
     la: float = 22.0,
     lsa: int | None = None,
+    plate_x: float | None = 0.0,
+    plate_z: float | None = 2.5,
+    xwoba: float = 0.55,
 ) -> None:
     conn.execute(
         f"INSERT INTO statcast_batted_balls ({_COLS}) VALUES "
-        "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
             pid,
             "Test, Player",
@@ -113,11 +118,13 @@ def _insert(
             p_throws,
             hc_x,
             hc_y,
+            plate_x,
+            plate_z,
             ev,
             la,
             lsa,
             dist,
-            0.55,
+            xwoba,
             datetime(2024, 5, 1, 0, 0, 0),
         ],
     )
@@ -235,6 +242,32 @@ def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection
 def test_zone_none_without_location(padres_db: duckdb.DuckDBPyConnection) -> None:
     """No stored pitches → no zone card."""
     assert build_zone(padres_db, 999, 2024) is None
+
+
+def test_hot_cold_suppresses_low_n_cells(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Cells with fewer than 5 batted balls render suppressed (value None)."""
+    # Middle cell (plate_x≈0, plate_z≈2.5): 6 BBE → filled.
+    for i in range(6):
+        _insert(padres_db, ab=i + 1, plate_x=0.0, plate_z=2.5, xwoba=0.500)
+    # Up-and-in cell: only 2 BBE → suppressed.
+    _insert(padres_db, ab=20, plate_x=0.6, plate_z=3.2, xwoba=0.900)
+    _insert(padres_db, ab=21, plate_x=0.6, plate_z=3.2, xwoba=0.900)
+    ds = build_hot_cold(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "hotcold"
+    assert ds.n == 8
+    by_cell = {(p.x, p.y): p for p in ds.points}
+    mid = by_cell[(1.0, 1.0)]
+    assert mid.value == 0.5 and mid.label == "6"
+    lown = next(p for p in ds.points if p.label == "2")
+    assert lown.value is None  # suppressed
+
+
+def test_hot_cold_excludes_out_of_zone(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Pitches outside the rulebook zone don't form cells (but count toward xwOBA)."""
+    _insert(padres_db, ab=1, plate_x=3.0, plate_z=2.5, xwoba=0.4)  # way outside
+    ds = build_hot_cold(padres_db, 1, 2024)
+    assert ds is None  # no in-zone contact → no card
 
 
 def test_launch_barrel_rate_uses_statcast_flag(padres_db: duckdb.DuckDBPyConnection) -> None:

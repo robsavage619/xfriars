@@ -235,6 +235,119 @@ def build_arsenal(
     )
 
 
+_ZONE_X = (-0.83, 0.83)  # rulebook zone half-width (ft)
+_ZONE_Z = (1.5, 3.5)  # league-average zone vertical bounds (ft)
+_CELL_FLOOR = 5  # batted balls per cell below which a cell is suppressed
+
+
+def _cell(plate_x: float, plate_z: float) -> tuple[int, int] | None:
+    """Map a pitch location to a 3x3 zone cell (col, row), catcher's POV.
+
+    Columns run left→right in screen space, i.e. high→low ``plate_x`` (catcher's
+    POV flips horizontal). Returns None for pitches outside the rulebook zone.
+    """
+    if not (_ZONE_X[0] <= plate_x <= _ZONE_X[1] and _ZONE_Z[0] <= plate_z <= _ZONE_Z[1]):
+        return None
+    span_x = (_ZONE_X[1] - _ZONE_X[0]) / 3
+    span_z = (_ZONE_Z[1] - _ZONE_Z[0]) / 3
+    # Screen column: positive plate_x plots left, so flip before bucketing.
+    col = min(2, int((_ZONE_X[1] - plate_x) / span_x))
+    row = min(2, int((_ZONE_Z[1] - plate_z) / span_z))  # row 0 = top (high z)
+    return col, row
+
+
+def build_hot_cold(
+    conn: duckdb.DuckDBPyConnection,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a hot/cold zone ``SpatialDataset`` — xwOBA on contact by zone cell.
+
+    Shades a 3x3 in-zone grid by mean ``estimated_woba_using_speedangle`` of balls
+    in play whose pitch was located in that cell, from the catcher's POV. Cells with
+    fewer than :data:`_CELL_FLOOR` batted balls are suppressed (value ``None``) — the
+    honesty mechanism that keeps a 1-ball cell from screaming red.
+
+    Args:
+        conn: Read connection to padres.db.
+        player_id: MLBAM batter id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="hotcold") with one point per filled
+        cell, or ``None`` when no in-zone contact with location + xwOBA exists.
+    """
+    rows = conn.execute(
+        """
+        SELECT player_name, plate_x, plate_z, estimated_woba
+        FROM statcast_batted_balls
+        WHERE player_id = ? AND season = ? AND game_type = 'R'
+          AND plate_x IS NOT NULL AND plate_z IS NOT NULL AND estimated_woba IS NOT NULL
+        """,
+        [player_id, season],
+    ).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    cells: dict[tuple[int, int], list[float]] = {}
+    overall: list[float] = []
+    for _name, px, pz, xwoba in rows:
+        overall.append(xwoba)
+        cell = _cell(px, pz)
+        if cell is not None:
+            cells.setdefault(cell, []).append(xwoba)
+
+    if not cells:
+        return None
+
+    points: list[SpatialPoint] = []
+    for (col, row), vals in cells.items():
+        n_cell = len(vals)
+        mean = sum(vals) / n_cell
+        points.append(
+            SpatialPoint(
+                x=float(col),
+                y=float(row),
+                value=round(mean, 3) if n_cell >= _CELL_FLOOR else None,
+                label=str(n_cell),
+            )
+        )
+
+    n = len(overall)
+    overall_xwoba = sum(overall) / n
+    suppressed = sum(1 for p in points if p.value is None)
+    note = "xwOBA on contact by zone · catcher's POV · cells <5 BBE suppressed"
+    if n < 150:
+        note = f"Small sample ({n} BBE) — illustrative · {note}"
+
+    name = _display_name(name_raw, str(player_id))
+    return SpatialDataset(
+        card="hotcold",
+        title=name,
+        subtitle=f"Hot & cold zones · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={
+            "value": f"{overall_xwoba:.3f}",
+            "label": "xwOBA / Contact",
+            "context": f"{n} BBE" + (f" · {suppressed} cells low-N" if suppressed else ""),
+        },
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        pov="Catcher's POV",
+        note=note,
+        source="Baseball Savant",
+        headline=f"{name} {season} hot/cold zones ({n} BBE)",
+        claim_scope=f"{season} season",
+    )
+
+
 def build_zone(
     conn: duckdb.DuckDBPyConnection,
     pitcher_id: int,

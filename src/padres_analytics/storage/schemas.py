@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -287,6 +287,8 @@ DDL_STATEMENTS: tuple[str, ...] = (
         p_throws         VARCHAR,
         hc_x             DOUBLE,
         hc_y             DOUBLE,
+        plate_x          DOUBLE,
+        plate_z          DOUBLE,
         launch_speed     DOUBLE,
         launch_angle     DOUBLE,
         launch_speed_angle INTEGER,
