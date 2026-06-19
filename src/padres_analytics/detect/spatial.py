@@ -348,6 +348,91 @@ def build_hot_cold(
     )
 
 
+def build_release(
+    conn: duckdb.DuckDBPyConnection,
+    pitcher_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a release-point ``SpatialDataset`` for one pitcher (Savant-style).
+
+    Each point is one pitch: ``x`` = horizontal release, ``y`` = release height,
+    both in feet, plotted from the catcher's POV (the template flips x). A tight
+    cluster = a repeatable arm slot; spread by pitch type can signal tipping.
+
+    Args:
+        conn: Read connection to padres.db.
+        pitcher_id: MLBAM pitcher id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="release"), or ``None`` when the
+        pitcher has no regular-season pitches with release data.
+    """
+    rows = conn.execute(
+        """
+        SELECT pitcher_name, pitch_type, release_pos_x, release_pos_z, release_speed
+        FROM statcast_pitches
+        WHERE pitcher_id = ? AND season = ? AND game_type = 'R'
+          AND release_pos_x IS NOT NULL AND release_pos_z IS NOT NULL
+          AND pitch_type IS NOT NULL
+        """,
+        [pitcher_id, season],
+    ).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    points: list[SpatialPoint] = []
+    heights: list[float] = []
+    counts: dict[str, int] = {}
+    for _name, pt, rx, rz, velo in rows:
+        points.append(
+            SpatialPoint(
+                x=round(rx, 3),
+                y=round(rz, 3),
+                kind=_pitch_family(pt),
+                label=pt,
+                value=round(velo, 1) if velo is not None else None,
+            )
+        )
+        heights.append(rz)
+        counts[pt] = counts.get(pt, 0) + 1
+
+    n = len(points)
+    avg_h = sum(heights) / n
+    n_types = len([pt for pt, c in counts.items() if c / n >= 0.02])
+
+    note = "Where the ball leaves the hand · catcher's POV · tight cluster = repeatable slot"
+    if n < 200:
+        note = f"Small sample ({n} pitches) — illustrative · {note}"
+
+    name = _display_name(name_raw, str(pitcher_id))
+    return SpatialDataset(
+        card="release",
+        title=name,
+        subtitle=f"Release point · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={
+            "value": f"{avg_h:.1f}",
+            "label": "Release Height (ft)",
+            "context": f"{n} pitches · {n_types} types",
+        },
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        pov="Catcher's POV",
+        note=note,
+        source="Baseball Savant",
+        headline=f"{name} {season} release point ({n} pitches)",
+        claim_scope=f"{season} season",
+    )
+
+
 def build_zone(
     conn: duckdb.DuckDBPyConnection,
     pitcher_id: int,

@@ -748,6 +748,39 @@ def zone(
     typer.echo(f"Rendered {dataset.n}-pitch zone → {out}")
 
 
+@app.command()
+def release(
+    player: int = typer.Option(..., "--player", help="MLBAM pitcher id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a release-point card from stored pitches."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_release
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        dataset = build_release(conn, player, ref_season)
+
+    if dataset is None:
+        typer.echo(
+            f"No pitches with release data for pitcher {player}, season {ref_season}. "
+            f"Run 'pad ingest pitches --player {player} --season {ref_season}' first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(dataset, CARDS_DIR, f"release_{player}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-pitch release point → {out}")
+
+
 # ── pad ingest standings ──────────────────────────────────────────────────────
 
 

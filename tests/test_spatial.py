@@ -11,6 +11,7 @@ from padres_analytics.detect.spatial import (
     build_hot_cold,
     build_hr_spray,
     build_launch,
+    build_release,
     build_spray,
     build_zone,
 )
@@ -224,6 +225,25 @@ def test_arsenal_families_and_inch_transform(padres_db: duckdb.DuckDBPyConnectio
 def test_arsenal_none_without_pitches(padres_db: duckdb.DuckDBPyConnection) -> None:
     """No stored pitches → no card."""
     assert build_arsenal(padres_db, 999, 2024) is None
+
+
+def test_release_height_hero_and_families(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Release card surfaces avg release height and classifies pitch families."""
+    for i in range(4):
+        _insert_pitch(padres_db, ab=i + 1, pitch_type="FF")  # release_pos_z = 6.0
+    _insert_pitch(padres_db, ab=9, pitch_type="SL")
+    ds = build_release(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "release"
+    assert ds.n == 5
+    assert ds.hero is not None and ds.hero["value"] == "6.0"
+    assert ds.pov == "Catcher's POV"
+    assert next(p for p in ds.points if p.label == "SL").kind == "breaking"
+
+
+def test_release_none_without_pitches(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """No stored pitches → no release card."""
+    assert build_release(padres_db, 999, 2024) is None
 
 
 def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection) -> None:
