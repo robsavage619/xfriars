@@ -14,8 +14,59 @@ from padres_analytics.detect.spatial import (
     build_release,
     build_rolling,
     build_spray,
+    build_swing_take,
     build_zone,
 )
+
+_BP_COLS = (
+    "batter_id, batter_name, season, game_type, game_date, game_pk, at_bat_number, "
+    "pitch_number, pitch_type, plate_x, plate_z, sz_top, sz_bot, zone, description, type, "
+    "delta_run_exp, bat_speed, swing_length, estimated_woba, stand, p_throws, ingested_at"
+)
+
+
+def _insert_batter_pitch(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    pid: int = 1,
+    season: int = 2024,
+    game_type: str = "R",
+    ab: int = 1,
+    px: float = 0.0,
+    pz: float = 2.5,
+    desc: str = "ball",
+    dre: float = 0.0,
+) -> None:
+    conn.execute(
+        f"INSERT INTO statcast_batter_pitches ({_BP_COLS}) VALUES "
+        "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            pid,
+            "Test, Player",
+            season,
+            game_type,
+            date(season, 5, 1),
+            100,
+            ab,
+            1,
+            "FF",
+            px,
+            pz,
+            3.5,
+            1.5,
+            5,
+            desc,
+            "B",
+            dre,
+            None,
+            None,
+            None,
+            "R",
+            "R",
+            datetime(2024, 5, 1, 0, 0, 0),
+        ],
+    )
+
 
 _PITCH_COLS = (
     "pitcher_id, pitcher_name, season, game_type, game_date, game_pk, at_bat_number, "
@@ -264,6 +315,29 @@ def test_rolling_none_when_too_few(padres_db: duckdb.DuckDBPyConnection) -> None
     for i in range(5):
         _insert(padres_db, ab=i + 1)
     assert build_rolling(padres_db, 1, 2024) is None
+
+
+def test_swing_take_regions_and_total(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Pitches bucket into attack regions; run value sums per region and overall."""
+    _insert_batter_pitch(padres_db, ab=1, px=0.0, pz=2.5, dre=4.0)  # heart
+    _insert_batter_pitch(padres_db, ab=2, px=0.8, pz=2.5, dre=-2.0)  # shadow
+    _insert_batter_pitch(padres_db, ab=3, px=1.3, pz=2.5, dre=3.0)  # chase
+    _insert_batter_pitch(padres_db, ab=4, px=2.0, pz=2.5, dre=1.0)  # waste
+    ds = build_swing_take(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "swingtake"
+    assert ds.n == 4
+    assert ds.hero is not None and ds.hero["value"] == "+6"  # 4 - 2 + 3 + 1
+    by = {p.kind: p.value for p in ds.points}
+    assert by["heart"] == 4.0
+    assert by["shadow"] == -2.0
+    assert by["chase"] == 3.0
+    assert by["waste"] == 1.0
+
+
+def test_swing_take_none_without_pitches(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """No faced pitches → no swing/take card."""
+    assert build_swing_take(padres_db, 999, 2024) is None
 
 
 def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection) -> None:

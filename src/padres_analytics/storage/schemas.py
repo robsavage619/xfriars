@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -332,6 +332,38 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_sc_pitches_pitcher_season
         ON statcast_pitches(pitcher_id, season)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS statcast_batter_pitches (
+        batter_id        INTEGER NOT NULL,
+        batter_name      VARCHAR,
+        season           INTEGER NOT NULL,
+        game_type        VARCHAR,
+        game_date        DATE,
+        game_pk          INTEGER NOT NULL,
+        at_bat_number    INTEGER NOT NULL,
+        pitch_number     INTEGER NOT NULL,
+        pitch_type       VARCHAR,
+        plate_x          DOUBLE,
+        plate_z          DOUBLE,
+        sz_top           DOUBLE,
+        sz_bot           DOUBLE,
+        zone             INTEGER,
+        description      VARCHAR,
+        type             VARCHAR,
+        delta_run_exp    DOUBLE,
+        bat_speed        DOUBLE,
+        swing_length     DOUBLE,
+        estimated_woba   DOUBLE,
+        stand            VARCHAR,
+        p_throws         VARCHAR,
+        ingested_at      TIMESTAMP,
+        PRIMARY KEY (batter_id, game_pk, at_bat_number, pitch_number)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_batterpitches_batter_season
+        ON statcast_batter_pitches(batter_id, season)
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_sc_percentile_year

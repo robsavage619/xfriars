@@ -309,6 +309,7 @@ _SPATIAL_TEMPLATES: dict[str, str] = {
     "hotcold": "card_hotcold.html.j2",
     "release": "card_release.html.j2",
     "rolling": "card_rolling.html.j2",
+    "swingtake": "card_swingtake.html.j2",
 }
 
 

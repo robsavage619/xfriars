@@ -353,6 +353,130 @@ def build_hot_cold(
     )
 
 
+_SWING_DESC = frozenset(
+    {
+        "swinging_strike",
+        "swinging_strike_blocked",
+        "foul",
+        "foul_tip",
+        "hit_into_play",
+        "foul_bunt",
+        "missed_bunt",
+        "bunt_foul_tip",
+    }
+)
+# Attack regions by Chebyshev distance from zone center (1.0 = rulebook edge) —
+# gives nested square rings (heart → shadow → chase → waste), matching Savant.
+_REGION_BOUNDS = (("heart", 0.67), ("shadow", 1.33), ("chase", 2.0))
+_REGION_ORDER = ("heart", "shadow", "chase", "waste")
+
+
+def _attack_region(
+    plate_x: float, plate_z: float, sz_top: float | None, sz_bot: float | None
+) -> str:
+    """Classify a pitch into a Savant-style attack region from its plate location."""
+    zc = (sz_top + sz_bot) / 2 if sz_top and sz_bot else 2.5
+    zhh = (sz_top - sz_bot) / 2 if sz_top and sz_bot and sz_top > sz_bot else 1.0
+    r = max(abs(plate_x) / 0.83, abs(plate_z - zc) / zhh)
+    for name, bound in _REGION_BOUNDS:
+        if r <= bound:
+            return name
+    return "waste"
+
+
+def build_swing_take(
+    conn: duckdb.DuckDBPyConnection,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a swing/take run-value ``SpatialDataset`` for one hitter.
+
+    Buckets every faced pitch into an attack region (heart/shadow/chase/waste) and
+    sums ``delta_run_exp`` (batter-perspective run value) per region. The hero is
+    the hitter's total run value for the season. Attack regions are reconstructed
+    from plate location (Chebyshev distance from the rulebook zone), labeled as
+    such on the card.
+
+    Args:
+        conn: Read connection to padres.db.
+        player_id: MLBAM batter id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="swingtake") with one point per
+        region, or ``None`` when no faced pitches with run value exist.
+    """
+    rows = conn.execute(
+        """
+        SELECT batter_name, plate_x, plate_z, sz_top, sz_bot, description, delta_run_exp
+        FROM statcast_batter_pitches
+        WHERE batter_id = ? AND season = ? AND game_type = 'R'
+          AND plate_x IS NOT NULL AND plate_z IS NOT NULL AND delta_run_exp IS NOT NULL
+        """,
+        [player_id, season],
+    ).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    agg: dict[str, dict[str, float]] = {
+        r: {"rv": 0.0, "n": 0.0, "swing_n": 0.0} for r in _REGION_ORDER
+    }
+    total_rv = 0.0
+    swings = 0
+    for _name, px, pz, st, sb, desc, dre in rows:
+        region = _attack_region(px, pz, st, sb)
+        a = agg[region]
+        a["rv"] += dre
+        a["n"] += 1
+        total_rv += dre
+        if desc in _SWING_DESC:
+            a["swing_n"] += 1
+            swings += 1
+
+    n = len(rows)
+    points: list[SpatialPoint] = []
+    for idx, region in enumerate(_REGION_ORDER):
+        a = agg[region]
+        swing_pct = a["swing_n"] / a["n"] if a["n"] else 0.0
+        points.append(
+            SpatialPoint(
+                x=float(idx),
+                y=0.0,
+                kind=region,
+                value=round(a["rv"], 1),
+                label=f"{int(a['n'])}|{swing_pct:.2f}",
+            )
+        )
+
+    swing_rate = swings / n if n else 0.0
+    name = _display_name(name_raw, str(player_id))
+    return SpatialDataset(
+        card="swingtake",
+        title=name,
+        subtitle=f"Swing / take run value · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={
+            "value": f"{total_rv:+.0f}",
+            "label": "Run Value",
+            "context": f"{n} pitches · {swing_rate:.0%} swing",
+        },
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        pov="Catcher's POV",
+        note="Run value by attack region (reconstructed from location) · + favors hitter",
+        source="Baseball Savant",
+        headline=f"{name} {season} swing/take run value ({total_rv:+.0f})",
+        claim_scope=f"{season} season",
+    )
+
+
 def build_rolling(
     conn: duckdb.DuckDBPyConnection,
     player_id: int,

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
+
+.card { width: 540px; height: 675px; display: flex; flex-direction: column; background: {{ paper }}; font-family: "Space Grotesk", sans-serif; color: {{ ink }}; }
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header { padding: 24px 30px 14px; display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0; }
+.kicker { font-weight: 600; font-size: 12px; color: {{ brown_dim }}; letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px; }
+.title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }}; letter-spacing: 0.01em; text-transform: uppercase; }
+.subtitle { font-size: 12px; color: {{ text_muted }}; margin-top: 6px; letter-spacing: 0.14em; text-transform: uppercase; }
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 24px; width: auto; }
+.as-of { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+.hero-line { display: flex; align-items: baseline; justify-content: center; gap: 12px; padding: 0 30px; flex-shrink: 0; }
+.hero-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 50px; line-height: 0.9; color: {{ ink }}; font-variant-numeric: tabular-nums; }
+.hero-label { font-weight: 600; font-size: 13px; color: {{ ink_soft }}; letter-spacing: 0.2em; text-transform: uppercase; }
+.hero-context { font-size: 13px; color: {{ text_muted }}; letter-spacing: 0.04em; }
+
+.key { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 8px 30px 0; flex-shrink: 0; }
+.key span { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+.ramp i { width: 26px; height: 9px; display: inline-block; }
+
+.harness { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px; padding: 8px 30px 4px; flex-shrink: 0; }
+.chip { font-size: 11px; color: {{ ink_soft }}; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.chip b { color: {{ ink }}; font-weight: 700; }
+.note { padding: 2px 30px 0; text-align: center; font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.02em; flex-shrink: 0; }
+
+.footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0; margin-top: 8px; }
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres · Statcast</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  {% if hero %}
+  <div class="hero-line">
+    <span class="hero-value">{{ hero.value }}</span>
+    <div style="display:flex;flex-direction:column">
+      <span class="hero-label">{{ hero.label }}</span>
+      {% if hero.context %}<span class="hero-context">{{ hero.context }}</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="key">
+    <span>Costs runs</span>
+    <span class="ramp"><i style="background:{{ slate }}"></i><i style="background:{{ paper_panel }}"></i><i style="background:{{ hr_fill }}"></i></span>
+    <span>Adds runs</span>
+  </div>
+
+  <div class="harness">
+    <span class="chip"><b>{{ n }}</b> Pitches</span>
+    <span class="chip">{{ coverage }}</span>
+    <span class="chip">{{ pov }}</span>
+  </div>
+  {% if note %}<div class="note">{{ note }}</div>{% endif %}
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const PTS = {{ points | safe }};
+  const SLATE = "{{ slate }}", PAPER = "{{ paper_panel }}", HOT = "{{ hr_fill }}", INK = "{{ ink }}";
+  const by = {}; PTS.forEach(p => { by[p.kind] = p; });
+  const REGIONS = ["waste", "chase", "shadow", "heart"]; // outer → inner
+  const FRAC = { waste: 1.0, chase: 0.78, shadow: 0.55, heart: 0.32 };
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth || 540, H = container.offsetHeight || 380;
+  const cx = W / 2, cy = H / 2;
+  const S = Math.min(W, H) / 2 * 0.86;
+
+  const maxAbs = Math.max(1, d3.max(PTS, p => Math.abs(p.value)));
+  const color = d3.scaleLinear().domain([-maxAbs, 0, maxAbs]).range([SLATE, PAPER, HOT]).clamp(true);
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+
+  // Nested filled squares, outer → inner (each covers the next, leaving rings).
+  REGIONS.forEach(reg => {
+    const h = FRAC[reg] * S, p = by[reg] || { value: 0 };
+    svg.append("rect").attr("x", cx - h).attr("y", cy - h).attr("width", 2 * h).attr("height", 2 * h)
+      .attr("fill", color(p.value)).attr("stroke", "{{ paper }}").attr("stroke-width", 1.5);
+  });
+
+  // Rulebook strike-zone reference (~r=1.0, between heart and shadow).
+  const zh = 0.435 * S;
+  svg.append("rect").attr("x", cx - zh).attr("y", cy - zh).attr("width", 2 * zh).attr("height", 2 * zh)
+    .attr("fill", "none").attr("stroke", "{{ brown }}").attr("stroke-width", 1).attr("stroke-dasharray", "4 4").attr("stroke-opacity", 0.5);
+
+  // Region labels: name + run value. Heart centered; each ring labels its own
+  // top-left corner, so they spread along a diagonal instead of stacking.
+  function fmt(v) { return (v >= 0 ? "+" : "") + v.toFixed(0); }
+  function place(reg, x, y, center) {
+    const p = by[reg]; if (!p) return;
+    const anchor = center ? "middle" : "start";
+    const g = svg.append("g");
+    g.append("text").attr("x", x).attr("y", y).attr("text-anchor", anchor)
+      .attr("font-family", "Space Grotesk").attr("font-size", 9).attr("font-weight", 600)
+      .attr("fill", INK).attr("letter-spacing", "0.12em")
+      .attr("paint-order", "stroke").attr("stroke", "{{ paper }}").attr("stroke-width", 2.5)
+      .text(reg.toUpperCase());
+    g.append("text").attr("x", x).attr("y", y + 19).attr("text-anchor", anchor)
+      .attr("font-family", "Big Shoulders Display").attr("font-size", 22).attr("font-weight", 800)
+      .attr("fill", INK).attr("font-variant-numeric", "tabular-nums")
+      .attr("paint-order", "stroke").attr("stroke", "{{ paper }}").attr("stroke-width", 3)
+      .text(fmt(p.value));
+  }
+  place("heart", cx, cy - 4, true);
+  place("shadow", cx - FRAC.shadow * S + 12, cy - FRAC.shadow * S + 20, false);
+  place("chase", cx - FRAC.chase * S + 12, cy - FRAC.chase * S + 20, false);
+  place("waste", cx - FRAC.waste * S + 12, cy - FRAC.waste * S + 20, false);
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

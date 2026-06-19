@@ -516,6 +516,31 @@ def ingest_batted_balls_cmd(
     typer.echo(f"Done. {n} batted balls written to statcast_batted_balls.")
 
 
+@ingest_app.command("batter-pitches")
+def ingest_batter_pitches_cmd(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Fetch every pitch a hitter faced (run value, attack zone, bat tracking)."""
+    configure_logging()
+    from padres_analytics.ingest.statcast_events import ingest_batter_pitches
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting faced pitches for batter {player}, season {ref_season} …")
+
+    with connect() as conn:
+        initialize(conn)
+        try:
+            n = ingest_batter_pitches(conn, ref_season, player)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} pitches written to statcast_batter_pitches.")
+
+
 @ingest_app.command("pitches")
 def ingest_pitches_cmd(
     player: int = typer.Option(..., "--player", help="MLBAM pitcher id."),
@@ -642,6 +667,40 @@ def rolling(
         raise typer.Exit(ERR) from exc
 
     typer.echo(f"Rendered {dataset.n}-BBE rolling xwOBA → {out}")
+
+
+@app.command()
+def swingtake(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a swing/take run-value card from stored faced pitches."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_swing_take
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        dataset = build_swing_take(conn, player, ref_season)
+
+    if dataset is None:
+        typer.echo(
+            f"No faced pitches with run value for player {player}, season {ref_season}. "
+            f"Run 'pad ingest batter-pitches --player {player} --season {ref_season}' first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(dataset, CARDS_DIR, f"swingtake_{player}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    rv = (dataset.hero or {}).get("value", "")
+    typer.echo(f"Rendered swing/take ({rv} RV) → {out}")
 
 
 @app.command()
