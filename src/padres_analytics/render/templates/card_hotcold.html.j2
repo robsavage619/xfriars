@@ -114,12 +114,15 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
   const W = container.offsetWidth || 540, H = container.offsetHeight || 380;
   const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
 
-  // Mirror the Baseball.zone projection so cells line up with the box drawn after.
-  const s = Math.min((W - 36) / 4, (H - 16) / 4.4), cx = W / 2, zc = 2.4, cyMid = 8 + (H - 16) / 2;
-  const toPx = (x, z) => [cx - x * s, cyMid + (zc - z) * s];
-  const L = toPx(0.83, 3.5)[0], T = toPx(0.83, 3.5)[1];
-  const R = toPx(-0.83, 1.5)[0], B = toPx(-0.83, 1.5)[1];
-  const cw = (R - L) / 3, ch = (B - T) / 3;
+  // The 3x3 grid is the hero — size it to fill the chart area at the true zone
+  // aspect (1.66 ft wide x 2.0 ft tall), leaving room for the dashed shadow zone.
+  const marginY = 34;
+  const boxH = H - 2 * marginY;
+  const boxW = boxH * (1.66 / 2.0);
+  const T = marginY, B = T + boxH;
+  const cx = W / 2, L = cx - boxW / 2, R = cx + boxW / 2;
+  const cw = boxW / 3, ch = boxH / 3;
+  const brown = "{{ brown }}";
 
   // Diverging xwOBA scale: cold (slate) → league avg .320 (paper) → hot (red).
   const color = d3.scaleLinear().domain([0.250, 0.320, 0.450]).range([SLATE, PAPER, HOT]).clamp(true);
@@ -131,18 +134,30 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
     cells.append("rect").attr("x", x).attr("y", y).attr("width", cw).attr("height", ch)
       .attr("fill", filled ? color(c.value) : "rgba(28,23,20,0.05)");
     if (filled) {
-      cells.append("text").attr("x", x + cw / 2).attr("y", y + ch / 2 + 6).attr("text-anchor", "middle")
-        .attr("font-family", "Space Grotesk").attr("font-size", 19).attr("font-weight", 700).attr("fill", INK)
+      cells.append("text").attr("x", x + cw / 2).attr("y", y + ch / 2 + 9).attr("text-anchor", "middle")
+        .attr("font-family", "Space Grotesk").attr("font-size", 26).attr("font-weight", 700).attr("fill", INK)
         .attr("font-variant-numeric", "tabular-nums").text(c.value.toFixed(3).replace(/^0/, ""));
     } else {
       cells.append("text").attr("x", x + cw / 2).attr("y", y + ch / 2 + 5).attr("text-anchor", "middle")
-        .attr("font-family", "Space Grotesk").attr("font-size", 11).attr("fill", "{{ text_muted }}")
+        .attr("font-family", "Space Grotesk").attr("font-size", 14).attr("fill", "{{ text_muted }}")
         .text("n=" + c.label);
     }
   });
 
-  // Zone box + hairlines + shadow on top of the cells.
-  window.Baseball.zone(svg, W, H, { brown: "{{ brown }}" });
+  // Dashed shadow zone (one ball-width outside), then the box + 3x3 hairlines.
+  const offX = boxW * (0.121 / 1.66), offY = boxH * (0.121 / 2.0);
+  svg.append("rect").attr("x", L - offX).attr("y", T - offY)
+    .attr("width", boxW + 2 * offX).attr("height", boxH + 2 * offY)
+    .attr("fill", "none").attr("stroke", brown).attr("stroke-opacity", 0.25)
+    .attr("stroke-width", 0.5).attr("stroke-dasharray", "4 4");
+  svg.append("rect").attr("x", L).attr("y", T).attr("width", boxW).attr("height", boxH)
+    .attr("fill", "none").attr("stroke", brown).attr("stroke-width", 1.5);
+  [1, 2].forEach(i => {
+    svg.append("line").attr("x1", L + cw * i).attr("x2", L + cw * i).attr("y1", T).attr("y2", B)
+      .attr("stroke", brown).attr("stroke-opacity", 0.4).attr("stroke-width", 0.75);
+    svg.append("line").attr("x1", L).attr("x2", R).attr("y1", T + ch * i).attr("y2", T + ch * i)
+      .attr("stroke", brown).attr("stroke-opacity", 0.4).attr("stroke-width", 0.75);
+  });
 
   document.getElementById("chart-ready").style.display = "block";
 })();
