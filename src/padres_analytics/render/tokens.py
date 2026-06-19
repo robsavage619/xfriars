@@ -20,6 +20,17 @@ GOLD = "#C99A2E"  # brand gold, deepened for paper — single accent rule only
 TEXT_MUTED = "#9A8E80"  # warm gray-sand — captions, axis text, sub-labels
 HAIRLINE = "rgba(28, 23, 20, 0.12)"  # thin dividers on paper
 HOT = "#C0392B"  # protagonist accent on scatter (Savant-hot, editorial red)
+SLATE = "#2C6E7F"  # CVD-safe cool anchor — the cold end of diverging hot/cold scales
+
+# Single-hue brown density ramp (spray/heatmap) — paper → deep brown, luminance-monotonic.
+# Sequential "how much"; reserve HOT only for the single peak so the eye lands there.
+DENSITY_RAMP = ("#EDE6D7", "#C9B89A", "#8A6F52", "#4A3526")
+
+# Savant outcome fills for batted-ball events, tuned for the paper canvas.
+OUT_FILL = "rgba(28,23,20,0.28)"  # outs — muted ink, recede
+HIT_FILL = "#8A6F52"  # singles/doubles — mid brown
+XBH_FILL = "#C99A2E"  # extra-base hits — gold
+HR_FILL = "#C0392B"  # home runs — hot red, the loud element
 
 ROW_ALT = PAPER_PANEL  # alternating row tint
 HIGHLIGHT_BG = "#F3E7CB"  # gold wash for the Padre row (light)
@@ -63,6 +74,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 XFRIARS_LOGO_PNG = ASSETS_DIR / "xfriars_logo.png"
 D3_JS = STATIC_DIR / "d3.v7.min.js"
 PLOT_JS = STATIC_DIR / "plot.min.js"  # Observable Plot, vendored (P1+)
+BASEBALL_JS = STATIC_DIR / "baseball.js"  # shared field/zone geometry kit
 INTER_TTF = FONTS_DIR / "InterVariable.ttf"
 BARLOW_REGULAR_TTF = FONTS_DIR / "BarlowCondensed-Regular.ttf"
 BARLOW_SEMIBOLD_TTF = FONTS_DIR / "BarlowCondensed-SemiBold.ttf"

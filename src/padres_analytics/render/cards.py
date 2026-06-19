@@ -12,12 +12,18 @@ from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from padres_analytics.detect.candidates import ChartDataset, SeriesPayload, TablePayload
+from padres_analytics.detect.candidates import (
+    ChartDataset,
+    SeriesPayload,
+    SpatialDataset,
+    TablePayload,
+)
 from padres_analytics.render.select import IMPLEMENTED_CARDS, select_card
 from padres_analytics.render.tokens import (
     BARLOW_BOLD_TTF,
     BARLOW_REGULAR_TTF,
     BARLOW_SEMIBOLD_TTF,
+    BASEBALL_JS,
     BEBAS_NEUE_TTF,
     BG_DEEP,
     BG_PANEL,
@@ -34,22 +40,27 @@ from padres_analytics.render.tokens import (
     HAIRLINE,
     HIGHLIGHT_BG,
     HIGHLIGHT_EDGE,
+    HIT_FILL,
     HOT,
+    HR_FILL,
     INK,
     INK_SOFT,
     INTER_TTF,
     NEGATIVE,
+    OUT_FILL,
     PAPER,
     PAPER_PANEL,
     PLOT_JS,
     POSITIVE,
     ROW_ALT,
+    SLATE,
     SPACE_GROTESK_TTF,
     TEXT_MUTED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     VIEWPORT_H,
     VIEWPORT_W,
+    XBH_FILL,
     XFRIARS_LOGO_PNG,
 )
 
@@ -165,6 +176,12 @@ def _token_kwargs() -> dict[str, str]:
         "brown_dim": BROWN_DIM,
         "hairline": HAIRLINE,
         "hot": HOT,
+        "slate": SLATE,
+        "out_fill": OUT_FILL,
+        "hit_fill": HIT_FILL,
+        "xbh_fill": XBH_FILL,
+        "hr_fill": HR_FILL,
+        "baseball_js": str(BASEBALL_JS),
         "text_muted": TEXT_MUTED,
         "gold": GOLD,
         "gold_dim": GOLD_DIM,
@@ -280,6 +297,11 @@ _CARD_TEMPLATES: dict[str, str] = {
     "bar": "card_bar.html.j2",
 }
 
+# Spatial (event-level) cards — each carries the rigor harness. Grows per phase.
+_SPATIAL_TEMPLATES: dict[str, str] = {
+    "spray": "card_spray.html.j2",
+}
+
 
 _PLAYER_ID_KEYS = ("padre_player_id", "player_id", "subject_id")
 
@@ -362,8 +384,51 @@ def _render_dataset(
     return chosen
 
 
+def _render_spatial(dataset: SpatialDataset, out_path: Path) -> str:
+    """Render a SpatialDataset (event-level card) to a portrait PNG.
+
+    The rigor harness (n/coverage/handedness/park) is required on the model, so a
+    card that cannot state its denominators never reaches this function.
+
+    Args:
+        dataset: The validated spatial dataset.
+        out_path: Destination PNG path.
+
+    Returns:
+        The card type rendered.
+
+    Raises:
+        RenderError: If the card type has no template yet, or rendering fails.
+    """
+    if dataset.card not in _SPATIAL_TEMPLATES:
+        raise RenderError(
+            f"Spatial card {dataset.card!r} not renderable yet. "
+            f"Implemented: {', '.join(sorted(_SPATIAL_TEMPLATES))}"
+        )
+
+    template = _JINJA_ENV.get_template(_SPATIAL_TEMPLATES[dataset.card])
+    points = json.dumps([p.model_dump(mode="json") for p in dataset.points], default=str)
+    html = template.render(
+        title=dataset.title,
+        subtitle=dataset.subtitle,
+        as_of=str(dataset.as_of),
+        hero=dataset.hero,
+        n=dataset.n,
+        coverage=dataset.coverage,
+        handedness=dataset.handedness,
+        park=dataset.park,
+        pov=dataset.pov,
+        note=dataset.note,
+        source=dataset.source,
+        points=points,
+        **_token_kwargs(),
+    )
+    _html_to_png(html, out_path, CARD_VIEWPORT_W, CARD_VIEWPORT_H)
+    return dataset.card
+
+
 def render(
-    facts: TablePayload | SeriesPayload | ChartDataset,
+    facts: TablePayload | SeriesPayload | ChartDataset | SpatialDataset,
     out_dir: Path,
     candidate_id: str,
     visual: str = "table",
@@ -389,7 +454,9 @@ def render(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{candidate_id}.png"
 
-    if isinstance(facts, ChartDataset):
+    if isinstance(facts, SpatialDataset):
+        _render_spatial(facts, out_path)
+    elif isinstance(facts, ChartDataset):
         _render_dataset(facts, out_path, card=card)
     elif isinstance(facts, TablePayload):
         _render_table(facts, out_path, visual=visual)

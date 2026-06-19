@@ -111,6 +111,44 @@ class ChartDataset(BaseModel):
     facts: dict[str, str | int | float] = {}  # flat audited scalars
 
 
+class SpatialPoint(BaseModel):
+    """One plotted event in a spatial visual — a batted ball or a pitch."""
+
+    x: float  # transformed field-feet (spray), plate-feet (zone), or inches (movement)
+    y: float
+    kind: str | None = None  # outcome class → drives fill (out/single/.../home_run)
+    value: float | None = None  # optional magnitude (exit velo, xwOBA, distance)
+    label: str | None = None  # in-situ annotation, used sparingly
+
+
+class SpatialDataset(BaseModel):
+    """Event-level spatial visual with a mandatory rigor harness.
+
+    Unlike :class:`ChartDataset` (column-role driven), spatial cards plot many
+    raw coordinate points. The rigor fields (``n``/``coverage``/``handedness``/
+    ``pov``/``park``) are REQUIRED by construction — a card that cannot state its
+    denominators must not render. This enforces accuracy-first at the type level.
+    """
+
+    kind: Literal["spatial"] = "spatial"
+    card: Literal["spray", "zone", "movement", "hr", "launch", "rolling"]
+    title: str
+    subtitle: str | None = None
+    as_of: date
+    points: Annotated[list[SpatialPoint], Field(min_length=1)]
+    hero: dict | None = None  # optional {value, label, context} callout
+    # ── rigor harness (required — printed on the card face) ──
+    n: int  # sample size (BBE / pitches / HR)
+    coverage: str  # "Since May 1" / "2026 season"
+    handedness: str  # "vs RHP" | "vs LHP" | "All"
+    park: str  # "Petco Park" | "All parks"
+    pov: str = ""  # "Catcher's POV" for zones/movement; "" for spray
+    note: str = ""  # small-sample / shift-era caveat line
+    source: str
+    headline: str  # one-sentence hook for Claude; never rendered on card
+    claim_scope: str
+
+
 class StatCandidate(BaseModel):
     """A detector-emitted stat with full provenance."""
 
