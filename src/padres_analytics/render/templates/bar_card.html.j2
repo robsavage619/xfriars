@@ -21,7 +21,7 @@ html, body {
   width: 800px;
   height: 450px;
   overflow: hidden;
-  background: {{ bg_deep }};
+  background: {{ paper }};
 }
 
 .card {
@@ -29,16 +29,16 @@ html, body {
   height: 450px;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(ellipse 110% 80% at 30% 0%, #1f1812 0%, #13100c 70%);
+  background: {{ paper }};
+  border-top: 4px solid {{ brown }};
   font-family: "Space Grotesk", sans-serif;
-  color: {{ text_primary }};
+  color: {{ ink }};
 }
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 .header {
   padding: 14px 24px 10px;
-  border-bottom: 1px solid rgba(255, 196, 37, 0.35);
-  box-shadow: 0 1px 0 rgba(255, 196, 37, 0.08);
+  border-bottom: 1px solid {{ hairline }};
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -48,18 +48,18 @@ html, body {
   font-family: "Space Grotesk", sans-serif;
   font-weight: 600;
   font-size: 11px;
-  color: {{ gold }};
+  color: {{ brown_dim }};
   letter-spacing: 0.22em;
   text-transform: uppercase;
   margin-bottom: 5px;
 }
 .title {
   font-family: "Big Shoulders Display", sans-serif;
-  font-weight: 900;
+  font-weight: 800;
   font-size: 44px;
   line-height: 0.95;
-  color: #FFFFFF;
-  letter-spacing: 0.08em;
+  color: {{ ink }};
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -69,7 +69,7 @@ html, body {
   font-family: "Space Grotesk", sans-serif;
   font-weight: 400;
   font-size: 12px;
-  color: {{ text_secondary }};
+  color: {{ text_muted }};
   margin-top: 4px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -82,11 +82,10 @@ html, body {
   align-items: flex-end;
   gap: 4px;
 }
-.logo-img { height: 28px; width: auto; display: block; opacity: 0.92; }
+.logo-img { height: 28px; width: auto; display: block; }
 .as-of {
   font-size: 10px;
-  color: {{ text_secondary }};
-  opacity: 0.65;
+  color: {{ text_muted }};
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   font-family: "Space Grotesk", sans-serif;
@@ -106,14 +105,13 @@ html, body {
   justify-content: space-between;
   align-items: center;
   padding: 6px 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid {{ hairline }};
   flex-shrink: 0;
 }
 .source {
   font-family: "Space Grotesk", sans-serif;
   font-size: 10px;
-  color: {{ text_secondary }};
-  opacity: 0.5;
+  color: {{ text_muted }};
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -121,15 +119,14 @@ html, body {
   font-family: "Space Grotesk", sans-serif;
   font-size: 15px;
   font-weight: 700;
-  color: {{ gold }};
+  color: {{ brown }};
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 .tagline {
   font-family: "Space Grotesk", sans-serif;
   font-size: 10px;
-  color: {{ text_secondary }};
-  opacity: 0.4;
+  color: {{ text_muted }};
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -170,11 +167,11 @@ html, body {
   const HL_IDX  = {{ highlight_row if highlight_row is not none else -1 }};
 
   const GOLD       = "{{ gold }}";
-  const GOLD_A20   = "rgba(255,196,37,0.22)";
-  const GOLD_A10   = "rgba(255,196,37,0.15)";
-  const TEXT_PRI   = "{{ text_primary }}";
-  const TEXT_SEC   = "{{ text_secondary }}";
-  const BG_DEEP    = "{{ bg_deep }}";
+  const INK        = "{{ ink }}";
+  const GOLD_WASH  = "rgba(201,154,46,0.12)";
+  const TRACK      = "rgba(28,23,20,0.07)";
+  const DIM        = "rgba(28,23,20,0.16)";
+  const TEXT_SEC   = "{{ text_muted }}";
 
   // ── Layout constants ──────────────────────────────────────────────
   const container  = document.getElementById("chart-area");
@@ -205,42 +202,6 @@ html, body {
     .attr("width", W)
     .attr("height", H);
 
-  // ── Defs: gradients + glow filter ─────────────────────────────────
-  const defs = svg.append("defs");
-
-  // Dim bar gradient (non-highlighted)
-  const gradDim = defs.append("linearGradient")
-    .attr("id", "bar-grad-dim")
-    .attr("x1", "0%").attr("y1", "0%")
-    .attr("x2", "100%").attr("y2", "0%");
-  gradDim.append("stop").attr("offset", "0%")
-    .attr("stop-color", GOLD).attr("stop-opacity", 0.22);
-  gradDim.append("stop").attr("offset", "100%")
-    .attr("stop-color", GOLD).attr("stop-opacity", 0.40);
-
-  // Bright bar gradient (highlighted)
-  const gradHL = defs.append("linearGradient")
-    .attr("id", "bar-grad-hl")
-    .attr("x1", "0%").attr("y1", "0%")
-    .attr("x2", "100%").attr("y2", "0%");
-  gradHL.append("stop").attr("offset", "0%")
-    .attr("stop-color", GOLD).attr("stop-opacity", 0.75);
-  gradHL.append("stop").attr("offset", "100%")
-    .attr("stop-color", GOLD).attr("stop-opacity", 1.0);
-
-  // Glow filter for highlighted bar
-  const glow = defs.append("filter")
-    .attr("id", "bar-glow")
-    .attr("x", "-10%").attr("y", "-80%")
-    .attr("width", "120%").attr("height", "260%");
-  glow.append("feGaussianBlur")
-    .attr("in", "SourceGraphic")
-    .attr("stdDeviation", "6")
-    .attr("result", "blur");
-  const merge = glow.append("feMerge");
-  merge.append("feMergeNode").attr("in", "blur");
-  merge.append("feMergeNode").attr("in", "SourceGraphic");
-
   // ── Row groups ────────────────────────────────────────────────────
   const rows = svg.selectAll(".row")
     .data(DATA)
@@ -255,7 +216,7 @@ html, body {
     .attr("x2", W - marginR)
     .attr("y1", rowH)
     .attr("y2", rowH)
-    .attr("stroke", "rgba(255,255,255,0.05)")
+    .attr("stroke", "rgba(28,23,20,0.08)")
     .attr("stroke-width", 1);
 
   // Highlight row background wash
@@ -265,7 +226,7 @@ html, body {
     .attr("y", 1)
     .attr("width", W)
     .attr("height", rowH - 2)
-    .attr("fill", GOLD_A10)
+    .attr("fill", GOLD_WASH)
     .attr("rx", 2);
 
   // Highlight left accent bar
@@ -321,8 +282,7 @@ html, body {
     .attr("font-family", "Space Grotesk, sans-serif")
     .attr("font-weight", (d, i) => i === HL_IDX ? 600 : 500)
     .attr("font-size", (d, i) => i === HL_IDX ? 13.5 : 13)
-    .attr("fill", "#FFFFFF")
-    .attr("fill-opacity", (d, i) => i === HL_IDX ? 1.0 : 0.88)
+    .attr("fill", (d, i) => i === HL_IDX ? INK : TEXT_SEC)
     .text(d => d.label);
 
   if (hasSub) {
@@ -345,17 +305,16 @@ html, body {
     .attr("y", Math.floor((rowH - barH) / 2))
     .attr("width", barW)
     .attr("height", barH)
-    .attr("fill", "rgba(255,255,255,0.07)")
+    .attr("fill", TRACK)
     .attr("rx", barRadius);
 
-  // ── Bar fill ──────────────────────────────────────────────────────
+  // ── Bar fill — solid gold for the protagonist, muted ink for the field ──
   rows.append("rect")
     .attr("x", barX)
     .attr("y", Math.floor((rowH - barH) / 2))
     .attr("width", d => Math.max(xScale(+d.pct), barRadius * 2))
     .attr("height", barH)
-    .attr("fill", (d, i) => i === HL_IDX ? "url(#bar-grad-hl)" : "url(#bar-grad-dim)")
-    .attr("filter", (d, i) => i === HL_IDX ? "url(#bar-glow)" : null)
+    .attr("fill", (d, i) => i === HL_IDX ? GOLD : DIM)
     .attr("rx", barRadius);
 
   // ── Value label ───────────────────────────────────────────────────
@@ -367,8 +326,7 @@ html, body {
     .attr("font-family", "Space Grotesk, sans-serif")
     .attr("font-weight", (d, i) => i === HL_IDX ? 700 : 500)
     .attr("font-size", (d, i) => i === HL_IDX ? 18 : 13)
-    .attr("fill", (d, i) => i === HL_IDX ? GOLD : TEXT_SEC)
-    .attr("fill-opacity", (d, i) => i === HL_IDX ? 1.0 : 0.75)
+    .attr("fill", (d, i) => i === HL_IDX ? INK : TEXT_SEC)
     .attr("font-variant-numeric", "tabular-nums")
     .attr("letter-spacing", "0.04em")
     .text(d => d.value);

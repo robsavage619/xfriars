@@ -17,48 +17,50 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html, body { width: 540px; height: 675px; overflow: hidden; background: {{ bg_deep }}; }
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
 
 .card {
   width: 540px; height: 675px; display: flex; flex-direction: column;
-  background: radial-gradient(ellipse 120% 60% at 50% -5%, #241a12 0%, #14100c 64%);
-  font-family: "Space Grotesk", sans-serif; color: {{ text_primary }};
+  background: {{ paper }};
+  font-family: "Space Grotesk", sans-serif; color: {{ ink }};
 }
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
 
 .header {
-  padding: 24px 30px 14px; border-bottom: 1px solid rgba(255, 196, 37, 0.30);
+  padding: 24px 30px 16px; border-bottom: 1px solid {{ hairline }};
   display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0;
 }
 .kicker {
-  font-weight: 600; font-size: 12px; color: {{ gold }};
+  font-weight: 600; font-size: 12px; color: {{ brown_dim }};
   letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px;
 }
 .title {
   font-family: "Big Shoulders Display", sans-serif;
-  font-weight: 900; font-size: 42px; line-height: 0.94; color: #FFFFFF;
-  letter-spacing: 0.03em; text-transform: uppercase;
+  font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }};
+  letter-spacing: 0.01em; text-transform: uppercase;
 }
 .subtitle {
-  font-size: 12px; color: {{ text_secondary }}; margin-top: 6px;
+  font-size: 12px; color: {{ text_muted }}; margin-top: 6px;
   letter-spacing: 0.14em; text-transform: uppercase;
 }
 .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
-.logo-img { height: 32px; width: auto; opacity: 0.92; }
-.as-of { font-size: 11px; color: {{ text_secondary }}; opacity: 0.65; letter-spacing: 0.08em; text-transform: uppercase; }
+.logo-img { height: 32px; width: auto; }
+.as-of { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
 
 .chart-area { flex: 1; overflow: hidden; position: relative; }
 
 .footer {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 30px 18px; border-top: 1px solid rgba(255, 255, 255, 0.07); flex-shrink: 0;
+  padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0;
 }
-.source { font-size: 10px; color: {{ text_secondary }}; opacity: 0.55; letter-spacing: 0.1em; text-transform: uppercase; }
-.handle { font-size: 16px; font-weight: 700; color: {{ gold }}; letter-spacing: 0.14em; text-transform: uppercase; }
-.tagline { font-size: 10px; color: {{ text_secondary }}; opacity: 0.4; letter-spacing: 0.14em; text-transform: uppercase; }
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
 </style>
 </head>
 <body>
 <div class="card">
+  <div class="top-rule"></div>
 
   <div class="header">
     <div class="header-left">
@@ -89,8 +91,10 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ bg_de
 (function() {
   const DS    = {{ dataset | safe }};
   const GOLD  = "{{ gold }}";
-  const TEXTP = "{{ text_primary }}";
-  const TEXTS = "{{ text_secondary }}";
+  const INK   = "{{ ink }}";
+  const TEXTS = "{{ text_muted }}";
+  const TRACK = "rgba(28,23,20,0.07)";
+  const DIM   = "rgba(28,23,20,0.16)";
 
   const dimIdx = DS.columns.findIndex(c => c.role === "dimension" || c.role === "label");
   const valIdx = DS.columns.findIndex(c => c.role === "measure");
@@ -126,10 +130,6 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ bg_de
   const x = d3.scaleLinear().domain([base, hi]).range([barX, barX + barMaxW]);
 
   const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
-  const defs = svg.append("defs");
-  const grad = defs.append("linearGradient").attr("id", "fill").attr("x1", "0%").attr("x2", "100%");
-  grad.append("stop").attr("offset", "0%").attr("stop-color", GOLD).attr("stop-opacity", 0.30);
-  grad.append("stop").attr("offset", "100%").attr("stop-color", GOLD).attr("stop-opacity", 0.92);
 
   const rows = svg.selectAll(".row").data(data).join("g")
     .attr("transform", (d, i) => `translate(0, ${i * rowH})`);
@@ -140,26 +140,27 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ bg_de
     .attr("x", padL).attr("y", cy).attr("dy", "0.35em")
     .attr("font-family", "Space Grotesk, sans-serif").attr("font-size", 14)
     .attr("font-weight", d => d.hot ? 700 : 500)
-    .attr("fill", d => d.hot ? "#FFFFFF" : TEXTP).attr("fill-opacity", d => d.hot ? 1 : 0.7)
+    .attr("fill", d => d.hot ? INK : TEXTS)
     .text(d => showRank ? `${d.rank}. ${d.label}` : d.label);
 
   // Bar track
   rows.append("rect")
     .attr("x", barX).attr("y", cy - barH / 2).attr("width", barMaxW).attr("height", barH)
-    .attr("rx", 4).attr("fill", "rgba(255,255,255,0.05)");
+    .attr("rx", 4).attr("fill", TRACK);
 
-  // Filled bar
+  // Filled bar — solid gold for the protagonist, muted ink for the field
   rows.append("rect")
     .attr("x", barX).attr("y", cy - barH / 2)
     .attr("width", d => Math.max(x(d.value) - barX, 3)).attr("height", barH)
     .attr("rx", 4)
-    .attr("fill", d => d.hot ? "url(#fill)" : "rgba(245,239,230,0.18)");
+    .attr("fill", d => d.hot ? GOLD : DIM);
 
   // Value
   rows.append("text")
     .attr("x", W - padR).attr("y", cy).attr("dy", "0.35em").attr("text-anchor", "end")
-    .attr("font-family", "Space Grotesk, sans-serif").attr("font-size", 15).attr("font-weight", 700)
-    .attr("fill", d => d.hot ? GOLD : TEXTS).attr("font-variant-numeric", "tabular-nums")
+    .attr("font-family", "Space Grotesk, sans-serif").attr("font-size", 15)
+    .attr("font-weight", d => d.hot ? 700 : 600)
+    .attr("fill", d => d.hot ? INK : TEXTS).attr("font-variant-numeric", "tabular-nums")
     .text(d => f(d.value) + unit);
 
   document.getElementById("chart-ready").style.display = "block";

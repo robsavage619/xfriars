@@ -20,7 +20,7 @@ html, body {
   width: 540px;
   height: 675px;
   overflow: hidden;
-  background: {{ bg_deep }};
+  background: {{ paper }};
 }
 
 .card {
@@ -28,14 +28,15 @@ html, body {
   height: 675px;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(ellipse 120% 65% at 50% -5%, #241a12 0%, #14100c 62%);
+  background: {{ paper }};
   font-family: "Space Grotesk", sans-serif;
-  color: {{ text_primary }};
+  color: {{ ink }};
 }
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 .header {
-  padding: 24px 30px 0;
+  padding: 26px 34px 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -44,16 +45,15 @@ html, body {
 .kicker {
   font-weight: 600;
   font-size: 13px;
-  color: {{ gold }};
-  letter-spacing: 0.28em;
+  color: {{ brown_dim }};
+  letter-spacing: 0.26em;
   text-transform: uppercase;
 }
 .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-.logo-img { height: 34px; width: auto; opacity: 0.92; }
+.logo-img { height: 32px; width: auto; }
 .as-of {
   font-size: 11px;
-  color: {{ text_secondary }};
-  opacity: 0.65;
+  color: {{ text_muted }};
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
@@ -66,31 +66,30 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0 36px;
+  padding: 0 40px;
   text-align: center;
 }
 .headshot {
-  width: 132px;
-  height: 132px;
+  width: 128px;
+  height: 128px;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid rgba(255, 196, 37, 0.55);
-  box-shadow: 0 0 28px rgba(255, 196, 37, 0.22);
-  margin-bottom: 18px;
-  background: {{ bg_panel }};
+  border: 1px solid rgba(28, 23, 20, 0.18);
+  margin-bottom: 20px;
+  background: {{ paper_panel }};
 }
 .title {
   font-family: "Big Shoulders Display", sans-serif;
   font-weight: 800;
-  font-size: 40px;
+  font-size: 42px;
   line-height: 0.96;
-  color: #FFFFFF;
-  letter-spacing: 0.04em;
+  color: {{ ink }};
+  letter-spacing: 0.01em;
   text-transform: uppercase;
 }
 .subtitle {
   font-size: 13px;
-  color: {{ text_secondary }};
+  color: {{ text_muted }};
   margin-top: 8px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -98,36 +97,34 @@ html, body {
 .hero-value {
   font-family: "Big Shoulders Display", sans-serif;
   font-weight: 900;
-  font-size: 168px;
-  line-height: 0.86;
-  color: {{ gold }};
+  font-size: 176px;
+  line-height: 0.84;
+  color: {{ ink }};
   letter-spacing: -0.01em;
-  margin: 18px 0 2px;
-  text-shadow: 0 0 36px rgba(255, 196, 37, 0.35);
+  margin: 22px 0 0;
   font-variant-numeric: tabular-nums;
 }
+.accent-rule { width: 44px; height: 4px; background: {{ gold }}; margin: 16px 0 14px; }
 .hero-label {
   font-weight: 600;
   font-size: 15px;
-  color: {{ text_primary }};
-  letter-spacing: 0.22em;
+  color: {{ ink_soft }};
+  letter-spacing: 0.2em;
   text-transform: uppercase;
 }
 .hero-context {
   font-size: 15px;
-  color: {{ text_secondary }};
+  color: {{ text_muted }};
   margin-top: 6px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
 }
 .framing {
-  margin-top: 26px;
-  padding: 10px 20px;
-  border: 1px solid rgba(255, 196, 37, 0.45);
-  border-radius: 999px;
-  background: rgba(255, 196, 37, 0.06);
+  margin-top: 24px;
+  padding: 9px 20px;
+  border: 1px solid rgba(28, 23, 20, 0.18);
   font-weight: 600;
-  font-size: 15px;
-  color: #FFFFFF;
+  font-size: 14px;
+  color: {{ ink_soft }};
   letter-spacing: 0.03em;
 }
 
@@ -136,28 +133,26 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 30px 22px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 16px 34px 24px;
+  border-top: 1px solid {{ hairline }};
   flex-shrink: 0;
 }
 .source {
   font-size: 11px;
-  color: {{ text_secondary }};
-  opacity: 0.55;
+  color: {{ text_muted }};
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 .handle {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
-  color: {{ gold }};
+  color: {{ brown }};
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 .tagline {
   font-size: 10px;
-  color: {{ text_secondary }};
-  opacity: 0.4;
+  color: {{ text_muted }};
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -165,6 +160,7 @@ html, body {
 </head>
 <body>
 <div class="card">
+  <div class="top-rule"></div>
 
   <div class="header">
     <div class="kicker">San Diego Padres</div>
@@ -180,6 +176,7 @@ html, body {
     {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
     {% if hero %}
       <div class="hero-value">{{ hero.value }}</div>
+      <div class="accent-rule"></div>
       {% if hero.label %}<div class="hero-label">{{ hero.label }}</div>{% endif %}
       {% if hero.context %}<div class="hero-context">{{ hero.context }}</div>{% endif %}
     {% endif %}

@@ -7,19 +7,33 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# ── Palette v2 — slick tech-forward dark; gold is data-ink/accent, never a flood
-BG_DEEP = "#1A1410"  # near-black warm canvas, flat
-BG_PANEL = "#211A14"  # barely-lighter panel (sparing use)
-GOLD = "#FFC425"  # brand gold — data ink, key numbers, small-caps labels, hairlines
-GOLD_DIM = "#B8902A"  # secondary gold for sub-accents
-TEXT_WHITE = "#FFFFFF"  # titles, names, big numbers — white carries hierarchy
-TEXT_PRIMARY = "#F5EFE6"  # warm off-white body
-TEXT_SECONDARY = "#9C9189"  # muted gray-sand — labels, axis text, captions
-ROW_ALT = "#27201A"  # alternating row tint
-HIGHLIGHT_BG = "#3D2F1F"  # Padre-row band
-HIGHLIGHT_EDGE = "#FFC425"  # 4px left border on the Padre row
-POSITIVE = "#7FB069"  # green for positive deltas
-NEGATIVE = "#C4574E"  # red for negative deltas
+# ── Palette v3 — editorial light ("Goldsberry"): paper canvas, espresso ink,
+# gold demoted to a single hairline accent. No flood, no glow. The number is the
+# loudest thing on the card via size/weight, not color.
+PAPER = "#F4F1EA"  # warm paper canvas — flat, the card background
+PAPER_PANEL = "#ECE6DB"  # barely-darker surface for subtle bands/alt rows
+INK = "#1C1714"  # near-black espresso — names, titles, the big numbers
+INK_SOFT = "#5A4636"  # softened brown-ink for secondary emphasis
+BROWN = "#4A3526"  # deep Friar brown — top rule, wordmark, kicker accent
+BROWN_DIM = "#8A6A4A"  # muted brown — kickers, small-caps labels
+GOLD = "#C99A2E"  # brand gold, deepened for paper — single accent rule only
+TEXT_MUTED = "#9A8E80"  # warm gray-sand — captions, axis text, sub-labels
+HAIRLINE = "rgba(28, 23, 20, 0.12)"  # thin dividers on paper
+HOT = "#C0392B"  # protagonist accent on scatter (Savant-hot, editorial red)
+
+ROW_ALT = PAPER_PANEL  # alternating row tint
+HIGHLIGHT_BG = "#F3E7CB"  # gold wash for the Padre row (light)
+HIGHLIGHT_EDGE = GOLD  # gold left border on the Padre row
+POSITIVE = "#3B6D11"  # green for positive deltas (legible on paper)
+NEGATIVE = "#A32D2D"  # red for negative deltas
+
+# ── Back-compat aliases — existing imports/templates keep working, now light ───
+BG_DEEP = PAPER  # was the dark canvas; now the paper canvas
+BG_PANEL = PAPER_PANEL
+TEXT_WHITE = INK  # "white carries hierarchy" → now ink carries it
+TEXT_PRIMARY = INK
+TEXT_SECONDARY = TEXT_MUTED
+GOLD_DIM = BROWN_DIM
 
 # ── Canvas ─────────────────────────────────────────────────────────────────────
 # Legacy landscape cards (table_card, bar_card) — unchanged.

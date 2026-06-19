@@ -21,7 +21,7 @@ html, body {
   width: 540px;
   height: 675px;
   overflow: hidden;
-  background: {{ bg_deep }};
+  background: {{ paper }};
 }
 
 .card {
@@ -29,14 +29,15 @@ html, body {
   height: 675px;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(ellipse 120% 60% at 50% -5%, #241a12 0%, #14100c 64%);
+  background: {{ paper }};
   font-family: "Space Grotesk", sans-serif;
-  color: {{ text_primary }};
+  color: {{ ink }};
 }
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
 
 .header {
-  padding: 24px 30px 14px;
-  border-bottom: 1px solid rgba(255, 196, 37, 0.30);
+  padding: 24px 30px 16px;
+  border-bottom: 1px solid {{ hairline }};
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -46,27 +47,26 @@ html, body {
 .headshot {
   width: 76px; height: 76px; border-radius: 50%; object-fit: cover;
   object-position: top center;
-  border: 2px solid rgba(255, 196, 37, 0.55);
-  box-shadow: 0 0 18px rgba(255, 196, 37, 0.20);
-  background: {{ bg_panel }}; flex-shrink: 0;
+  border: 1px solid rgba(28, 23, 20, 0.18);
+  background: {{ paper_panel }}; flex-shrink: 0;
 }
 .kicker {
-  font-weight: 600; font-size: 12px; color: {{ gold }};
+  font-weight: 600; font-size: 12px; color: {{ brown_dim }};
   letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px;
 }
 .title {
   font-family: "Big Shoulders Display", sans-serif;
-  font-weight: 900; font-size: 42px; line-height: 0.94; color: #FFFFFF;
-  letter-spacing: 0.04em; text-transform: uppercase;
+  font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }};
+  letter-spacing: 0.01em; text-transform: uppercase;
 }
 .subtitle {
-  font-size: 12px; color: {{ text_secondary }}; margin-top: 6px;
+  font-size: 12px; color: {{ text_muted }}; margin-top: 6px;
   letter-spacing: 0.14em; text-transform: uppercase;
 }
 .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
-.logo-img { height: 32px; width: auto; opacity: 0.92; }
+.logo-img { height: 32px; width: auto; }
 .as-of {
-  font-size: 11px; color: {{ text_secondary }}; opacity: 0.65;
+  font-size: 11px; color: {{ text_muted }};
   letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums;
 }
 
@@ -74,15 +74,16 @@ html, body {
 
 .footer {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 30px 18px; border-top: 1px solid rgba(255, 255, 255, 0.07); flex-shrink: 0;
+  padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0;
 }
-.source { font-size: 10px; color: {{ text_secondary }}; opacity: 0.55; letter-spacing: 0.1em; text-transform: uppercase; }
-.handle { font-size: 16px; font-weight: 700; color: {{ gold }}; letter-spacing: 0.14em; text-transform: uppercase; }
-.tagline { font-size: 10px; color: {{ text_secondary }}; opacity: 0.4; letter-spacing: 0.14em; text-transform: uppercase; }
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
 </style>
 </head>
 <body>
 <div class="card">
+  <div class="top-rule"></div>
 
   <div class="header">
     <div class="header-left">
@@ -115,9 +116,8 @@ html, body {
 <script>
 (function() {
   const DS    = {{ dataset | safe }};
-  const GOLD  = "{{ gold }}";
-  const TEXTP = "{{ text_primary }}";
-  const TEXTS = "{{ text_secondary }}";
+  const INK   = "{{ ink }}";
+  const TEXTS = "{{ text_muted }}";
 
   // Resolve role columns: one dimension (metric label) + one measure (0-100 percentile)
   const dimIdx = DS.columns.findIndex(c => c.role === "dimension");
@@ -153,14 +153,6 @@ html, body {
 
   const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
 
-  const defs = svg.append("defs");
-  const glow = defs.append("filter").attr("id", "glow")
-    .attr("x", "-80%").attr("y", "-80%").attr("width", "260%").attr("height", "260%");
-  glow.append("feGaussianBlur").attr("in", "SourceGraphic").attr("stdDeviation", "4").attr("result", "b");
-  const m = glow.append("feMerge");
-  m.append("feMergeNode").attr("in", "b");
-  m.append("feMergeNode").attr("in", "SourceGraphic");
-
   const rows = svg.selectAll(".row").data(data).join("g")
     .attr("transform", (d, i) => `translate(0, ${i * rowH})`);
 
@@ -171,19 +163,19 @@ html, body {
     .attr("x", padL).attr("y", cy).attr("dy", "0.35em")
     .attr("font-family", "Space Grotesk, sans-serif")
     .attr("font-size", 13).attr("font-weight", 600)
-    .attr("fill", TEXTP).attr("fill-opacity", 0.9)
+    .attr("fill", INK)
     .attr("letter-spacing", "0.04em")
     .text(d => d.label);
 
   // Track background
   rows.append("rect")
     .attr("x", trackX).attr("y", cy - 4).attr("width", trackW).attr("height", 8)
-    .attr("rx", 4).attr("fill", "rgba(255,255,255,0.08)");
+    .attr("rx", 4).attr("fill", "rgba(28,23,20,0.08)");
 
   // 50th-percentile (league average) tick
   rows.append("line")
     .attr("x1", x(50)).attr("x2", x(50)).attr("y1", cy - 10).attr("y2", cy + 10)
-    .attr("stroke", "rgba(255,255,255,0.18)").attr("stroke-width", 1).attr("stroke-dasharray", "2 2");
+    .attr("stroke", "rgba(28,23,20,0.22)").attr("stroke-width", 1).attr("stroke-dasharray", "2 2");
 
   // Filled portion — colored by Savant percentile ramp
   rows.append("rect")
@@ -194,7 +186,7 @@ html, body {
   // Thumb dot
   rows.append("circle")
     .attr("cx", d => x(d.pct)).attr("cy", cy).attr("r", dotR)
-    .attr("fill", d => savant(d.pct)).attr("filter", "url(#glow)");
+    .attr("fill", d => savant(d.pct)).attr("stroke", "{{ paper }}").attr("stroke-width", 1.5);
 
   // Percentile value
   rows.append("text")
@@ -207,7 +199,7 @@ html, body {
   // Hairline separators
   rows.filter((d, i) => i < n - 1).append("line")
     .attr("x1", padL).attr("x2", W - padR).attr("y1", rowH).attr("y2", rowH)
-    .attr("stroke", "rgba(255,255,255,0.05)").attr("stroke-width", 1);
+    .attr("stroke", "rgba(28,23,20,0.08)").attr("stroke-width", 1);
 
   document.getElementById("chart-ready").style.display = "block";
 })();
