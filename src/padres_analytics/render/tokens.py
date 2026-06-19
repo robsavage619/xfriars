@@ -27,7 +27,7 @@ SLATE = "#2C6E7F"  # CVD-safe cool anchor — the cold end of diverging hot/cold
 DENSITY_RAMP = ("#EDE6D7", "#C9B89A", "#8A6F52", "#4A3526")
 
 # Savant outcome fills for batted-ball events, tuned for the paper canvas.
-OUT_FILL = "rgba(28,23,20,0.28)"  # outs — muted ink, recede
+OUT_FILL = "rgba(28,23,20,0.34)"  # outs — muted ink, recede (but still read on paper)
 HIT_FILL = "#8A6F52"  # singles/doubles — mid brown
 XBH_FILL = "#C99A2E"  # extra-base hits — gold
 HR_FILL = "#C0392B"  # home runs — hot red, the loud element

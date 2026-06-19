@@ -116,10 +116,7 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
 
   <div class="footer">
     <span class="source">Source: {{ source }}</span>
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
-      <span class="handle">@xFriars</span>
-      <span class="tagline">San Diego Baseball Intelligence</span>
-    </div>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
   </div>
 </div>
 
@@ -150,8 +147,9 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
   // Hard-hit reference line at 95 mph (fixed Statcast definition).
   svg.append("line").attr("x1", m.l).attr("x2", W - m.r).attr("y1", y(95)).attr("y2", y(95))
     .attr("stroke", "rgba(28,23,20,0.30)").attr("stroke-width", 1).attr("stroke-dasharray", "3 4");
-  svg.append("text").attr("x", W - m.r).attr("y", y(95) - 5).attr("text-anchor", "end")
+  svg.append("text").attr("x", m.l + 4).attr("y", y(95) - 5).attr("text-anchor", "start")
     .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+    .attr("paint-order", "stroke").attr("stroke", "{{ paper }}").attr("stroke-width", 3)
     .text("95 mph · hard-hit");
 
   // Axes

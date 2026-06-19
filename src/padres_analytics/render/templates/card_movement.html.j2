@@ -103,10 +103,7 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
 
   <div class="footer">
     <span class="source">Source: {{ source }}</span>
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
-      <span class="handle">@xFriars</span>
-      <span class="tagline">San Diego Baseball Intelligence</span>
-    </div>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
   </div>
 </div>
 
@@ -132,10 +129,16 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
     .attr("stroke", "rgba(28,23,20,0.30)").attr("stroke-width", 1);
   svg.append("line").attr("x1", cx).attr("x2", cx).attr("y1", Y(-R)).attr("y2", Y(R))
     .attr("stroke", "rgba(28,23,20,0.30)").attr("stroke-width", 1);
-  svg.append("text").attr("x", X(R) - 2).attr("y", cy - 6).attr("text-anchor", "end")
-    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}").text("HORIZONTAL BREAK (in)");
-  svg.append("text").attr("x", cx + 6).attr("y", Y(R) + 12)
-    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}").text("VERTICAL BREAK (in)");
+  // Axis labels tucked into empty corners (the cloud is centered), with a paper
+  // halo so they never collide with a stray pitch.
+  svg.append("text").attr("x", W - 4).attr("y", H - 5).attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+    .attr("letter-spacing", "0.08em")
+    .attr("paint-order", "stroke").attr("stroke", "{{ paper }}").attr("stroke-width", 3).text("HORIZONTAL BREAK (in)");
+  svg.append("text").attr("x", 4).attr("y", 13).attr("text-anchor", "start")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+    .attr("letter-spacing", "0.08em")
+    .attr("paint-order", "stroke").attr("stroke", "{{ paper }}").attr("stroke-width", 3).text("VERTICAL BREAK (in)");
 
   // Pitches
   svg.append("g").selectAll("circle.p").data(PTS).join("circle")
