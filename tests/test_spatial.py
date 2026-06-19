@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from padres_analytics.detect.candidates import SpatialDataset
-from padres_analytics.detect.spatial import build_spray
+from padres_analytics.detect.spatial import build_hr_spray, build_spray
 
 if TYPE_CHECKING:
     import duckdb
@@ -31,6 +31,7 @@ def _insert(
     p_throws: str = "R",
     hc_x: float | None = 125.42,
     hc_y: float | None = 198.27,
+    dist: float = 380.0,
 ) -> None:
     conn.execute(
         f"INSERT INTO statcast_batted_balls ({_COLS}) VALUES "
@@ -53,7 +54,7 @@ def _insert(
             hc_y,
             95.0,
             22.0,
-            380.0,
+            dist,
             0.55,
             datetime(2024, 5, 1, 0, 0, 0),
         ],
@@ -110,3 +111,23 @@ def test_handedness_filter_and_label(padres_db: duckdb.DuckDBPyConnection) -> No
     assert ds is not None
     assert ds.n == 1
     assert ds.handedness == "vs LHP"
+
+
+def test_hr_spray_counts_only_home_runs(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """HR spray plots only home runs and surfaces the longest distance."""
+    _insert(padres_db, ab=1, events="home_run", dist=420.0)
+    _insert(padres_db, ab=2, events="home_run", dist=455.0)
+    _insert(padres_db, ab=3, events="single", dist=180.0)
+    ds = build_hr_spray(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "hr"
+    assert ds.n == 2
+    assert ds.hero is not None and ds.hero["value"] == "2"
+    assert "455" in ds.hero["context"]
+    assert any(p.label and "455" in p.label for p in ds.points)
+
+
+def test_hr_spray_none_without_home_runs(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """No home runs → no card."""
+    _insert(padres_db, events="single")
+    assert build_hr_spray(padres_db, 1, 2024) is None

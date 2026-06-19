@@ -120,3 +120,74 @@ def build_spray(
         headline=f"{name} {season} spray ({n} BBE)",
         claim_scope=f"{season} season",
     )
+
+
+def build_hr_spray(
+    conn: duckdb.DuckDBPyConnection,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a home-run spray ``SpatialDataset`` — landing spots + true distance.
+
+    Distance is Statcast's ``hit_distance_sc`` (a trajectory model), never derived
+    from the landing coordinates. The longest HR is labeled on the card.
+
+    Args:
+        conn: Read connection to padres.db.
+        player_id: MLBAM batter id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="hr"), or ``None`` when the hitter
+        has no plottable regular-season home runs.
+    """
+    rows = conn.execute(
+        """
+        SELECT player_name, hc_x, hc_y, hit_distance_sc
+        FROM statcast_batted_balls
+        WHERE player_id = ? AND season = ? AND game_type = 'R'
+          AND events = 'home_run' AND hc_x IS NOT NULL AND hc_y IS NOT NULL
+        """,
+        [player_id, season],
+    ).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    longest = max((r[3] for r in rows if r[3] is not None), default=None)
+    dists = [r[3] for r in rows if r[3] is not None]
+    avg_dist = sum(dists) / len(dists) if dists else None
+
+    points: list[SpatialPoint] = []
+    for _name, hc_x, hc_y, dist in rows:
+        x = round((hc_x - _HC_X0) * _HC_SCALE, 1)
+        y = round((_HC_Y0 - hc_y) * _HC_SCALE, 1)
+        label = f"{dist:.0f} ft" if (dist is not None and dist == longest) else None
+        points.append(SpatialPoint(x=x, y=y, kind="home_run", value=dist, label=label))
+
+    n = len(points)
+    name = _display_name(name_raw, str(player_id))
+    ctx = ""
+    if longest is not None:
+        ctx = f"Longest {longest:.0f} ft"
+        if avg_dist is not None:
+            ctx += f" · avg {avg_dist:.0f} ft"
+    return SpatialDataset(
+        card="hr",
+        title=name,
+        subtitle=f"Home-run spray · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={"value": str(n), "label": "Home Runs", "context": ctx},
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        note="Landing direction · distance = Statcast hit_distance_sc (true carry)",
+        source="Baseball Savant",
+        headline=f"{name} {season} home runs ({n})",
+        claim_scope=f"{season} season",
+    )

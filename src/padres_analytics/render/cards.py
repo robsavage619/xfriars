@@ -300,6 +300,7 @@ _CARD_TEMPLATES: dict[str, str] = {
 # Spatial (event-level) cards — each carries the rigor harness. Grows per phase.
 _SPATIAL_TEMPLATES: dict[str, str] = {
     "spray": "card_spray.html.j2",
+    "hr": "card_hr.html.j2",
 }
 
 
