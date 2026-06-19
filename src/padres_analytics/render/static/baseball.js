@@ -75,5 +75,52 @@ window.Baseball = (function () {
     return { toPx: toPx, s: s };
   }
 
-  return { spray: spray };
+  /* Strike-zone projection (plate-feet → pixels) + box chrome, catcher's POV.
+   * Positive plate_x plots LEFT (catcher faces the pitcher). Draws one true-
+   * proportion zone box, a 3x3 hairline split, and a dashed shadow zone one
+   * ball-width outside. Returns { toPx, s } for the caller to plot/shade. */
+  function zone(svg, W, H, opts) {
+    opts = opts || {};
+    var brown = opts.brown || "#4A3526";
+    var xmin = -2.0, xmax = 2.0, zmin = 0.2, zmax = 4.6;
+    var padX = 18, padTop = 8, padBot = 8;
+    var s = Math.min((W - 2 * padX) / (xmax - xmin), (H - padTop - padBot) / (zmax - zmin));
+    var cx = W / 2;
+    var zc = (zmin + zmax) / 2;
+    var cyMid = padTop + (H - padTop - padBot) / 2;
+
+    function toPx(x, z) {
+      return [cx - x * s, cyMid + (zc - z) * s]; // catcher POV: +x → left
+    }
+
+    // Rulebook zone: x in [-0.83, 0.83] ft, z in [1.5, 3.5] ft.
+    var L = cx - 0.83 * s, Rr = cx + 0.83 * s;
+    var T = toPx(0, 3.5)[1], B = toPx(0, 1.5)[1];
+    var ball = 0.121; // a baseball radius, ft — the shadow zone offset
+
+    // Shadow zone (one ball-width outside), dashed.
+    svg.append("rect")
+      .attr("x", cx - (0.83 + ball) * s).attr("y", toPx(0, 3.5 + ball)[1])
+      .attr("width", 2 * (0.83 + ball) * s).attr("height", (2 + 2 * ball) * s)
+      .attr("fill", "none").attr("stroke", brown).attr("stroke-opacity", 0.25)
+      .attr("stroke-width", 0.5).attr("stroke-dasharray", "3 3");
+
+    // Zone box.
+    svg.append("rect").attr("x", L).attr("y", T).attr("width", Rr - L).attr("height", B - T)
+      .attr("fill", "none").attr("stroke", brown).attr("stroke-width", 1.5);
+
+    // 3x3 hairline split.
+    [1, 2].forEach(function (i) {
+      var x = L + (Rr - L) * (i / 3);
+      var y = T + (B - T) * (i / 3);
+      svg.append("line").attr("x1", x).attr("x2", x).attr("y1", T).attr("y2", B)
+        .attr("stroke", brown).attr("stroke-opacity", 0.4).attr("stroke-width", 0.75);
+      svg.append("line").attr("x1", L).attr("x2", Rr).attr("y1", y).attr("y2", y)
+        .attr("stroke", brown).attr("stroke-opacity", 0.4).attr("stroke-width", 0.75);
+    });
+
+    return { toPx: toPx, s: s };
+  }
+
+  return { spray: spray, zone: zone };
 })();

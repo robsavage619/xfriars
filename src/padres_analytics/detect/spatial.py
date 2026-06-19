@@ -235,6 +235,82 @@ def build_arsenal(
     )
 
 
+def build_zone(
+    conn: duckdb.DuckDBPyConnection,
+    pitcher_id: int,
+    season: int,
+    *,
+    pitch_type: str | None = None,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a pitch-location density ``SpatialDataset`` for one pitcher.
+
+    Points are ``x=plate_x`` (flipped to the **catcher's POV** at render time so
+    positive plate_x plots left), ``y=plate_z`` — both already in feet. The hero is
+    the in-zone rate against the league-average strike zone (a pitcher's aggregate
+    card crosses many batters, so a fixed reference zone is correct here).
+
+    Args:
+        conn: Read connection to padres.db.
+        pitcher_id: MLBAM pitcher id.
+        season: Season year.
+        pitch_type: Restrict to one pitch type (e.g. "SL"); ``None`` = all.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="zone"), or ``None`` when the pitcher
+        has no regular-season pitches with location data.
+    """
+    sql = """
+        SELECT pitcher_name, plate_x, plate_z
+        FROM statcast_pitches
+        WHERE pitcher_id = ? AND season = ? AND game_type = 'R'
+          AND plate_x IS NOT NULL AND plate_z IS NOT NULL
+    """
+    params: list[object] = [pitcher_id, season]
+    if pitch_type:
+        sql += " AND pitch_type = ?"
+        params.append(pitch_type)
+
+    rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    points: list[SpatialPoint] = []
+    in_zone = 0
+    for _name, px, pz in rows:
+        points.append(SpatialPoint(x=round(px, 3), y=round(pz, 3)))
+        if abs(px) <= 0.83 and 1.5 <= pz <= 3.5:
+            in_zone += 1
+
+    n = len(points)
+    zone_pct = in_zone / n if n else 0.0
+    label = pitch_type or "All pitches"
+    note = "Location density · catcher's POV · strike zone = league avg"
+    if n < 100:
+        note = f"Small sample ({n} pitches) — illustrative · {note}"
+
+    name = _display_name(name_raw, str(pitcher_id))
+    return SpatialDataset(
+        card="zone",
+        title=name,
+        subtitle=f"{label} location · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={"value": f"{zone_pct:.0%}", "label": "In Zone", "context": f"{label} · {n} pitches"},
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        pov="Catcher's POV",
+        note=note,
+        source="Baseball Savant",
+        headline=f"{name} {season} {label} location ({n} pitches)",
+        claim_scope=f"{season} season",
+    )
+
+
 def build_launch(
     conn: duckdb.DuckDBPyConnection,
     player_id: int,

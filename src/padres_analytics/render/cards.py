@@ -33,6 +33,7 @@ from padres_analytics.render.tokens import (
     CARD_VIEWPORT_H,
     CARD_VIEWPORT_W,
     D3_JS,
+    DENSITY_RAMP,
     DEVICE_SCALE,
     DM_SANS_TTF,
     GOLD,
@@ -164,7 +165,7 @@ def _bar_rows(payload: TablePayload) -> list[dict[str, str | float]]:
     return rows
 
 
-def _token_kwargs() -> dict[str, str]:
+def _token_kwargs() -> dict[str, object]:
     return {
         "bg_deep": BG_DEEP,
         "bg_panel": BG_PANEL,
@@ -181,6 +182,7 @@ def _token_kwargs() -> dict[str, str]:
         "hit_fill": HIT_FILL,
         "xbh_fill": XBH_FILL,
         "hr_fill": HR_FILL,
+        "density_ramp": list(DENSITY_RAMP),
         "baseball_js": str(BASEBALL_JS),
         "text_muted": TEXT_MUTED,
         "gold": GOLD,
@@ -303,6 +305,7 @@ _SPATIAL_TEMPLATES: dict[str, str] = {
     "hr": "card_hr.html.j2",
     "launch": "card_launch.html.j2",
     "movement": "card_movement.html.j2",
+    "zone": "card_zone.html.j2",
 }
 
 

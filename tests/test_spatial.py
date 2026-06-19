@@ -11,6 +11,7 @@ from padres_analytics.detect.spatial import (
     build_hr_spray,
     build_launch,
     build_spray,
+    build_zone,
 )
 
 _PITCH_COLS = (
@@ -32,6 +33,8 @@ def _insert_pitch(
     velo: float = 97.0,
     pfx_x: float = 1.0,
     pfx_z: float = 1.4,
+    px: float = 0.0,
+    pz: float = 2.5,
 ) -> None:
     conn.execute(
         f"INSERT INTO statcast_pitches ({_PITCH_COLS}) VALUES "
@@ -49,8 +52,8 @@ def _insert_pitch(
             velo,
             pfx_x,
             pfx_z,
-            0.0,
-            2.5,
+            px,
+            pz,
             3.4,
             1.6,
             -1.8,
@@ -214,6 +217,24 @@ def test_arsenal_families_and_inch_transform(padres_db: duckdb.DuckDBPyConnectio
 def test_arsenal_none_without_pitches(padres_db: duckdb.DuckDBPyConnection) -> None:
     """No stored pitches → no card."""
     assert build_arsenal(padres_db, 999, 2024) is None
+
+
+def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Zone card reports in-zone rate (|x|<=0.83, 1.5<=z<=3.5) and filters by pitch."""
+    _insert_pitch(padres_db, ab=1, pitch_type="SL", px=0.0, pz=2.5)  # in zone
+    _insert_pitch(padres_db, ab=2, pitch_type="SL", px=0.0, pz=0.6)  # below zone
+    _insert_pitch(padres_db, ab=3, pitch_type="FF", px=0.0, pz=2.5)  # different pitch
+    ds = build_zone(padres_db, 1, 2024, pitch_type="SL")
+    assert ds is not None
+    assert ds.card == "zone"
+    assert ds.n == 2  # only sliders
+    assert ds.pov == "Catcher's POV"
+    assert ds.hero is not None and ds.hero["value"] == "50%"  # 1 of 2 in zone
+
+
+def test_zone_none_without_location(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """No stored pitches → no zone card."""
+    assert build_zone(padres_db, 999, 2024) is None
 
 
 def test_launch_barrel_rate_uses_statcast_flag(padres_db: duckdb.DuckDBPyConnection) -> None:

@@ -677,6 +677,43 @@ def arsenal(
     typer.echo(f"Rendered {dataset.n}-pitch arsenal → {out}")
 
 
+@app.command()
+def zone(
+    player: int = typer.Option(..., "--player", help="MLBAM pitcher id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    pitch: str = typer.Option("", "--pitch", help="Restrict to one pitch type, e.g. SL."),
+) -> None:
+    """Render a pitch-location density (zone) card from stored pitches."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_zone
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    pt = pitch.upper() or None
+
+    with connect(read_only=True) as conn:
+        dataset = build_zone(conn, player, ref_season, pitch_type=pt)
+
+    if dataset is None:
+        typer.echo(
+            f"No pitches with location data for pitcher {player}, season {ref_season}. "
+            f"Run 'pad ingest pitches --player {player} --season {ref_season}' first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    cid = f"zone_{player}_{ref_season}" + (f"_{pt}" if pt else "")
+    try:
+        out = render_card(dataset, CARDS_DIR, cid)
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-pitch zone → {out}")
+
+
 # ── pad ingest standings ──────────────────────────────────────────────────────
 
 
