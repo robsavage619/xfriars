@@ -808,6 +808,44 @@ def spatial_suggest_cmd(
 
 
 @app.command()
+def story(
+    kind: str = typer.Option("funk", "--kind", help="Story type. Currently: funk."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a composed story-card infographic (e.g. the current funk)."""
+    configure_logging()
+    from padres_analytics.detect.story import build_funk_story
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    builders = {"funk": build_funk_story}
+    if kind not in builders:
+        typer.echo(f"Unknown story {kind!r}. Available: {', '.join(builders)}", err=True)
+        raise typer.Exit(ERR)
+
+    with connect(read_only=True) as conn:
+        card = builders[kind](conn, ref_season)
+
+    if card is None:
+        typer.echo(
+            f"Not enough data for a {kind!r} story (need standings + statcast). "
+            "Ingest current standings and statcast first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(card, CARDS_DIR, f"story_{kind}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {kind} story → {out}")
+
+
+@app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),

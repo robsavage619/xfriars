@@ -16,6 +16,7 @@ from padres_analytics.detect.candidates import (
     ChartDataset,
     SeriesPayload,
     SpatialDataset,
+    StoryCard,
     TablePayload,
 )
 from padres_analytics.render.select import IMPLEMENTED_CARDS, select_card
@@ -438,8 +439,40 @@ def _render_spatial(dataset: SpatialDataset, out_path: Path) -> str:
     return dataset.card
 
 
+def _render_story(card: StoryCard, out_path: Path) -> None:
+    """Render a StoryCard infographic to a portrait PNG, resolving block headshots."""
+    from padres_analytics.render.mlb_assets import player_photo_path
+
+    blocks: list[dict[str, object]] = []
+    for block in card.blocks:
+        data = block.model_dump()
+        photo = None
+        if block.player_id is not None:
+            try:
+                resolved = player_photo_path(block.player_id)
+            except (ValueError, TypeError):
+                resolved = None
+            photo = str(resolved) if resolved else None
+        data["photo"] = photo
+        blocks.append(data)
+
+    template = _JINJA_ENV.get_template("card_story.html.j2")
+    html = template.render(
+        title=card.title,
+        kicker=card.kicker,
+        subtitle=card.subtitle,
+        as_of=str(card.as_of),
+        hero=card.hero,
+        blocks=blocks,
+        narrative=card.narrative,
+        source=card.source,
+        **_token_kwargs(),
+    )
+    _html_to_png(html, out_path, CARD_VIEWPORT_W, CARD_VIEWPORT_H)
+
+
 def render(
-    facts: TablePayload | SeriesPayload | ChartDataset | SpatialDataset,
+    facts: TablePayload | SeriesPayload | ChartDataset | SpatialDataset | StoryCard,
     out_dir: Path,
     candidate_id: str,
     visual: str = "table",
@@ -465,7 +498,9 @@ def render(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{candidate_id}.png"
 
-    if isinstance(facts, SpatialDataset):
+    if isinstance(facts, StoryCard):
+        _render_story(facts, out_path)
+    elif isinstance(facts, SpatialDataset):
         _render_spatial(facts, out_path)
     elif isinstance(facts, ChartDataset):
         _render_dataset(facts, out_path, card=card)

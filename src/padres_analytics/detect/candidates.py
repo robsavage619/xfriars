@@ -160,6 +160,40 @@ class SpatialDataset(BaseModel):
     claim_scope: str
 
 
+class StoryBlock(BaseModel):
+    """One panel in a story card — a player + a single percentile callout."""
+
+    label: str  # player or topic name
+    metric: str  # "xwOBA" / "Hard-Hit %"
+    value: str  # display string, e.g. "34th"
+    percentile: int | None = None  # 0-100, drives the mini-bar
+    note: str = ""  # one-line read, e.g. "the captain's cooled"
+    tone: Literal["good", "bad", "neutral"] = "neutral"
+    player_id: int | None = None  # resolves a headshot when present
+
+
+class StoryCard(BaseModel):
+    """A composed infographic — a hero number plus several panels telling a story.
+
+    Unlike a single chart, a story card narrates a situation: the macro hook, a
+    handful of player callouts (each with a percentile bar + read), and a closing
+    line. Every number must originate from verified data; ``model_dump`` is the
+    digit-audit corpus like the other payloads.
+    """
+
+    kind: Literal["story"] = "story"
+    title: str
+    kicker: str = "San Diego Padres"
+    subtitle: str | None = None
+    as_of: date
+    hero: dict | None = None  # {value, label, context} — the macro hook
+    blocks: Annotated[list[StoryBlock], Field(min_length=1, max_length=6)]
+    narrative: str = ""  # closing one-liner
+    source: str
+    headline: str
+    claim_scope: str
+
+
 class StatCandidate(BaseModel):
     """A detector-emitted stat with full provenance."""
 
