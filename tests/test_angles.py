@@ -133,7 +133,7 @@ def test_discover_surfaces_ranked_angles(padres_db: duckdb.DuckDBPyConnection) -
     # direction-aware: the under-performer is "owed up"
     pl = next(a for a in angles if a.key == "player_luck")
     assert pl.direction == "up"
-    assert pl.title == "OWED A BOUNCE"
+    assert pl.title == "BETTER THAN THE LINE"
 
 
 def test_no_story_below_threshold(padres_db: duckdb.DuckDBPyConnection) -> None:

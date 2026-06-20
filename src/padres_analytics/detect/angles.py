@@ -198,14 +198,15 @@ def detect_team_luck(ctx: _Ctx) -> StoryAngle | None:
     r = reliability(pa)
     up = owed > 0  # owed a bounce up
     headline = (
-        f"The Padres bats are {abs(owed)} points of wOBA unlucky"
+        f"The Padres bats have been {abs(owed)} points of wOBA unlucky, not bad."
         if up
-        else f"The Padres bats are outrunning their contact by {abs(owed)} points"
+        else f"The Padres are {abs(owed)} points of wOBA ahead of their expected output."
     )
     thesis = (
-        "Results trail the contact quality — the lineup is owed positive regression."
+        f"A .{round(woba * 1000):03d} wOBA against a .{round(xwoba * 1000):03d} "
+        "expected mark — the batted-ball quality says better days are coming."
         if up
-        else "Results are running ahead of the contact quality — expect cooling."
+        else "Results have outrun the contact quality. Some cooling is the honest forecast."
     )
     daily = _daily_avg(ctx)
     stats = [
@@ -228,7 +229,7 @@ def detect_team_luck(ctx: _Ctx) -> StoryAngle | None:
     return StoryAngle(
         key="team_luck",
         subject="Padres offense",
-        title="HIT INTO HARD LUCK" if up else "RIDING THE WAVE",
+        title="DUE FOR A BOUNCE" if up else "OUTRUNNING THE BAT",
         headline=headline,
         thesis=thesis,
         direction="up" if up else "down",
@@ -269,14 +270,15 @@ def detect_player_luck(ctx: _Ctx) -> StoryAngle | None:
     up = owed > 0
     full = _full(name)
     headline = (
-        f"{full} is hitting into {abs(owed)} points of bad luck"
+        f"{abs(owed)} points of wOBA separate {full}'s results from his contact."
         if up
-        else f"{full}'s results are {abs(owed)} points ahead of his contact"
+        else f"{full} is outproducing his contact by {abs(owed)} points of wOBA."
     )
     thesis = (
-        f"{full}'s contact says a better hitter than the line — a bounce is owed."
+        f"The underlying contact points to a better hitter than the .{round(woba * 1000):03d} "
+        "line. Regression should be kind."
         if up
-        else f"{full} is outperforming his contact quality; regression points down."
+        else "He's beating his expected output. Variance is doing some of the work."
     )
     bars = _player_percentiles(ctx, pid)
     stats = [
@@ -301,7 +303,7 @@ def detect_player_luck(ctx: _Ctx) -> StoryAngle | None:
     return StoryAngle(
         key="player_luck",
         subject=full,
-        title="OWED A BOUNCE" if up else "OVER HIS HEAD",
+        title="BETTER THAN THE LINE" if up else "AHEAD OF THE CONTACT",
         headline=headline,
         thesis=thesis,
         direction="up" if up else "down",
@@ -349,15 +351,15 @@ def detect_approach_outlier(ctx: _Ctx) -> StoryAngle | None:
     weak = chase <= 50  # low percentile = chases a lot = a hole
     r = reliability(pa)
     headline = (
-        f"{full} is chasing himself out of the zone"
+        f"{full} is chasing at a {int(chase)}th-percentile rate — this one's real, not luck."
         if weak
-        else f"{full} owns the zone better than almost anyone"
+        else f"{full} runs a {int(chase)}th-percentile chase rate."
     )
     thesis = (
-        f"A {int(chase)}th-percentile chase rate is a real hole, not bad luck — "
-        "pitchers have a plan."
+        "Pitchers have found the edge of the zone and he's expanding. Fixable, "
+        "but it won't regress on its own."
         if weak
-        else f"A {int(chase)}th-percentile chase rate is a repeatable strength."
+        else "Elite plate discipline — a repeatable strength to build the lineup around."
     )
     bars = _player_percentiles(ctx, pid)
     stats = [
@@ -367,7 +369,7 @@ def detect_approach_outlier(ctx: _Ctx) -> StoryAngle | None:
     return StoryAngle(
         key="approach_outlier",
         subject=full,
-        title="CHASING SHADOWS" if weak else "OWNS THE ZONE",
+        title="A REAL HOLE" if weak else "CONTROLS THE ZONE",
         headline=headline,
         thesis=thesis,
         direction="down" if weak else "up",
@@ -413,9 +415,11 @@ def detect_power_outlier(ctx: _Ctx) -> StoryAngle | None:
     return StoryAngle(
         key="power_outlier",
         subject=full,
-        title="PURE THUMP",
-        headline=f"{full}'s contact ranks in the {round(float(brl_rank))}th percentile for barrels",
-        thesis=f"Top-{100 - round(float(brl_rank))}% barrel quality on {int(bbe)} balls is real.",
+        title="ELITE CONTACT",
+        headline=f"{full}'s barrel rate sits in the {round(float(brl_rank))}th percentile.",
+        thesis=(
+            f"Top-shelf batted-ball quality on {int(bbe)} balls — a skill that should sustain."
+        ),
         direction="up",
         effect=float(brl_rank),
         reliability=r,
