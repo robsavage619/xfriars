@@ -1073,11 +1073,11 @@ def live_card_cmd(
     on: str = typer.Option("", "--on", help="Date YYYY-MM-DD. Defaults to today (LA)."),
     game_pk: int = typer.Option(0, "--game-pk", help="Render a specific game, skip resolution."),
 ) -> None:
-    """Render a live infographic of tonight's starter (pitch mix), stamped unofficial."""
+    """Render the strongest card-worthy live moment (dominant starter or a Padre's big night)."""
     configure_logging()
     from padres_analytics.ingest.mlb_api import MlbApiError, MlbStatsClient
     from padres_analytics.live import resolve_game_pk
-    from padres_analytics.live_card import render_live_card
+    from padres_analytics.live_moments import render_live_moment
 
     on_date = on or _la_today().isoformat()
     try:
@@ -1087,15 +1087,15 @@ def live_card_cmd(
                 typer.echo(f"No Padres game found on {on_date}.")
                 return
             feed = client.live_feed(pk)
-        out = render_live_card(feed, CARDS_DIR, f"live_{pk}")
+        out = render_live_moment(feed, CARDS_DIR, f"live_{pk}")
     except MlbApiError as exc:
         typer.echo(f"Error reaching the MLB feed: {exc}", err=True)
         raise typer.Exit(ERR) from exc
 
     if out is None:
-        typer.echo("No pitches thrown yet — nothing to render.")
+        typer.echo("No card-worthy moment yet — no dominant start or standout bat. Try later.")
         return
-    typer.echo(f"Rendered live card → {out}")
+    typer.echo(f"Rendered live moment → {out}")
 
 
 @app.command()
