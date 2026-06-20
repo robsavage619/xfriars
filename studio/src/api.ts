@@ -108,6 +108,21 @@ export const api = {
 
   explorerQuery: (view: string): Promise<ExplorerResult> =>
     fetch(`${BASE}/explorer/${view}`).then((r) => _json<ExplorerResult>(r)),
+
+  spatialCards: (): Promise<string[]> =>
+    fetch(`${BASE}/spatial/cards`).then((r) => _json<string[]>(r)),
+
+  renderSpatial: (
+    card: string,
+    player: number,
+    season: number,
+  ): Promise<{ card: string; player: number; season: number; n: number; id: string }> =>
+    fetch(`${BASE}/spatial/render?card=${card}&player=${player}&season=${season}`, {
+      method: "POST",
+    }).then((r) => _json(r)),
+
+  spatialPreviewUrl: (card: string, player: number, season: number): string =>
+    `${BASE}/spatial/${card}/${player}/${season}/card.png?t=${Date.now()}`,
 };
 
 // ── MLB asset URL helpers (CDN — browser can fetch directly) ──────────────────

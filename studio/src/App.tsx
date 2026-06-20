@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import useSWR from "swr";
 import { api } from "./api.ts";
 import Candidates from "./pages/Candidates.tsx";
+import Cards from "./pages/Cards.tsx";
 import Explorer from "./pages/Explorer.tsx";
 import Queue from "./pages/Queue.tsx";
 
@@ -32,6 +33,12 @@ export default function App() {
           ) : null}
         </NavLink>
         <NavLink
+          to="/cards"
+          className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+        >
+          Cards
+        </NavLink>
+        <NavLink
           to="/explorer"
           className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
         >
@@ -42,6 +49,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Candidates />} />
           <Route path="/queue" element={<Queue />} />
+          <Route path="/cards" element={<Cards />} />
           <Route path="/explorer" element={<Explorer />} />
         </Routes>
       </div>

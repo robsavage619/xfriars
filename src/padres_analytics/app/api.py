@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from padres_analytics.config import CARDS_DIR, DUCKDB_PATH
-from padres_analytics.detect.candidates import ChartDataset, TablePayload
+from padres_analytics.detect.candidates import ChartDataset, SpatialDataset, TablePayload
 from padres_analytics.render.cards import RenderError, render
 from padres_analytics.render.mlb_assets import (
     BREF_TO_MLBAM,
@@ -211,9 +211,66 @@ async def render_candidate_card(
             payload = TablePayload.model_validate(facts)
             card_path = await asyncio.to_thread(render, payload, CARDS_DIR, candidate_id, visual)
             return {"card_path": str(card_path), "visual": visual}
+        if payload_kind == "spatial":
+            spatial = SpatialDataset.model_validate(facts)
+            card_path = await asyncio.to_thread(render, spatial, CARDS_DIR, candidate_id)
+            return {"card_path": str(card_path), "visual": spatial.card}
         raise HTTPException(status_code=422, detail=f"Cannot render payload_kind={payload_kind!r}")
     except RenderError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ── Spatial card picker ──────────────────────────────────────────────────────
+
+
+@app.get("/api/spatial/cards")
+def list_spatial_cards() -> list[str]:
+    """List the spatial card types the picker can render."""
+    from padres_analytics.detect.spatial import SPATIAL_BUILDERS
+
+    return sorted(SPATIAL_BUILDERS)
+
+
+@app.post("/api/spatial/render")
+async def render_spatial_preview(card: str, player: int, season: int) -> dict[str, Any]:
+    """Build and render a spatial card for a player/season (idempotent preview)."""
+    import asyncio
+
+    from padres_analytics.detect.spatial import SPATIAL_BUILDERS, build_spatial
+
+    if card not in SPATIAL_BUILDERS:
+        raise HTTPException(status_code=422, detail=f"Unknown card {card!r}")
+
+    conn = _ro()
+    try:
+        dataset = build_spatial(conn, card, player, season)
+    finally:
+        conn.close()
+
+    if dataset is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No data to build a {card!r} card for player {player}, season {season}. "
+                f"Ingest the source events first."
+            ),
+        )
+
+    card_id = f"spatial_{card}_{player}_{season}"
+    try:
+        await asyncio.to_thread(render, dataset, CARDS_DIR, card_id)
+    except RenderError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"card": card, "player": player, "season": season, "n": dataset.n, "id": card_id}
+
+
+@app.get("/api/spatial/{card}/{player}/{season}/card.png", response_class=FileResponse)
+def get_spatial_preview(card: str, player: int, season: int) -> FileResponse:
+    """Serve a rendered spatial preview PNG."""
+    card_path = CARDS_DIR / f"spatial_{card}_{player}_{season}.png"
+    if not card_path.exists():
+        raise HTTPException(status_code=404, detail="Not rendered yet. POST /api/spatial/render.")
+    return FileResponse(str(card_path), media_type="image/png")
 
 
 @app.get("/api/candidates/{candidate_id}/card.png", response_class=FileResponse)
