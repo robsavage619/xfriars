@@ -355,18 +355,24 @@ def _panel_statline(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
 
 
 def _panel_hero(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
-    """A big hero number with a label and a context line to its right."""
+    """A big hero number with a label, an optional plain-language gloss, and context.
+
+    The gloss spells out any jargon (e.g. what "CSW%" means) so a casual fan
+    isn't shut out; the context usually carries a league benchmark for meaning.
+    """
     value = str(d["value"])
     accent = d.get("accent", INK)
     c.text(x, y + 50, value, 54, accent, w=900, ff="Big Shoulders Display")
     lx = x + 132
-    c.text(lx, y + 26, str(d.get("label", "")), 11, BROWN, w=700, ls=0.8)
-    ctx = textwrap.wrap(str(d.get("context", "")), width=34)[:2]
-    cy = y + 42
-    for line in ctx:
-        c.text(lx, cy, line, 10.5, BROWN_DIM)
+    cy = y + 24
+    c.text(lx, cy, str(d.get("label", "")), 11, BROWN, w=700, ls=0.8)
+    if d.get("gloss"):
+        cy += 15
+        c.text(lx, cy, str(d["gloss"]), 10, BROWN_DIM)
+    for line in textwrap.wrap(str(d.get("context", "")), width=36)[:2]:
         cy += 14
-    return 62
+        c.text(lx, cy, line, 10, BROWN_DIM)
+    return max(62, (cy + 8) - y)
 
 
 def _panel_pitchmix(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:

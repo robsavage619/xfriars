@@ -204,8 +204,9 @@ def live_angle(
                 "hero",
                 {
                     "value": f"{csw}%",
-                    "label": "CSW RATE",
-                    "context": f"{n} pitches · {whiffs} {w_word} · {called} called",
+                    "label": "CSW%",
+                    "gloss": "called strikes + whiffs",
+                    "context": "no-contact strikes · league avg ~28%",
                     "accent": GOLD if csw >= 30 else INK,
                 },
             ),
@@ -214,7 +215,7 @@ def live_angle(
                 {
                     "rows": mix,
                     "title": "PITCH MIX",
-                    "right": "usage · velo · whiffs (color = SwStr%)",
+                    "right": "pitches · mph · whiffs · color = whiff rate",
                 },
             ),
             PanelSpec(
