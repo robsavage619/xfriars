@@ -408,6 +408,47 @@ def test_spatial_candidate_round_trip(padres_db: duckdb.DuckDBPyConnection, tmp_
     assert (tmp_path / f"{candidate.candidate_id}.png").exists()
 
 
+def test_suggest_card_and_extract() -> None:
+    """Detector→card mapping and id/season extraction (top-level and nested)."""
+    from padres_analytics.detect.spatial_map import (
+        extract_player_id,
+        extract_season,
+        suggest_card,
+    )
+
+    assert suggest_card("weakness") == "hotcold"
+    assert suggest_card("cold_streak") == "rolling"
+    assert suggest_card("nl_west_race") is None
+    assert extract_player_id({"facts": {"padre_player_id": 592518}}) == 592518
+    assert extract_player_id({"player_id": 5}) == 5
+    assert extract_player_id({}) is None
+    assert extract_season({"season": 2023}, date(2024, 1, 1)) == 2023
+    assert extract_season({}, date(2024, 1, 1)) == 2024
+
+
+def test_spatial_companion_maps_weakness_to_hotcold(
+    padres_db: duckdb.DuckDBPyConnection,
+) -> None:
+    """A 'weakness' stat for a hitter spawns a hot/cold companion card."""
+    from padres_analytics.detect.spatial_map import spatial_companion
+
+    for i in range(10):
+        _insert(padres_db, ab=i + 1, plate_x=0.0, plate_z=2.5, xwoba=0.5)
+    companion = spatial_companion(
+        padres_db, "weakness", {"padre_player_id": 1, "season": 2024}, date(2024, 6, 1)
+    )
+    assert companion is not None
+    assert companion.payload_kind == "spatial"
+    assert companion.detector == "spatial.hotcold"
+
+
+def test_spatial_companion_none_for_unmapped(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """A detector with no card mapping yields no companion."""
+    from padres_analytics.detect.spatial_map import spatial_companion
+
+    assert spatial_companion(padres_db, "nl_west_race", {}, date(2024, 6, 1)) is None
+
+
 def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection) -> None:
     """Zone card reports in-zone rate (|x|<=0.83, 1.5<=z<=3.5) and filters by pitch."""
     _insert_pitch(padres_db, ab=1, pitch_type="SL", px=0.0, pz=2.5)  # in zone

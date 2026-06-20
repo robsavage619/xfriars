@@ -775,6 +775,38 @@ def spatial_card_cmd(
         typer.echo(f"Candidate {candidate.candidate_id} already exists (skipped).")
 
 
+@app.command("spatial-suggest")
+def spatial_suggest_cmd(
+    status: str = typer.Option("new", "--status", help="Candidate status to scan."),
+) -> None:
+    """Emit companion spatial cards for detected stats that map to a visual."""
+    configure_logging()
+    from padres_analytics.detect.base import emit
+    from padres_analytics.detect.spatial_map import spatial_companion
+    from padres_analytics.storage.db import connect
+
+    emitted = 0
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT candidate_id, detector, as_of, facts_json
+            FROM stat_candidates
+            WHERE status = ? AND payload_kind != 'spatial'
+            """,
+            [status],
+        ).fetchall()
+        for _cid, detector, as_of, facts_raw in rows:
+            facts = json.loads(facts_raw) if isinstance(facts_raw, str) else facts_raw
+            companion = spatial_companion(conn, detector, facts, as_of)
+            if companion is None:
+                continue
+            if emit(conn, [companion]):
+                emitted += 1
+                typer.echo(f"  {detector} → {companion.detector} ({companion.candidate_id})")
+
+    typer.echo(f"Emitted {emitted} companion spatial card(s).")
+
+
 @app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
