@@ -310,6 +310,7 @@ _SPATIAL_TEMPLATES: dict[str, str] = {
     "release": "card_release.html.j2",
     "rolling": "card_rolling.html.j2",
     "swingtake": "card_swingtake.html.j2",
+    "batspeed": "card_batspeed.html.j2",
 }
 
 

@@ -384,6 +384,89 @@ def _attack_region(
     return "waste"
 
 
+_FAST_SWING_MPH = 75.0  # Statcast's "fast swing" threshold
+
+
+def build_bat_speed(
+    conn: duckdb.DuckDBPyConnection,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Assemble a bat-tracking (swing-speed) ``SpatialDataset`` for one hitter.
+
+    A distribution of swing speeds (bat tracking, 2024+), binned at 2 mph. Hero =
+    average bat speed; context carries fast-swing rate (>= 75 mph) and swing length.
+    Bat tracking only began mid-2024, so a season here is a partial sample.
+
+    Args:
+        conn: Read connection to padres.db.
+        player_id: MLBAM batter id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        A validated ``SpatialDataset`` (card="batspeed"), or ``None`` when the
+        hitter has no tracked swings.
+    """
+    # Competitive swings only — exclude checked swings / bunts (bat_speed < 50),
+    # matching Savant's bat-speed methodology (and avoiding a clamped-bin spike).
+    rows = conn.execute(
+        """
+        SELECT batter_name, bat_speed, swing_length
+        FROM statcast_batter_pitches
+        WHERE batter_id = ? AND season = ? AND game_type = 'R' AND bat_speed >= 50
+        """,
+        [player_id, season],
+    ).fetchall()
+    if not rows:
+        return None
+
+    name_raw = rows[0][0]
+    speeds = [r[1] for r in rows]
+    lengths = [r[2] for r in rows if r[2] is not None]
+    n = len(speeds)
+    avg_speed = sum(speeds) / n
+    fast = sum(1 for s in speeds if s >= _FAST_SWING_MPH) / n
+    avg_len = sum(lengths) / len(lengths) if lengths else None
+
+    # 2 mph bins from 50 to 90, value = swings in the bin.
+    lo, hi, step = 50, 90, 2
+    bins: dict[int, int] = {}
+    for s in speeds:
+        b = max(lo, min(hi - step, int((s - lo) // step) * step + lo))
+        bins[b] = bins.get(b, 0) + 1
+    points = [
+        SpatialPoint(x=float(b + step / 2), y=0.0, value=float(c)) for b, c in sorted(bins.items())
+    ]
+
+    note = "Competitive swings (50+ mph) · bat tracking 2024+ (partial season) · fast = 75+ mph"
+    if n < 100:
+        note = f"Small sample ({n} swings) — illustrative · {note}"
+
+    ctx = f"{fast:.0%} fast swings"
+    if avg_len is not None:
+        ctx += f" · {avg_len:.1f} ft swing"
+    name = _display_name(name_raw, str(player_id))
+    return SpatialDataset(
+        card="batspeed",
+        title=name,
+        subtitle=f"Bat speed · {season}",
+        as_of=as_of or date.today(),
+        points=points,
+        hero={"value": f"{avg_speed:.1f}", "label": "Avg Bat Speed (mph)", "context": ctx},
+        n=n,
+        coverage=f"{season} season",
+        handedness="All",
+        park="All parks",
+        note=note,
+        source="Baseball Savant",
+        headline=f"{name} {season} bat speed ({avg_speed:.1f} mph, {n} swings)",
+        claim_scope=f"{season} season",
+    )
+
+
 def build_swing_take(
     conn: duckdb.DuckDBPyConnection,
     player_id: int,

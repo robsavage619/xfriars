@@ -704,6 +704,39 @@ def swingtake(
 
 
 @app.command()
+def batspeed(
+    player: int = typer.Option(..., "--player", help="MLBAM batter id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render a bat-speed (bat-tracking) distribution card from stored faced pitches."""
+    configure_logging()
+    from padres_analytics.detect.spatial import build_bat_speed
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.cards import render as render_card
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        dataset = build_bat_speed(conn, player, ref_season)
+
+    if dataset is None:
+        typer.echo(
+            f"No tracked swings for player {player}, season {ref_season}. "
+            f"Run 'pad ingest batter-pitches --player {player} --season {ref_season}' first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_card(dataset, CARDS_DIR, f"batspeed_{player}_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Rendered {dataset.n}-swing bat speed → {out}")
+
+
+@app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),

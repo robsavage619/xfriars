@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from padres_analytics.detect.candidates import SpatialDataset
 from padres_analytics.detect.spatial import (
     build_arsenal,
+    build_bat_speed,
     build_hot_cold,
     build_hr_spray,
     build_launch,
@@ -36,6 +37,8 @@ def _insert_batter_pitch(
     pz: float = 2.5,
     desc: str = "ball",
     dre: float = 0.0,
+    bs: float | None = None,
+    sl: float | None = None,
 ) -> None:
     conn.execute(
         f"INSERT INTO statcast_batter_pitches ({_BP_COLS}) VALUES "
@@ -58,8 +61,8 @@ def _insert_batter_pitch(
             desc,
             "B",
             dre,
-            None,
-            None,
+            bs,
+            sl,
             None,
             "R",
             "R",
@@ -338,6 +341,24 @@ def test_swing_take_regions_and_total(padres_db: duckdb.DuckDBPyConnection) -> N
 def test_swing_take_none_without_pitches(padres_db: duckdb.DuckDBPyConnection) -> None:
     """No faced pitches → no swing/take card."""
     assert build_swing_take(padres_db, 999, 2024) is None
+
+
+def test_bat_speed_filters_checked_swings(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Bat speed excludes non-competitive (<50 mph) swings; avg + fast% over the rest."""
+    for i, sp in enumerate([70.0, 72.0, 76.0, 78.0, 80.0]):
+        _insert_batter_pitch(padres_db, ab=i + 1, desc="swinging_strike", bs=sp)
+    _insert_batter_pitch(padres_db, ab=99, desc="foul", bs=40.0)  # checked → excluded
+    ds = build_bat_speed(padres_db, 1, 2024)
+    assert ds is not None
+    assert ds.card == "batspeed"
+    assert ds.n == 5  # the 40 mph swing dropped
+    assert ds.hero is not None and ds.hero["value"] == "75.2"  # mean of the five
+    assert "60%" in ds.hero["context"]  # 3 of 5 are >= 75 mph
+
+
+def test_bat_speed_none_without_swings(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """No tracked swings → no bat-speed card."""
+    assert build_bat_speed(padres_db, 999, 2024) is None
 
 
 def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection) -> None:

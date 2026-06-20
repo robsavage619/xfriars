@@ -141,6 +141,7 @@ class SpatialDataset(BaseModel):
         "hotcold",
         "release",
         "swingtake",
+        "batspeed",
     ]
     title: str
     subtitle: str | None = None
