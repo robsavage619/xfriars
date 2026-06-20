@@ -443,17 +443,27 @@ def compose(angle: StoryAngle) -> str:
     # header
     c.text(_ML, 33, f"SAN DIEGO PADRES  ·  {angle.subject.upper()}", 9, BROWN_DIM, w=600, ls=2.0)
     c.text(_ML - 2, 72, angle.title, 40, INK, w=800, ff="Big Shoulders Display", ls=0.5)
-    c.text(
-        _W - _MR,
-        39,
-        "xFriars",
-        22,
-        GOLD,
-        w=900,
-        anchor="end",
-        ff="Big Shoulders Display",
-        italic=True,
-    )
+    if angle.headshot:
+        cx, cy, rr = _W - _MR - 30, 44, 30
+        c.parts.append(
+            f'<defs><clipPath id="hsclip"><circle cx="{cx}" cy="{cy}" r="{rr}"/></clipPath></defs>'
+            f'<image href="{angle.headshot}" x="{cx - rr}" y="{cy - rr}" '
+            f'width="{rr * 2}" height="{rr * 2}" preserveAspectRatio="xMidYMid slice" '
+            f'clip-path="url(#hsclip)"/>'
+            f'<circle cx="{cx}" cy="{cy}" r="{rr}" fill="none" stroke="{GOLD}" stroke-width="2"/>'
+        )
+    else:
+        c.text(
+            _W - _MR,
+            39,
+            "xFriars",
+            22,
+            GOLD,
+            w=900,
+            anchor="end",
+            ff="Big Shoulders Display",
+            italic=True,
+        )
     sub_lines = textwrap.wrap(angle.headline, width=64)[:2]
     y = 92
     for ln in sub_lines:

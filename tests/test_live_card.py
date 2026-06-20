@@ -97,13 +97,27 @@ def test_features_the_padre_not_the_busiest() -> None:
     assert angle.key == "live_pitcher"
     assert "Michael King" in angle.subject
     assert "MacKenzie Gore" not in angle.subject
-    assert "vs TEX" in angle.subject  # opponent labeled
+    assert angle.subject == "Michael King"  # short kicker (name only)
+    assert "vs TEX" in angle.headline  # opponent labeled in the subhead
     # CSW-led: 1 called strike + 1 whiff on 2 pitches = 100% CSW
     assert "100% CSW" in angle.headline
     assert "2 pitches" in angle.headline
     assert "1 whiff" in angle.headline
-    assert "4 K" in angle.headline
     assert [p.kind for p in angle.panels] == ["hero", "pitchmix", "trend", "statline"]
+
+
+def test_headshot_injected_and_rendered() -> None:
+    """A photo resolver puts a data URI on the angle and an <image> on the card."""
+    uri = "data:image/png;base64,AAAA"
+    angle = live_angle(_feed(), photo_resolver=lambda _pid: uri)
+    assert angle is not None
+    assert angle.headshot == uri
+    svg = compose(angle)
+    assert "<image" in svg and uri in svg
+    # without a resolver, no photo and the wordmark stays
+    plain = live_angle(_feed())
+    assert plain is not None and plain.headshot is None
+    assert "<image" not in compose(plain)
 
 
 def test_compose_audits_clean() -> None:

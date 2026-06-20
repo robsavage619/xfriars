@@ -86,6 +86,7 @@ class StoryAngle:
     stats: list[Stat] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
     source: str = "Baseball Savant · MLB Stats API"
+    headshot: str | None = None  # optional player headshot as a data: URI
 
 
 # --------------------------------------------------------------------------- #

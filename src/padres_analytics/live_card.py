@@ -12,7 +12,11 @@ carries a ``live · unofficial`` caveat and a live-feed source stamp.
 
 from __future__ import annotations
 
+import base64
+import io
+import logging
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -22,6 +26,36 @@ from padres_analytics.detect.angles import PanelSpec, Stat, StoryAngle
 from padres_analytics.live import iter_pitches, parse_feed
 from padres_analytics.render.story_infographic import render_angle
 from padres_analytics.render.tokens import GOLD, INK
+
+logger = logging.getLogger(__name__)
+
+
+def headshot_data_uri(mlb_id: int) -> str | None:
+    """Resolve a player headshot to a small base64 ``data:`` URI, or None.
+
+    A data URI renders in both the Playwright PNG and the sandboxed widget
+    preview (where ``img.mlbstatic.com`` is blocked). Network/disk failures
+    degrade to None — the card simply renders without a photo.
+    """
+    from padres_analytics.render.mlb_assets import player_photo_path
+
+    try:
+        path = player_photo_path(mlb_id)
+    except Exception:
+        return None
+    if not path or not path.exists():
+        return None
+    try:
+        from PIL import Image
+
+        img = Image.open(path).convert("RGB")
+        width = 128
+        img = img.resize((width, round(img.height * width / img.width)), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode()
 
 
 def _padres_side(feed: dict[str, Any], team_id: int) -> str | None:
@@ -73,7 +107,11 @@ def _padres_pitcher(
 
 
 def live_angle(
-    feed: dict[str, Any], *, team_id: int = PADRES_TEAM_ID, as_of: date | None = None
+    feed: dict[str, Any],
+    *,
+    team_id: int = PADRES_TEAM_ID,
+    as_of: date | None = None,
+    photo_resolver: Callable[[int], str | None] | None = None,
 ) -> StoryAngle | None:
     """Build a live story angle for the Padres' starter.
 
@@ -81,6 +119,8 @@ def live_angle(
         feed: A GUMBO ``feed/live`` payload.
         team_id: The Padres' MLB team id (overridable for tests).
         as_of: Card date; defaults to today.
+        photo_resolver: Optional ``pid -> data: URI`` for the pitcher headshot.
+            Injected so tests stay network-free; left None means no photo.
 
     Returns:
         A :class:`StoryAngle`, or ``None`` if the Padres aren't in this game or
@@ -149,9 +189,9 @@ def live_angle(
 
     return StoryAngle(
         key="live_pitcher",
-        subject=f"{name} · vs {opp}{situation}",
+        subject=name,
         title="DEALING" if csw >= 30 else "ON THE BUMP",
-        headline=f"{csw}% CSW on {n} pitches, {whiffs} {w_word} — {ip} IP, {k} K.",
+        headline=f"vs {opp}{situation} — {csw}% CSW on {n} pitches, {whiffs} {w_word}, {k} K.",
         thesis="A live look at the Padres starter's stuff: CSW%, pitch mix, and velocity.",
         direction="up",
         effect=float(csw),
@@ -203,6 +243,7 @@ def live_angle(
         ],
         caveats=["live · unofficial — preliminary, revised after the game"],
         source="MLB GUMBO feed (live)",
+        headshot=photo_resolver(pid) if photo_resolver else None,
     )
 
 
@@ -210,7 +251,7 @@ def render_live_card(
     feed: dict[str, Any], out_dir: Path, stem: str, *, team_id: int = PADRES_TEAM_ID
 ) -> Path | None:
     """Render the live story card to a PNG, or return None if there's nothing to show."""
-    angle = live_angle(feed, team_id=team_id)
+    angle = live_angle(feed, team_id=team_id, photo_resolver=headshot_data_uri)
     if angle is None:
         return None
     return render_angle(angle, out_dir, stem)
