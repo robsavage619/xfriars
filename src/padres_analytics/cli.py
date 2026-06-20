@@ -874,6 +874,8 @@ def discover_cmd(
         )
         typer.echo(f"   {a.headline}")
         typer.echo(f"   {a.thesis}")
+        if a.rank_note:
+            typer.echo(f"   ↳ {a.rank_note}")
 
 
 @app.command("story")

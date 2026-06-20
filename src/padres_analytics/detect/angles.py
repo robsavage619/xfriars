@@ -21,7 +21,7 @@ Defensibility rests on three things baked in here:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 import duckdb
@@ -88,6 +88,7 @@ class StoryAngle:
     source: str = "Baseball Savant · MLB Stats API"
     headshot: str | None = None  # optional player headshot as a data: URI
     subject_id: int | None = None  # MLBAM id of the subject player, for reconciliation
+    rank_note: str = ""  # why it ranked where it did (surprise / novelty basis)
 
 
 # --------------------------------------------------------------------------- #
@@ -518,7 +519,24 @@ def discover(
             continue  # a missing table for one lens never kills the rest
         if angle is not None:
             found.append(angle)
-    return sorted(found, key=lambda a: a.interest, reverse=True)
+    return _rerank(conn, found, ctx)
+
+
+def _rerank(
+    conn: duckdb.DuckDBPyConnection, angles: list[StoryAngle], ctx: _Ctx
+) -> list[StoryAngle]:
+    """Reweight raw interest by surprise (unusual for the subject) + novelty."""
+    from padres_analytics.detect.surprise import novelty, subject_surprise
+
+    ranked: list[StoryAngle] = []
+    for angle in angles:
+        surprise = subject_surprise(conn, angle, ctx.season)
+        nov_mult, nov_note = novelty(conn, angle, ctx.as_of)
+        note = " · ".join(n for n in (surprise.note, nov_note) if n)
+        ranked.append(
+            replace(angle, interest=angle.interest * surprise.multiplier * nov_mult, rank_note=note)
+        )
+    return sorted(ranked, key=lambda a: a.interest, reverse=True)
 
 
 def best_story(
