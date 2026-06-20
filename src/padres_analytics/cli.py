@@ -878,6 +878,31 @@ def discover_cmd(
             typer.echo(f"   ↳ {a.rank_note}")
 
 
+@app.command("scout")
+def scout_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    out: str = typer.Option("data/leads.md", "--out", help="Where to write the leads digest."),
+) -> None:
+    """Scout for leads — a broad, ranked digest of what's worth exploring (not finished stories)."""
+    configure_logging()
+    from pathlib import Path
+
+    from padres_analytics.detect.leads import digest, scout
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    today = _la_today()
+    with connect(read_only=True) as conn:
+        leads = scout(conn, ref_season, as_of=today)
+
+    text = digest(leads, today)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(text, encoding="utf-8")
+    for i, lead in enumerate(leads, 1):
+        typer.echo(f"{i}. [{lead.kind}] {lead.headline}")
+    typer.echo(f"\n{len(leads)} lead(s) → {out}")
+
+
 @app.command("story")
 def story_infographic_cmd(
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),

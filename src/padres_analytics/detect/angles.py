@@ -158,6 +158,8 @@ def available_roster_ids(conn: duckdb.DuckDBPyConnection) -> list[int]:
         ).fetchall()
     except duckdb.BinderException:
         rows = conn.execute("SELECT player_id FROM team_rosters").fetchall()
+    except duckdb.CatalogException:
+        return []  # no roster table at all
     return [r[0] for r in rows]
 
 
