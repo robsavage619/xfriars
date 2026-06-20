@@ -145,8 +145,24 @@ class _Ctx:
     league_ev: float
 
 
+def available_roster_ids(conn: duckdb.DuckDBPyConnection) -> list[int]:
+    """Roster player ids that are currently AVAILABLE — never feature a player who's out.
+
+    Filters on ``team_rosters.status`` to drop the injured list, minors
+    reassignments, etc. (a 60-day-IL bat shouldn't headline a "current" story).
+    Degrades to the full roster when the status column isn't present (test fixtures).
+    """
+    try:
+        rows = conn.execute(
+            "SELECT player_id FROM team_rosters WHERE status IS NULL OR status ILIKE 'Active'"
+        ).fetchall()
+    except duckdb.BinderException:
+        rows = conn.execute("SELECT player_id FROM team_rosters").fetchall()
+    return [r[0] for r in rows]
+
+
 def _context(conn: duckdb.DuckDBPyConnection, season: int, as_of: date) -> _Ctx | None:
-    ids = [r[0] for r in conn.execute("SELECT player_id FROM team_rosters").fetchall()]
+    ids = available_roster_ids(conn)
     if not ids:
         return None
     lg = conn.execute(

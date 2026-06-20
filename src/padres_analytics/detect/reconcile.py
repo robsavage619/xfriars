@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from padres_analytics.detect.angles import StoryAngle, regress
+from padres_analytics.detect.angles import StoryAngle, available_roster_ids, regress
 
 if TYPE_CHECKING:
     import duckdb
@@ -49,7 +49,7 @@ def _league_xwoba(conn: duckdb.DuckDBPyConnection) -> float | None:
 def _reconcile_team(
     conn: duckdb.DuckDBPyConnection, season: int, sm: dict[str, float]
 ) -> list[str]:
-    ids = [r[0] for r in conn.execute("SELECT player_id FROM team_rosters").fetchall()]
+    ids = available_roster_ids(conn)
     if not ids:
         return ["team_luck: no roster to reconcile against"]
     ph = ",".join("?" * len(ids))

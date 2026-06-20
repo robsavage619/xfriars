@@ -179,3 +179,23 @@ def test_render_audit_catches_dropped_stat(padres_db: duckdb.DuckDBPyConnection)
     )
     broken = type(angle)(**{**angle.__dict__, "panels": []})  # nothing drawn
     assert audit_rendered(broken, compose(broken))
+
+
+def test_injured_players_are_not_featured(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """A player on the IL (status != Active) is never surfaced as a current story."""
+    padres_db.execute("DROP TABLE IF EXISTS team_rosters")
+    padres_db.execute(
+        "CREATE TABLE team_rosters (player_id INTEGER, player_name VARCHAR, status VARCHAR)"
+    )
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    # An active star and an injured 95th-pct barrel bat.
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Active Star', 'Active')")
+    padres_db.execute("INSERT INTO team_rosters VALUES (2, 'Hurt Slugger', 'Injured 60-Day')")
+    _expected(padres_db, 1, "Star, Active", 300, 0.300, 0.330)
+    _expected(padres_db, 2, "Slugger, Hurt", 300, 0.300, 0.340)
+    _ev(padres_db, 2, "Slugger, Hurt", 200, 92.0)
+    _pct(padres_db, 2, "Slugger, Hurt", brl_percent=99, hard_hit_percent=99)
+
+    subjects = {a.subject for a in discover(padres_db, 2026, as_of=date(2026, 6, 20))}
+    assert not any("Hurt" in s or "Slugger" in s for s in subjects)
