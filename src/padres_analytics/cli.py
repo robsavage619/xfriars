@@ -845,6 +845,44 @@ def story(
     typer.echo(f"Rendered {kind} story → {out}")
 
 
+@app.command("luck-story")
+def luck_story_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Render the contact-vs-results 'hard luck' analytical infographic.
+
+    Composes a multi-module story (per-player dumbbell, luck gauge, volatility
+    sparkline, contact strip, regression-to-the-mean counterpoint) from the
+    ingested Statcast expected-stats, exit-velo, game-log, and standings tables.
+    """
+    configure_logging()
+    from padres_analytics.detect.luck_story import build_luck_story
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.story_infographic import render_luck_infographic
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        story = build_luck_story(conn, ref_season)
+
+    if story is None:
+        typer.echo(
+            "Not enough data for a luck story (need statcast expected-stats + roster). "
+            "Run 'pad ingest statcast' and the batted-ball ingests first.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    try:
+        out = render_luck_infographic(story, CARDS_DIR, f"luck_story_{ref_season}")
+    except RenderError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    typer.echo(story.headline)
+    typer.echo(f"Rendered luck story → {out}")
+
+
 @app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
