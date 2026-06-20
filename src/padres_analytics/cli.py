@@ -878,6 +878,36 @@ def discover_cmd(
             typer.echo(f"   ↳ {a.rank_note}")
 
 
+@app.command("sync")
+def sync_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Refresh the DB — roster (w/ status), standings, Statcast, seasons, game logs.
+
+    The team-level pull that keeps the engine current (and the availability filter
+    accurate). Each step is fault-isolated; failures are reported, not fatal.
+    """
+    configure_logging()
+    from padres_analytics.ingest.sync import run_sync
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    yr = season or _la_today().year
+    with connect() as conn:
+        initialize(conn)
+        results = run_sync(conn, yr)
+    for r in results:
+        if r.ok:
+            typer.echo(f"  {r.name}: {r.detail}")
+        else:
+            typer.echo(f"  {r.name}: FAILED — {r.detail}", err=True)
+    ok = sum(1 for r in results if r.ok)
+    failed = len(results) - ok
+    typer.echo(f"Sync: {ok} ok, {failed} failed.")
+    if failed:
+        raise typer.Exit(ERR)
+
+
 @app.command("scout")
 def scout_cmd(
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
@@ -887,20 +917,24 @@ def scout_cmd(
     configure_logging()
     from pathlib import Path
 
+    from padres_analytics.board import add_leads
     from padres_analytics.detect.leads import digest, scout
     from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
 
     ref_season = season or _la_today().year
     today = _la_today()
-    with connect(read_only=True) as conn:
+    with connect() as conn:
+        initialize(conn)
         leads = scout(conn, ref_season, as_of=today)
+        add_leads(conn, leads)  # surface on the board's Leads lane
 
     text = digest(leads, today)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(text, encoding="utf-8")
     for i, lead in enumerate(leads, 1):
         typer.echo(f"{i}. [{lead.kind}] {lead.headline}")
-    typer.echo(f"\n{len(leads)} lead(s) → {out}")
+    typer.echo(f"\n{len(leads)} lead(s) → {out} · on the board")
 
 
 @app.command("story")
@@ -950,8 +984,15 @@ def story_infographic_cmd(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(ERR) from exc
 
+    from padres_analytics.board import add_card
+    from padres_analytics.storage.schemas import initialize
+
+    with connect() as conn:
+        initialize(conn)
+        add_card(conn, chosen, str(out), kind="season_story", reconciled=True)
+
     typer.echo(f"[{chosen.key}] {chosen.headline}")
-    typer.echo(f"Rendered story → {out}  (numbers reconciled vs source ✓)")
+    typer.echo(f"Rendered story → {out}  (reconciled ✓ · on the board)")
 
 
 @live_app.command("now")
@@ -1122,15 +1163,26 @@ def live_card_cmd(
                 typer.echo(f"No Padres game found on {on_date}.")
                 return
             feed = client.live_feed(pk)
-        out = render_live_moment(feed, CARDS_DIR, f"live_{pk}")
+        result = render_live_moment(feed, CARDS_DIR, f"live_{pk}")
     except MlbApiError as exc:
         typer.echo(f"Error reaching the MLB feed: {exc}", err=True)
         raise typer.Exit(ERR) from exc
 
-    if out is None:
+    if result is None:
         typer.echo("No card-worthy moment yet — no dominant start or standout bat. Try later.")
         return
-    typer.echo(f"Rendered live moment → {out}")
+    out, angle = result
+
+    from padres_analytics.board import add_card
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    with connect() as conn:
+        initialize(conn)
+        add_card(conn, angle, str(out), kind="live_moment", reconciled=False)
+
+    typer.echo(f"[{angle.key}] {angle.headline}")
+    typer.echo(f"Rendered live moment → {out}  (on the board)")
 
 
 @app.command()

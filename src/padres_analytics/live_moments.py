@@ -195,9 +195,12 @@ def discover_live(
 
 def render_live_moment(
     feed: dict[str, Any], out_dir: Path, stem: str, *, team_id: int = PADRES_TEAM_ID
-) -> Path | None:
-    """Render the strongest card-worthy live moment, or None if nothing qualifies yet."""
+) -> tuple[Path, StoryAngle] | None:
+    """Render the strongest card-worthy live moment; return (path, angle) or None.
+
+    The angle is returned so callers can record it (image + reasoning) on the board.
+    """
     angles = discover_live(feed, team_id=team_id, photo_resolver=headshot_data_uri)
     if not angles:
         return None
-    return render_angle(angles[0], out_dir, stem)
+    return render_angle(angles[0], out_dir, stem), angles[0]

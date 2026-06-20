@@ -585,6 +585,179 @@ def explorer_view(view_name: str) -> dict[str, Any]:
         conn.close()
 
 
+# ── The Board ──────────────────────────────────────────────────────────────────
+#
+# The surface where Claude-generated cards land. The app only reads the board and
+# flips statuses; the Sync/Scout actions kick the engine. No analysis lives here.
+
+
+@app.get("/api/board")
+def get_board() -> dict[str, Any]:
+    """The whole board — cards (newest first) and leads (strongest first)."""
+    from padres_analytics.board import list_cards, list_leads
+
+    conn = _ro()
+    try:
+        cards = [_board_card(c) for c in list_cards(conn)]
+        leads = [_board_lead(land) for land in list_leads(conn)]
+    finally:
+        conn.close()
+    return {"cards": cards, "leads": leads}
+
+
+def _board_card(c: dict[str, Any]) -> dict[str, Any]:
+    """Shape a board_cards row for the frontend (image presence, ISO timestamp)."""
+    image_path = c.get("image_path")
+    return {
+        "card_id": c["card_id"],
+        "kind": c["kind"],
+        "subject": c["subject"],
+        "title": c["title"],
+        "headline": c["headline"],
+        "rank_note": c["rank_note"],
+        "confidence": c["confidence"],
+        "reconciled": bool(c["reconciled"]),
+        "source": c["source"],
+        "caption": c["caption"],
+        "status": c["status"],
+        "created_at": str(c["created_at"]),
+        "has_image": bool(image_path and Path(image_path).exists()),
+    }
+
+
+def _board_lead(land: dict[str, Any]) -> dict[str, Any]:
+    """Shape a board_leads row for the frontend."""
+    return {
+        "lead_id": land["lead_id"],
+        "subject": land["subject"],
+        "kind": land["kind"],
+        "headline": land["headline"],
+        "explore": land["explore"],
+        "interest": round(land["interest"], 3),
+        "status": land["status"],
+        "created_at": str(land["created_at"]),
+    }
+
+
+@app.get("/api/board/cards/{card_id}/image.png", response_class=FileResponse)
+def get_board_card_image(card_id: str) -> FileResponse:
+    """Serve a board card's rendered PNG."""
+    conn = _ro()
+    try:
+        row = conn.execute(
+            "SELECT image_path FROM board_cards WHERE card_id = ?", [card_id]
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+    path = Path(row[0])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Card image missing on disk")
+    return FileResponse(str(path), media_type="image/png")
+
+
+class StatusUpdate(BaseModel):
+    """Request body for flipping a board card/lead status."""
+
+    status: str
+
+
+@app.post("/api/board/cards/{card_id}/status")
+def update_board_card_status(card_id: str, body: StatusUpdate) -> dict[str, str]:
+    """Flip a card's status (new/queued/dismissed)."""
+    from padres_analytics.board import set_card_status
+
+    conn = _rw()
+    try:
+        if not set_card_status(conn, card_id, body.status):
+            raise HTTPException(status_code=422, detail=f"Unknown status {body.status!r}")
+    finally:
+        conn.close()
+    return {"card_id": card_id, "status": body.status}
+
+
+@app.post("/api/board/leads/{lead_id}/status")
+def update_board_lead_status(lead_id: str, body: StatusUpdate) -> dict[str, str]:
+    """Flip a lead's status (new/exploring/dismissed)."""
+    from padres_analytics.board import set_lead_status
+
+    conn = _rw()
+    try:
+        if not set_lead_status(conn, lead_id, body.status):
+            raise HTTPException(status_code=422, detail=f"Unknown status {body.status!r}")
+    finally:
+        conn.close()
+    return {"lead_id": lead_id, "status": body.status}
+
+
+# ── Actions — kick the engine from the app ──────────────────────────────────────
+#
+# Sync is a network-bound team pull; it runs on a background thread with a small
+# in-memory status the frontend can poll. Scout is DB-only and fast, so it runs
+# inline and returns the refreshed leads.
+
+_SYNC_STATE: dict[str, Any] = {"running": False, "season": None, "steps": [], "finished_at": None}
+
+
+def _run_sync_job(season: int) -> None:
+    """Background worker: refresh the DB and record per-step results in _SYNC_STATE."""
+    from padres_analytics.ingest.sync import run_sync
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    try:
+        with connect() as conn:
+            initialize(conn)
+            results = run_sync(conn, season)
+        _SYNC_STATE["steps"] = [{"name": r.name, "ok": r.ok, "detail": r.detail} for r in results]
+    except Exception as exc:
+        logger.exception("sync job failed")
+        _SYNC_STATE["steps"] = [{"name": "sync", "ok": False, "detail": str(exc)}]
+    finally:
+        _SYNC_STATE["running"] = False
+
+
+@app.post("/api/actions/sync")
+def action_sync(season: int = 0) -> dict[str, Any]:
+    """Start a DB refresh on a background thread. Poll /api/actions/sync for status."""
+    import datetime as _dt
+    import threading
+
+    if _SYNC_STATE["running"]:
+        return {"started": False, "running": True}
+    yr = season or _dt.datetime.now(_dt.UTC).astimezone().year
+    _SYNC_STATE.update(running=True, season=yr, steps=[], finished_at=None)
+    threading.Thread(target=_run_sync_job, args=(yr,), daemon=True).start()
+    return {"started": True, "running": True, "season": yr}
+
+
+@app.get("/api/actions/sync")
+def action_sync_status() -> dict[str, Any]:
+    """Current/last sync status for the Sync button's progress."""
+    return dict(_SYNC_STATE)
+
+
+@app.post("/api/actions/scout")
+def action_scout(season: int = 0) -> dict[str, Any]:
+    """Run the scout, refresh the board's Leads lane, and return the new leads."""
+    import datetime as _dt
+
+    from padres_analytics.board import add_leads, list_leads
+    from padres_analytics.detect.leads import scout
+
+    today = _dt.datetime.now(_dt.UTC).astimezone().date()
+    yr = season or today.year
+    conn = _rw()
+    try:
+        leads = scout(conn, yr, as_of=today)
+        n = add_leads(conn, leads)
+        refreshed = [_board_lead(land) for land in list_leads(conn)]
+    finally:
+        conn.close()
+    return {"written": n, "leads": refreshed}
+
+
 # ── Static files (built React app) ────────────────────────────────────────────
 
 if _STUDIO_DIST.exists():

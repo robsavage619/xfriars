@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -411,6 +411,37 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_sc_barrels_year
         ON statcast_batter_exitvelo_barrels(year)
+    """,
+    # The Board — where Claude-generated cards and scout leads land for review.
+    """
+    CREATE TABLE IF NOT EXISTS board_cards (
+        card_id      VARCHAR PRIMARY KEY,
+        kind         VARCHAR NOT NULL,
+        angle_key    VARCHAR,
+        subject      VARCHAR,
+        title        VARCHAR,
+        headline     VARCHAR,
+        rank_note    VARCHAR,
+        confidence   VARCHAR,
+        reconciled   BOOLEAN,
+        source       VARCHAR,
+        image_path   VARCHAR NOT NULL,
+        caption      VARCHAR,
+        status       VARCHAR DEFAULT 'new',
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS board_leads (
+        lead_id      VARCHAR PRIMARY KEY,
+        subject      VARCHAR,
+        kind         VARCHAR,
+        headline     VARCHAR NOT NULL,
+        explore      VARCHAR,
+        interest     DOUBLE,
+        status       VARCHAR DEFAULT 'new',
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
     """,
 )
 
