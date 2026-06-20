@@ -1,22 +1,26 @@
-"""Render a :class:`LuckStory` to a multi-module editorial-light infographic PNG.
+"""Render a :class:`StoryAngle` to an editorial-light infographic.
 
-The layout is a vertical magazine column: macro hook, a per-player dumbbell
-(actual vs. expected wOBA), a two-up luck gauge + volatility sparkline, a
-contact-quality strip, and a regression-to-the-mean counterpoint ladder. Every
-number comes from the story object; this module only positions them.
+The card is composed from *panels*: each panel is a function that draws into a
+box ``(x, y, w)`` and returns the height it consumed, so the composer flows them
+vertically and sizes the canvas to fit. A story is therefore "an ordered list of
+panels + bound data" — exactly what the discovery engine emits — and adding or
+reordering a module needs no coordinate surgery.
+
+Every number drawn comes from the angle's audited :class:`Stat` corpus; nothing
+is invented in the renderer.
 """
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
-from padres_analytics.detect.luck_story import REGRESSION_PA_PRIOR, LuckStory
+from padres_analytics.detect.angles import StoryAngle
 from padres_analytics.render.cards import _html_to_png
 from padres_analytics.render.tokens import (
     BIG_SHOULDERS_TTF,
     BROWN,
     BROWN_DIM,
-    DEVICE_SCALE,
     GOLD,
     HOT,
     INK,
@@ -26,16 +30,18 @@ from padres_analytics.render.tokens import (
     TEXT_MUTED,
 )
 
-_W, _H = 480, 752
+_W = 480
 _ML, _MR = 26, 26
+_CW = _W - _ML - _MR
 _HAIR = "rgba(28,23,20,.12)"
 _ZEBRA = "rgba(28,23,20,.035)"
 _RED = HOT
 _MUTED = TEXT_MUTED
+_GAP = 18  # vertical gap between panels
 
 
 class _Canvas:
-    """Tiny SVG element accumulator with rounded-coordinate helpers."""
+    """SVG element accumulator with rounded-coordinate helpers."""
 
     def __init__(self) -> None:
         self.parts: list[str] = []
@@ -92,11 +98,24 @@ class _Canvas:
         self.parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r}" fill="{fill}"{s}/>')
 
     def rect(
-        self, x: float, y: float, w: float, h: float, fill: str, op: float | None = None
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        fill: str,
+        op: float | None = None,
+        rx: float | None = None,
     ) -> None:
         o = f' opacity="{op}"' if op is not None else ""
+        r = f' rx="{rx}"' if rx else ""
         self.parts.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" fill="{fill}"{o}/>'
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" fill="{fill}"{o}{r}/>'
+        )
+
+    def poly(self, pts: str, stroke: str, w: float = 1.6) -> None:
+        self.parts.append(
+            f'<polyline points="{pts}" fill="none" stroke="{stroke}" stroke-width="{w}"/>'
         )
 
 
@@ -104,25 +123,209 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _ordinal_avg(v: float) -> str:
-    """Format a rate stat like .314 without the leading zero."""
+def _avg(v: float) -> str:
+    """Format a rate stat like .314 (no leading zero)."""
     return f"{v:.3f}".lstrip("0")
 
 
-def build_svg(story: LuckStory) -> str:
-    """Compose the infographic SVG string from a story object."""
-    c = _Canvas()
-    c.parts.append(
-        f'<svg viewBox="0 0 {_W} {_H}" width="{_W}" xmlns="http://www.w3.org/2000/svg" '
-        f'font-family="Space Grotesk,sans-serif" role="img" '
-        f'aria-label="San Diego Padres contact-vs-results infographic">'
-    )
-    c.rect(0, 0, _W, _H, PAPER)
-    c.rect(0, 0, _W, 5, BROWN)
+def _tone_color(value: float, lo: float, hi: float) -> str:
+    """Slate (cold) below ``lo``, gold (hot) above ``hi``, brown between."""
+    if value <= lo:
+        return SLATE
+    if value >= hi:
+        return GOLD
+    return BROWN_DIM
 
-    # ---------- header ----------
-    c.text(_ML, 33, "SAN DIEGO PADRES  ·  WHY THE BATS WENT QUIET", 9, BROWN_DIM, w=600, ls=2.4)
-    c.text(_ML - 2, 72, "HIT INTO HARD LUCK", 42, INK, w=800, ff="Big Shoulders Display", ls=0.5)
+
+def _section_header(c: _Canvas, x: float, y: float, title: str, right: str | None = None) -> float:
+    """Draw a section header at baseline ``y``; return the y of the content start."""
+    c.text(x, y, title, 10.5, INK, w=700, ls=1.2)
+    if right:
+        c.text(x + _CW, y, right, 9.5, BROWN_DIM, anchor="end", w=500)
+    return y + 16
+
+
+# --------------------------------------------------------------------------- #
+# panels — each: (canvas, x, y_top, w, data) -> height consumed
+# --------------------------------------------------------------------------- #
+def _panel_dumbbell(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    rows = d["rows"][:10]
+    c0 = _section_header(c, x, y + 12, "EVERY REGULAR IS OWED", "wOBA  vs  expected wOBA")
+    lo, hi = 0.225, 0.360
+    px0, px1 = x + 104, x + w - 28
+
+    def dx(v: float) -> float:
+        return px0 + (v - lo) / (hi - lo) * (px1 - px0)
+
+    top, step = c0 + 6, 17.6
+    bot = top + (len(rows) - 1) * step + 9
+    for tick in (0.250, 0.300, 0.350):
+        c.line(dx(tick), top, dx(tick), bot, _HAIR)
+        c.text(dx(tick), top - 4, _avg(tick), 8.5, _MUTED, anchor="middle")
+    for i, (name, woba, xwoba) in enumerate(rows):
+        yy = top + i * step
+        if i % 2 == 1:
+            c.rect(x - 2, yy - step / 2, w + 4, step, _ZEBRA)
+        xa, xe = dx(woba), dx(xwoba)
+        c.text(x - 4, yy + 3.3, name, 11, INK, w=500)
+        c.line(min(xa, xe), yy, max(xa, xe), yy, SLATE if xwoba > woba else GOLD, 2.4, op=0.45)
+        c.circle(xe, yy, 4.2, PAPER, GOLD, 2)
+        c.circle(xa, yy, 4.2, _RED if xwoba > woba else INK)
+        gap = round((woba - xwoba) * 1000)
+        gap_col = SLATE if gap < 0 else BROWN_DIM
+        c.text(x + w, yy + 3.3, f"{gap:+d}", 10, gap_col, anchor="end", w=700)
+    leg = bot + 15
+    c.circle(x + 4, leg, 4, INK)
+    c.text(x + 14, leg + 3.3, "actual wOBA", 9.5, BROWN)
+    c.circle(x + 112, leg, 4, PAPER, GOLD, 2)
+    c.text(x + 122, leg + 3.3, "expected (xwOBA)", 9.5, BROWN)
+    c.text(x + w, leg + 3.3, "pts owed →", 9.5, _MUTED, anchor="end")
+    return (leg + 6) - y
+
+
+def _panel_gauge(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    woba, xwoba, pa, owed = d["woba"], d["xwoba"], d["pa"], d["owed"]
+    c0 = _section_header(c, x, y + 12, "THE TEAM LUCK GAP")
+    lo, hi = 0.250, max(0.330, xwoba + 0.012)
+    gx0, gx1 = x, x + 188
+
+    def gx(v: float) -> float:
+        return gx0 + (v - lo) / (hi - lo) * (gx1 - gx0)
+
+    by, bw = c0 + 18, 11
+    c.text(gx(xwoba), by - 6, f"{_avg(xwoba)} expected", 9, BROWN, anchor="middle", w=700)
+    c.rect(gx0, by, gx(xwoba) - gx0, bw, GOLD, op=0.28)
+    c.rect(gx0, by, gx(woba) - gx0, bw, _RED)
+    c.line(gx(xwoba), by - 3, gx(xwoba), by + bw + 3, GOLD, 2)
+    c.text(gx(woba), by + bw + 13, f"{_avg(woba)} actual", 9, _RED, anchor="middle", w=700)
+    big_y = by + 50
+    c.text(
+        x + 210,
+        big_y,
+        f"{owed:+d}",
+        34,
+        SLATE if owed > 0 else GOLD,
+        w=900,
+        ff="Big Shoulders Display",
+        anchor="end",
+    )
+    c.text(x + 218, big_y - 13, "points of wOBA", 10, BROWN, w=600)
+    mid = "owed by the bats," if owed > 0 else "the bats are giving back,"
+    c.text(x + 218, big_y - 1, mid, 10, BROWN)
+    c.text(x + 218, big_y + 11, f"over {pa:,} PA", 10, BROWN)
+    return (big_y + 8) - y
+
+
+def _panel_sparkline(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    vals = d["values"] or [0.0]
+    span = d["span"]
+    c0 = _section_header(c, x, y + 12, "A STREAKY STRETCH", "team AVG by game")
+    sx0, sx1, top, bot = x, x + w, c0 + 6, c0 + 46
+
+    def spx(i: int) -> float:
+        return sx0 + (i / (len(vals) - 1) if len(vals) > 1 else 0) * (sx1 - sx0)
+
+    def spy(v: float) -> float:
+        return bot - (v - 0.0) / 0.400 * (bot - top)
+
+    mean = sum(vals) / len(vals)
+    c.line(sx0, spy(mean), sx1, spy(mean), _MUTED, 1, dash="2 3")
+    c.poly(" ".join(f"{spx(i):.1f},{spy(v):.1f}" for i, v in enumerate(vals)), BROWN)
+    imin, imax = vals.index(min(vals)), vals.index(max(vals))
+    c.circle(spx(imin), spy(vals[imin]), 3.4, _RED)
+    c.text(spx(imin), spy(vals[imin]) + 13, _avg(vals[imin]), 9, _RED, anchor="middle", w=700)
+    c.circle(spx(imax), spy(vals[imax]), 3.4, GOLD)
+    c.text(spx(imax), spy(vals[imax]) - 6, _avg(vals[imax]), 9, BROWN, anchor="middle", w=700)
+    sub = "variance, not a trend"
+    if span and span[0]:
+        sub = f"{span[0]} to {span[1]} — variance, not a trend"
+    c.text(x, bot + 16, sub, 9, _MUTED)
+    return (bot + 20) - y
+
+
+def _panel_contact(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    rows = d["rows"][:5]
+    lg = d["league_ev"]
+    c0 = _section_header(c, x, y + 12, "THE CONTACT IS REAL", "avg exit velocity (mph)")
+    lo, hi = 86.0, 92.5
+    cx0, cx1 = x + 92, x + w - 56
+
+    def cxp(v: float) -> float:
+        return cx0 + (max(lo, min(hi, v)) - lo) / (hi - lo) * (cx1 - cx0)
+
+    r0, st = c0 + 8, 15
+    lgx = cxp(lg)
+    c.line(lgx, r0 - 12, lgx, r0 + (len(rows) - 1) * st + 7, SLATE, 1, dash="2 3")
+    c.text(lgx, r0 - 16, f"lg avg {lg:.1f}", 8.5, SLATE, anchor="middle", w=600)
+    for i, (nm, ev) in enumerate(rows):
+        yy = r0 + i * st
+        c.text(x, yy + 3, nm, 10, INK)
+        c.line(cx0, yy, cxp(ev), yy, BROWN, 5, op=0.85, cap="round")
+        c.text(cxp(ev) + 8, yy + 3, f"{ev:.1f}", 9.5, BROWN_DIM, w=700)
+    return (r0 + (len(rows) - 1) * st + 12) - y
+
+
+def _panel_ladder(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    actual, true, league, owed = d["actual"], d["true_talent"], d["league"], d["owed"]
+    subj = d.get("subject", "the bats")
+    c0 = _section_header(c, x, y + 12, "BUT — REGRESSION TO WHAT?", "method: The Book (Tango)")
+    lo = min(actual, true, league) - 0.012
+    hi = max(actual, true, league) + 0.012
+    rx0, rx1 = x + 94, x + w - 10
+
+    def rx(v: float) -> float:
+        return rx0 + (v - lo) / (hi - lo) * (rx1 - rx0)
+
+    ly = c0 + 26
+    c.line(rx0, ly, rx1, ly, _HAIR, 1)
+    c.line(rx(min(actual, true)), ly, rx(max(actual, true)), ly, GOLD, 3, op=0.55)
+    c.line(rx(league), ly - 13, rx(league), ly + 13, SLATE, 1.5, dash="2 3")
+    c.text(rx(league), ly - 17, f"league {_avg(league)}", 8.5, SLATE, anchor="middle", w=700)
+    c.circle(rx(actual), ly, 4.4, _RED)
+    c.text(rx(actual), ly + 18, f"actual {_avg(actual)}", 9, _RED, anchor="middle", w=700)
+    c.circle(rx(true), ly, 4.4, PAPER, GOLD, 2.4)
+    c.text(rx(true), ly + 18, f"true ≈ {_avg(true)}", 9, BROWN, anchor="middle", w=700)
+    c.text((rx(actual) + rx(true)) / 2, ly - 7, f"{owed:+d}", 8.5, GOLD, anchor="middle", w=700)
+    c.text(x, ly - 26, f"regress {subj} (220-PA prior)", 9, BROWN_DIM)
+    return (ly + 26) - y
+
+
+def _panel_pctbars(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    rows = d["rows"]
+    subj = d.get("subject", "")
+    c0 = _section_header(c, x, y + 12, f"{subj.upper()} — SAVANT PROFILE", "percentile rank")
+    bx0, bx1 = x + 96, x + w - 36
+    r0, st = c0 + 8, 17
+    for i, (label, pct) in enumerate(rows):
+        yy = r0 + i * st
+        col = _tone_color(pct, 40, 60)
+        c.text(x, yy + 3, label, 10, INK)
+        c.rect(bx0, yy - 3.5, bx1 - bx0, 7, "rgba(28,23,20,.08)", rx=3.5)
+        c.rect(bx0, yy - 3.5, (bx1 - bx0) * pct / 100, 7, col, rx=3.5)
+        c.circle(bx0 + (bx1 - bx0) * pct / 100, yy, 5, PAPER, col, 2)
+        c.text(x + w, yy + 3, f"{pct}", 10, col, anchor="end", w=700)
+    return (r0 + (len(rows) - 1) * st + 12) - y
+
+
+_PANELS = {
+    "dumbbell": _panel_dumbbell,
+    "gauge": _panel_gauge,
+    "sparkline": _panel_sparkline,
+    "contact": _panel_contact,
+    "ladder": _panel_ladder,
+    "pctbars": _panel_pctbars,
+}
+
+
+# --------------------------------------------------------------------------- #
+# composition
+# --------------------------------------------------------------------------- #
+def compose(angle: StoryAngle) -> str:
+    """Compose the full infographic SVG for an angle, sizing the canvas to fit."""
+    c = _Canvas()
+    # header
+    c.text(_ML, 33, f"SAN DIEGO PADRES  ·  {angle.subject.upper()}", 9, BROWN_DIM, w=600, ls=2.0)
+    c.text(_ML - 2, 72, angle.title, 40, INK, w=800, ff="Big Shoulders Display", ls=0.5)
     c.text(
         _W - _MR,
         39,
@@ -134,226 +337,82 @@ def build_svg(story: LuckStory) -> str:
         ff="Big Shoulders Display",
         italic=True,
     )
-    c.text(_ML, 93, "The funk is a results problem, not a contact problem — the lineup", 12, BROWN)
-    c.text(_ML, 108, "has earned more at the plate than the scoreboard shows.", 12, BROWN)
+    sub_lines = textwrap.wrap(angle.headline, width=64)[:2]
+    y = 92
+    for ln in sub_lines:
+        c.text(_ML, y, ln, 12, BROWN)
+        y += 15
+    y += 8
 
-    # ---------- dumbbell: actual vs expected wOBA ----------
-    c.text(_ML, 136, "EVERY REGULAR IS OWED", 11, INK, w=700, ls=1.4)
-    c.text(_W - _MR, 136, "wOBA  vs  expected wOBA", 9.5, BROWN_DIM, anchor="end", w=500)
-    dumb = story.dumbbell[:10]
-    dlo, dhi = 0.225, 0.360
-    px0, px1 = 130, 430
+    # panels
+    for spec in angle.panels:
+        fn = _PANELS.get(spec.kind)
+        if fn is None:
+            continue
+        c.line(_ML, y, _W - _MR, y, _HAIR)
+        h = fn(c, _ML, y, _CW, dict(spec.data))
+        y += h + _GAP
 
-    def dx(v: float) -> float:
-        return px0 + (v - dlo) / (dhi - dlo) * (px1 - px0)
+    # confidence + caveat strip
+    c.line(_ML, y - _GAP + 6, _W - _MR, y - _GAP + 6, _HAIR)
+    conf_col = {"high": SLATE, "moderate": BROWN_DIM, "low": HOT}[angle.confidence]
+    c.text(_ML, y, f"CONFIDENCE: {angle.confidence.upper()}", 8.5, conf_col, w=700, ls=0.8)
+    if angle.caveats:
+        c.text(_ML + 118, y, "· " + " · ".join(angle.caveats), 8.5, _MUTED)
+    y += 18
 
-    axis_top, row0, step = 150, 166, 17.6
-    axis_bot = row0 + (len(dumb) - 1) * step + 9
-    for tick in (0.250, 0.300, 0.350):
-        x = dx(tick)
-        c.line(x, axis_top, x, axis_bot, _HAIR)
-        c.text(x, axis_top - 4, _ordinal_avg(tick), 8.5, _MUTED, anchor="middle")
-    for i, (name, woba, xwoba) in enumerate(dumb):
-        y = row0 + i * step
-        if i % 2 == 1:
-            c.rect(_ML - 2, y - step / 2, _W - _ML - _MR + 4, step, _ZEBRA)
-        xa, xe = dx(woba), dx(xwoba)
-        lo, hi = min(xa, xe), max(xa, xe)
-        c.text(_ML - 4, y + 3.3, name, 11, INK, w=500)
-        c.line(lo, y, hi, y, SLATE if xwoba > woba else GOLD, 2.4, op=0.45)
-        c.circle(xe, y, 4.2, PAPER, GOLD, 2)
-        c.circle(xa, y, 4.2, _RED if xwoba > woba else INK)
-        gap = round((woba - xwoba) * 1000)
-        c.text(
-            _W - _MR, y + 3.3, f"{gap:+d}", 10, SLATE if gap < 0 else BROWN_DIM, anchor="end", w=700
-        )
-    leg_y = axis_bot + 16
-    c.circle(_ML + 4, leg_y, 4, INK)
-    c.text(_ML + 14, leg_y + 3.3, "actual wOBA", 9.5, BROWN)
-    c.circle(_ML + 116, leg_y, 4, PAPER, GOLD, 2)
-    c.text(_ML + 126, leg_y + 3.3, "expected (xwOBA)", 9.5, BROWN)
-    c.text(_W - _MR, leg_y + 3.3, "pts owed →", 9.5, _MUTED, anchor="end")
-
-    div1 = leg_y + 18
-    c.line(_ML, div1, _W - _MR, div1, _HAIR)
-
-    # ---------- two-up: luck gauge | volatility sparkline ----------
-    col_y = div1 + 20
-    c.text(_ML, col_y, "THE TEAM LUCK GAP", 10.5, INK, w=700, ls=1.2)
-    midx = 248
-    c.text(midx, col_y, "A STREAKY STRETCH", 10.5, INK, w=700, ls=1.2)
-
-    glo, ghi, gx0, gx1 = 0.260, 0.330, _ML, 214
-
-    def gx(v: float) -> float:
-        return gx0 + (v - glo) / (ghi - glo) * (gx1 - gx0)
-
-    bar_y, bw = col_y + 22, 11
-    c.text(
-        gx(story.team_xwoba),
-        bar_y - 6,
-        f"{_ordinal_avg(story.team_xwoba)} expected",
-        9,
-        BROWN,
-        anchor="middle",
-        w=700,
-    )
-    c.rect(gx0, bar_y, gx(story.team_xwoba) - gx0, bw, GOLD, op=0.28)
-    c.rect(gx0, bar_y, gx(story.team_woba) - gx0, bw, _RED)
-    c.line(gx(story.team_xwoba), bar_y - 3, gx(story.team_xwoba), bar_y + bw + 3, GOLD, 2)
-    c.text(
-        gx(story.team_woba),
-        bar_y + bw + 13,
-        f"{_ordinal_avg(story.team_woba)} actual",
-        9,
-        _RED,
-        anchor="middle",
-        w=700,
-    )
-    big_y = bar_y + 52
-    c.text(_ML, big_y, str(story.luck_gap_pts), 34, SLATE, w=900, ff="Big Shoulders Display")
-    c.text(_ML + 60, big_y - 13, "points of wOBA", 10, BROWN, w=600)
-    c.text(_ML + 60, big_y - 1, "left on the table,", 10, BROWN)
-    c.text(_ML + 60, big_y + 11, f"across {story.team_pa:,} PA", 10, BROWN)
-
-    sx0, sx1 = midx, _W - _MR
-    sy_top, sy_bot = col_y + 18, col_y + 62
-    vals = story.daily_avg or [0.0]
-    slo, shi = 0.0, 0.400
-
-    def spx(i: int) -> float:
-        return sx0 + (i / (len(vals) - 1) if len(vals) > 1 else 0) * (sx1 - sx0)
-
-    def spy(v: float) -> float:
-        return sy_bot - (v - slo) / (shi - slo) * (sy_bot - sy_top)
-
-    mean = sum(vals) / len(vals)
-    c.line(sx0, spy(mean), sx1, spy(mean), _MUTED, 1, dash="2 3")
-    pts = " ".join(f"{spx(i):.1f},{spy(v):.1f}" for i, v in enumerate(vals))
-    c.parts.append(f'<polyline points="{pts}" fill="none" stroke="{BROWN}" stroke-width="1.6"/>')
-    imin, imax = vals.index(min(vals)), vals.index(max(vals))
-    c.circle(spx(imin), spy(vals[imin]), 3.4, _RED)
-    c.text(
-        spx(imin), spy(vals[imin]) + 13, _ordinal_avg(vals[imin]), 9, _RED, anchor="middle", w=700
-    )
-    c.circle(spx(imax), spy(vals[imax]), 3.4, GOLD)
-    c.text(
-        spx(imax), spy(vals[imax]) - 6, _ordinal_avg(vals[imax]), 9, BROWN, anchor="middle", w=700
-    )
-    span = f"{story.spark_span[0]} to {story.spark_span[1]}" if story.spark_span[0] else ""
-    c.text(midx, sy_bot + 18, f"team batting average by game · {span}", 9, _MUTED)
-
-    div2 = big_y + 22
-    c.line(_ML, div2, _W - _MR, div2, _HAIR)
-
-    # ---------- contact strip ----------
-    c_y = div2 + 20
-    c.text(_ML, c_y, "THE CONTACT IS REAL", 10.5, INK, w=700, ls=1.2)
-    c.text(_W - _MR, c_y, "avg exit velocity (mph)", 9.5, BROWN_DIM, anchor="end", w=500)
-    contact = story.contact[:5]
-    clo, chi, cx0, cx1 = 86.0, 92.5, 118, 392
-
-    def cxp(v: float) -> float:
-        return cx0 + (max(clo, min(chi, v)) - clo) / (chi - clo) * (cx1 - cx0)
-
-    crow0, cstep = c_y + 22, 15
-    lg_x = cxp(story.league_ev)
-    c.line(lg_x, crow0 - 12, lg_x, crow0 + (len(contact) - 1) * cstep + 7, SLATE, 1, dash="2 3")
-    c.text(lg_x, crow0 - 16, f"lg avg {story.league_ev:.1f}", 8.5, SLATE, anchor="middle", w=600)
-    for i, (nm, ev) in enumerate(contact):
-        y = crow0 + i * cstep
-        c.text(_ML, y + 3, nm, 10, INK)
-        c.line(cx0, y, cxp(ev), y, BROWN, 5, op=0.85, cap="round")
-        c.text(cxp(ev) + 8, y + 3, f"{ev:.1f}", 9.5, BROWN_DIM, w=700)
-
-    # ---------- counterpoint: regression to what? ----------
-    div3 = crow0 + (len(contact) - 1) * cstep + 22
-    c.line(_ML, div3, _W - _MR, div3, _HAIR)
-    cp_y = div3 + 20
-    c.text(_ML, cp_y, "BUT — REGRESSION TO WHAT?", 10.5, INK, w=700, ls=1.2)
-    c.text(
-        _W - _MR, cp_y, "method: Tango et al., The Book (2007)", 8.5, BROWN_DIM, anchor="end", w=500
-    )
-    rlo, rhi, rx0, rx1 = 0.280, 0.340, 120, 430
-
-    def rx(v: float) -> float:
-        return rx0 + (max(rlo, min(rhi, v)) - rlo) / (rhi - rlo) * (rx1 - rx0)
-
-    lad_y = cp_y + 34
-    c.line(rx0, lad_y, rx1, lad_y, _HAIR, 1)
-    for tick in (0.290, 0.300, 0.310, 0.320, 0.330):
-        x = rx(tick)
-        c.line(x, lad_y - 3, x, lad_y + 3, _HAIR, 1)
-    actual = story.team_woba
-    true = story.true_talent
-    league = story.league_xwoba
-    c.line(rx(actual), lad_y, rx(true), lad_y, GOLD, 3, op=0.55)
-    c.line(rx(league), lad_y - 13, rx(league), lad_y + 13, SLATE, 1.5, dash="2 3")
-    c.text(
-        rx(league),
-        lad_y - 17,
-        f"league avg {_ordinal_avg(league)}",
-        8.5,
-        SLATE,
-        anchor="middle",
-        w=700,
-    )
-    c.circle(rx(actual), lad_y, 4.4, _RED)
-    c.text(
-        rx(actual), lad_y + 18, f"actual {_ordinal_avg(actual)}", 9, _RED, anchor="middle", w=700
-    )
-    c.circle(rx(true), lad_y, 4.4, PAPER, GOLD, 2.4)
-    c.text(
-        rx(true) + 4,
-        lad_y + 18,
-        f"true talent ≈ {_ordinal_avg(true)}",
-        9,
-        BROWN,
-        anchor="middle",
-        w=700,
-    )
-    c.text(
-        (rx(actual) + rx(true)) / 2,
-        lad_y - 7,
-        f"+{story.owed_pts} owed",
-        8.5,
-        GOLD,
-        anchor="middle",
-        w=700,
-    )
-
-    syn_y = lad_y + 38
-    c.text(
-        _ML,
-        syn_y,
-        f"Regress the bats with a {REGRESSION_PA_PRIOR}-PA prior and they climb to "
-        f"~{_ordinal_avg(true)} — dead even with the",
-        11,
-        BROWN,
-    )
-    c.text(
-        _ML,
-        syn_y + 15,
-        f"{_ordinal_avg(league)} league line. The funk is real luck; the ceiling it hides "
-        "is real average.",
-        11,
-        BROWN,
-    )
-
-    f_y = syn_y + 36
-    c.line(_ML, f_y - 12, _W - _MR, f_y - 12, _HAIR)
-    c.text(_ML, f_y, f"SOURCE: {story.source.upper()} · THROUGH {story.as_of}", 8, _MUTED, ls=0.5)
+    # footer
+    c.line(_ML, y - 12, _W - _MR, y - 12, _HAIR)
+    c.text(_ML, y, f"SOURCE: {angle.source.upper()} · THROUGH {angle.as_of}", 8, _MUTED, ls=0.5)
     handle = f'<tspan fill="{BROWN}" font-weight="700">@xFriars</tspan>'
     c.parts.append(
-        f'<text x="{_W - _MR}" y="{f_y:.1f}" text-anchor="end" font-size="9" fill="{_MUTED}">'
+        f'<text x="{_W - _MR}" y="{y:.1f}" text-anchor="end" font-size="9" fill="{_MUTED}">'
         f"{handle} · SD BASEBALL INTELLIGENCE</text>"
     )
-    c.parts.append("</svg>")
-    return "".join(c.parts)
+    total_h = y + 14
+
+    head = (
+        f'<svg viewBox="0 0 {_W} {total_h:.0f}" width="{_W}" '
+        f'xmlns="http://www.w3.org/2000/svg" font-family="Space Grotesk,sans-serif" '
+        f'role="img" aria-label="{_esc(angle.headline)}">'
+        f'<rect x="0" y="0" width="{_W}" height="{total_h:.0f}" fill="{PAPER}"/>'
+        f'<rect x="0" y="0" width="{_W}" height="5" fill="{BROWN}"/>'
+    )
+    return head + "".join(c.parts) + "</svg>"
+
+
+def _stat_token(unit: str, value: float) -> str | None:
+    if unit == "woba":
+        return _avg(value)
+    if unit in ("pts", "count", "pct"):
+        return str(int(value))
+    if unit == "mph":
+        return f"{value:.1f}"
+    return None
+
+
+def audit_rendered(angle: StoryAngle, svg: str) -> list[str]:
+    """Confirm every ``shown`` Stat value actually appears on the rendered card.
+
+    Parity with the repo's digit-audit: a claimed number can't silently drift or
+    drop between the corpus and the canvas. (Headline-number backing is enforced
+    upstream against the corpus by :func:`angles.audit_angle`, since the headline
+    is always drawn as the subhead and would trivially satisfy a self-check here.)
+
+    Returns:
+        Human-readable violations; empty means the card is consistent.
+    """
+    violations: list[str] = []
+    for st in angle.stats:
+        if not st.shown:
+            continue
+        token = _stat_token(st.unit, st.value)
+        if token is not None and token not in svg:
+            violations.append(f"{st.key}={token} ({st.label}) not shown on card")
+    return violations
 
 
 def _wrap_html(svg: str) -> str:
-    """Wrap the SVG in a minimal HTML doc with the vendored fonts for offline render."""
     return (
         "<!doctype html><html><head><meta charset='utf-8'><style>"
         f'@font-face{{font-family:"Big Shoulders Display";'
@@ -366,26 +425,34 @@ def _wrap_html(svg: str) -> str:
     )
 
 
-def render_luck_infographic(story: LuckStory, out_dir: Path, stem: str) -> Path:
-    """Render a luck story to a PNG under ``out_dir``.
+def render_angle(angle: StoryAngle, out_dir: Path, stem: str, *, strict: bool = True) -> Path:
+    """Render an angle to a PNG, auditing the numbers first.
 
     Args:
-        story: The composed story.
-        out_dir: Directory for the PNG (created if missing).
-        stem: Filename stem (no extension).
+        angle: The story to render.
+        out_dir: Destination directory (created if missing).
+        stem: Filename stem.
+        strict: When True (default), raise if any asserted number is missing
+            from the card — fail visibly rather than ship a wrong graphic.
 
     Returns:
         The written PNG path.
 
     Raises:
+        ValueError: If ``strict`` and the render audit finds a missing number.
         RenderError: On any Playwright/rendering failure.
     """
+    svg = compose(angle)
+    problems = audit_rendered(angle, svg)
+    if problems and strict:
+        raise ValueError("render audit failed:\n  " + "\n  ".join(problems))
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{stem}.png"
-    html = _wrap_html(build_svg(story))
-    _html_to_png(html, out_path, _W, _H)
+    _html_to_png(_wrap_html(svg), out_path, _W, _svg_height(svg))
     return out_path
 
 
-# Surface PNG resolution for callers/tests that want it.
-PNG_SIZE = (_W * DEVICE_SCALE, _H * DEVICE_SCALE)
+def _svg_height(svg: str) -> int:
+    """Pull the integer viewBox height back out for the screenshot viewport."""
+    vb = svg.split('viewBox="0 0 ', 1)[1].split('"', 1)[0]
+    return int(float(vb.split()[1]))

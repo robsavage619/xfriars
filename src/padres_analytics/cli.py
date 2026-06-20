@@ -845,42 +845,76 @@ def story(
     typer.echo(f"Rendered {kind} story → {out}")
 
 
-@app.command("luck-story")
-def luck_story_cmd(
+@app.command("discover")
+def discover_cmd(
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
 ) -> None:
-    """Render the contact-vs-results 'hard luck' analytical infographic.
+    """Scan every lens and print the defensible story angles, strongest first.
 
-    Composes a multi-module story (per-player dumbbell, luck gauge, volatility
-    sparkline, contact strip, regression-to-the-mean counterpoint) from the
-    ingested Statcast expected-stats, exit-velo, game-log, and standings tables.
+    Each angle reports its effect size, reliability, and confidence; angles that
+    don't clear their significance gate are not shown (no noise stories).
     """
     configure_logging()
-    from padres_analytics.detect.luck_story import build_luck_story
-    from padres_analytics.render.cards import RenderError
-    from padres_analytics.render.story_infographic import render_luck_infographic
+    from padres_analytics.detect.angles import discover
     from padres_analytics.storage.db import connect
 
     ref_season = season or _la_today().year
     with connect(read_only=True) as conn:
-        story = build_luck_story(conn, ref_season)
+        angles = discover(conn, ref_season)
 
-    if story is None:
+    if not angles:
+        typer.echo("No story clears the significance gates right now.", err=True)
+        raise typer.Exit(ERR)
+
+    for i, a in enumerate(angles, 1):
         typer.echo(
-            "Not enough data for a luck story (need statcast expected-stats + roster). "
-            "Run 'pad ingest statcast' and the batted-ball ingests first.",
+            f"{i}. [{a.key}] interest={a.interest:.1f} conf={a.confidence} (r={a.reliability:.2f})"
+        )
+        typer.echo(f"   {a.headline}")
+        typer.echo(f"   {a.thesis}")
+
+
+@app.command("story")
+def story_infographic_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    angle: str = typer.Option(
+        "", "--angle", help="Force an angle key (team_luck, player_luck, ...). Default: strongest."
+    ),
+) -> None:
+    """Render the strongest defensible analytical infographic (or a forced angle).
+
+    Discovers candidate stories across lenses, picks the highest-interest one,
+    audits that every claimed number is on the card, then renders it.
+    """
+    configure_logging()
+    from padres_analytics.detect.angles import discover
+    from padres_analytics.render.cards import RenderError
+    from padres_analytics.render.story_infographic import render_angle
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect(read_only=True) as conn:
+        angles = discover(conn, ref_season)
+
+    if angle:
+        angles = [a for a in angles if a.key == angle]
+    if not angles:
+        typer.echo(
+            "No story to render (nothing cleared the gates, or unknown --angle). "
+            "Try 'pad discover' to see candidates.",
             err=True,
         )
         raise typer.Exit(ERR)
 
+    chosen = angles[0]
     try:
-        out = render_luck_infographic(story, CARDS_DIR, f"luck_story_{ref_season}")
-    except RenderError as exc:
+        out = render_angle(chosen, CARDS_DIR, f"story_{chosen.key}_{ref_season}")
+    except (RenderError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(ERR) from exc
 
-    typer.echo(story.headline)
-    typer.echo(f"Rendered luck story → {out}")
+    typer.echo(f"[{chosen.key}] {chosen.headline}")
+    typer.echo(f"Rendered story → {out}")
 
 
 @app.command()
