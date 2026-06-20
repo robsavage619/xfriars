@@ -26,6 +26,8 @@ app.add_typer(draft_app, name="draft")
 app.add_typer(ingest_app, name="ingest")
 scan_app = typer.Typer(help="Generic metric scanner (registry-driven).")
 app.add_typer(scan_app, name="scan")
+live_app = typer.Typer(help="In-game (live) reads from the MLB GUMBO feed.")
+app.add_typer(live_app, name="live")
 
 logger = logging.getLogger(__name__)
 
@@ -915,6 +917,45 @@ def story_infographic_cmd(
 
     typer.echo(f"[{chosen.key}] {chosen.headline}")
     typer.echo(f"Rendered story → {out}")
+
+
+@live_app.command("now")
+def live_now_cmd(
+    on: str = typer.Option("", "--on", help="Date YYYY-MM-DD. Defaults to today (LA)."),
+) -> None:
+    """Show the Padres' current game: last pitch + the batter's line tonight.
+
+    Reads the MLB GUMBO live feed (unofficial, near-real-time). Stats are
+    preliminary and revised after the game — never archive a live read as truth.
+    """
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import MlbApiError, MlbStatsClient
+    from padres_analytics.live import current_snapshot
+
+    on_date = on or _la_today().isoformat()
+    try:
+        with MlbStatsClient() as client:
+            snap = current_snapshot(client, on_date)
+    except MlbApiError as exc:
+        typer.echo(f"Error reaching the MLB feed: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    if snap is None:
+        typer.echo(f"No Padres game found on {on_date}.")
+        return
+
+    typer.echo(f"{snap.scoreline()}  ·  {snap.detail}")
+    if snap.inning and snap.half:
+        typer.echo(f"{snap.half} {snap.inning}")
+    if snap.last_pitch:
+        lp = snap.last_pitch
+        typer.echo(f"{lp.pitcher} to {lp.batter}: {lp.describe()}")
+    if snap.batter_line:
+        typer.echo(f"{snap.batter_line.name} tonight: {snap.batter_line.line()}")
+    if not snap.is_live:
+        typer.echo(f"(not live — game state: {snap.state})")
+    if snap.as_of:
+        typer.echo(f"live · unofficial · as of {snap.as_of}")
 
 
 @app.command()

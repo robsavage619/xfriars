@@ -67,6 +67,8 @@ class MlbStatsClient:
     ) -> None:
         """Initialize the client with base URL and politeness delay."""
         self._base = base_url.rstrip("/")
+        # The GUMBO live feed lives on the v1.1 path; everything else is v1.
+        self._feed_base = self._base.removesuffix("/v1") + "/v1.1"
         self._delay = politeness_delay
         self._client = httpx.Client(timeout=HTTP_TIMEOUT)
         self._last_request: float = 0.0
@@ -83,11 +85,12 @@ class MlbStatsClient:
         """Close on context manager exit."""
         self.close()
 
-    def _get(self, path: str, **params: Any) -> dict[str, Any]:
+    def _get(self, path: str, base: str | None = None, **params: Any) -> dict[str, Any]:
         """GET a JSON endpoint, respecting the politeness delay.
 
         Args:
             path: URL path relative to base_url.
+            base: Override base URL (e.g. the v1.1 feed host). Defaults to v1.
             **params: Query parameters.
 
         Returns:
@@ -100,7 +103,7 @@ class MlbStatsClient:
         if elapsed < self._delay:
             time.sleep(self._delay - elapsed)
 
-        url = f"{self._base}/{path.lstrip('/')}"
+        url = f"{(base or self._base).rstrip('/')}/{path.lstrip('/')}"
         try:
             resp = self._client.get(url, params=params)
             resp.raise_for_status()
@@ -224,6 +227,57 @@ class MlbStatsClient:
                 )
         logger.info("schedule: team=%d returned %d games", team_id, len(games))
         return games
+
+    # ── Live (GUMBO) ──────────────────────────────────────────────────────
+
+    def live_games(self, date: str, team_id: int = PADRES_TEAM_ID) -> list[dict[str, Any]]:
+        """Fetch a team's games on one date with live state (status, score, inning).
+
+        Args:
+            date: ISO date string (YYYY-MM-DD) in the venue's local context.
+            team_id: MLB team ID.
+
+        Returns:
+            One dict per game with keys: game_pk, abstract_state
+            (Preview/Live/Final), detailed_state, game_datetime, home_abbr,
+            away_abbr, home_score, away_score, inning, inning_half.
+        """
+        data = self._get("schedule", sportId=1, teamId=team_id, date=date, hydrate="linescore,team")
+        out: list[dict[str, Any]] = []
+        for date_entry in data.get("dates", []):
+            for g in date_entry.get("games", []):
+                ls = g.get("linescore") or {}
+                ls_teams = ls.get("teams") or {}
+                home = g.get("teams", {}).get("home", {})
+                away = g.get("teams", {}).get("away", {})
+                status = g.get("status", {})
+                out.append(
+                    {
+                        "game_pk": g["gamePk"],
+                        "abstract_state": status.get("abstractGameState"),
+                        "detailed_state": status.get("detailedState"),
+                        "game_datetime": g.get("gameDate"),
+                        "home_abbr": home.get("team", {}).get("abbreviation"),
+                        "away_abbr": away.get("team", {}).get("abbreviation"),
+                        "home_score": (ls_teams.get("home") or {}).get("runs"),
+                        "away_score": (ls_teams.get("away") or {}).get("runs"),
+                        "inning": ls.get("currentInning"),
+                        "inning_half": ls.get("inningHalf"),
+                    }
+                )
+        return out
+
+    def live_feed(self, game_pk: int) -> dict[str, Any]:
+        """Fetch the GUMBO live feed for a game (v1.1) — per-pitch, near-real-time.
+
+        Args:
+            game_pk: MLB game id.
+
+        Returns:
+            The raw GUMBO payload (gameData + liveData). Parse with
+            :func:`padres_analytics.live.parse_feed`.
+        """
+        return self._get(f"game/{game_pk}/feed/live", base=self._feed_base)
 
     # ── Season stats ──────────────────────────────────────────────────────
 
