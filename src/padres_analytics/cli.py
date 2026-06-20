@@ -958,6 +958,64 @@ def live_now_cmd(
         typer.echo(f"live · unofficial · as of {snap.as_of}")
 
 
+@live_app.command("watch")
+def live_watch_cmd(
+    interval: float = typer.Option(10.0, "--interval", help="Seconds between polls."),
+    once: bool = typer.Option(False, "--once", help="Poll a single time and exit."),
+    on: str = typer.Option("", "--on", help="Date YYYY-MM-DD. Defaults to today (LA)."),
+) -> None:
+    """Poll the Padres' current game and persist pitches to live_pitches.
+
+    Runs until the game goes Final (Ctrl-C to stop), or once with --once. The
+    table is unofficial and per-game; it never feeds the season/skill tables.
+    """
+    configure_logging()
+    from padres_analytics.ingest.live_poll import poll_once, watch
+    from padres_analytics.ingest.mlb_api import MlbApiError, MlbStatsClient
+    from padres_analytics.live import resolve_game_pk
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    on_date = on or _la_today().isoformat()
+    try:
+        with MlbStatsClient() as client, connect() as conn:
+            initialize(conn)  # ensure live_pitches exists (schema v10+)
+            game_pk = resolve_game_pk(client, on_date)
+            if game_pk is None:
+                typer.echo(f"No Padres game found on {on_date}.")
+                return
+            if once:
+                snap, n = poll_once(client, conn, game_pk)
+                typer.echo(f"game {game_pk}: {snap.state} · {n} pitches stored")
+            else:
+                typer.echo(f"Watching game {game_pk} (every {interval:.0f}s, Ctrl-C to stop)…")
+                polls = watch(client, conn, game_pk, interval=interval)
+                typer.echo(f"Done — {polls} poll(s), game Final.")
+    except MlbApiError as exc:
+        typer.echo(f"Error reaching the MLB feed: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+    except KeyboardInterrupt:
+        typer.echo("\nStopped.")
+
+
+@live_app.command("ask")
+def live_ask_cmd(
+    question: str = typer.Argument(..., help='e.g. "how is King throwing tonight"'),
+    on: str = typer.Option("", "--on", help="Date YYYY-MM-DD. Defaults to today (LA)."),
+) -> None:
+    """Ask about tonight's game in plain language (player must be in the game)."""
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import MlbApiError
+    from padres_analytics.live_ask import answer
+
+    on_date = on or _la_today().isoformat()
+    try:
+        typer.echo(answer(question, on_date))
+    except MlbApiError as exc:
+        typer.echo(f"Error reaching the MLB feed: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+
 @app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),

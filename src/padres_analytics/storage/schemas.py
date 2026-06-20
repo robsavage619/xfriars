@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -364,6 +364,37 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_sc_batterpitches_batter_season
         ON statcast_batter_pitches(batter_id, season)
+    """,
+    # Live (in-game) pitches from the GUMBO feed. UNOFFICIAL + preliminary:
+    # pitch types are auto-classified and velo is revised after the game. Keyed
+    # per game_pk; never aggregate this into the season/skill tables.
+    """
+    CREATE TABLE IF NOT EXISTS live_pitches (
+        game_pk        INTEGER NOT NULL,
+        at_bat_index   INTEGER NOT NULL,
+        pitch_number   INTEGER NOT NULL,
+        inning         INTEGER,
+        half           VARCHAR,
+        pitcher_id     INTEGER,
+        pitcher        VARCHAR,
+        batter_id      INTEGER,
+        batter         VARCHAR,
+        pitch_type     VARCHAR,
+        pitch_code     VARCHAR,
+        velo           DOUBLE,
+        result         VARCHAR,
+        is_swing       BOOLEAN,
+        is_whiff       BOOLEAN,
+        in_play        BOOLEAN,
+        balls          INTEGER,
+        strikes        INTEGER,
+        updated_at     TIMESTAMP,
+        PRIMARY KEY (game_pk, at_bat_index, pitch_number)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_live_pitches_game_pitcher
+        ON live_pitches(game_pk, pitcher_id)
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_sc_percentile_year

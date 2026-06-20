@@ -105,8 +105,103 @@ class LiveSnapshot:
         return f"{self.away_abbr} {a} @ {self.home_abbr} {h}"
 
 
+@dataclass(frozen=True)
+class PitchRow:
+    """One pitch with context, ready to persist to ``live_pitches``."""
+
+    game_pk: int
+    at_bat_index: int
+    pitch_number: int
+    inning: int | None
+    half: str | None
+    pitcher_id: int | None
+    pitcher: str
+    batter_id: int | None
+    batter: str
+    pitch_type: str | None
+    pitch_code: str | None
+    velo: float | None
+    result: str | None
+    is_swing: bool
+    is_whiff: bool
+    in_play: bool
+    balls: int | None
+    strikes: int | None
+
+
 def _name(person: dict[str, Any] | None) -> str:
     return (person or {}).get("fullName", "") if person else ""
+
+
+def _is_swing(result: str | None, details: dict[str, Any]) -> bool:
+    """Did the batter offer at the pitch?"""
+    if details.get("isInPlay"):
+        return True
+    r = result or ""
+    return any(tag in r for tag in ("Swinging", "Foul", "In play", "Missed Bunt"))
+
+
+def _is_whiff(result: str | None) -> bool:
+    """A swing and miss (not a foul or a ball in play)."""
+    return "Swinging Strike" in (result or "")
+
+
+def iter_pitches(feed: dict[str, Any]) -> list[PitchRow]:
+    """Extract every pitch in the game from a GUMBO feed (cumulative each poll).
+
+    Walks ``liveData.plays.allPlays`` so re-running on a later poll simply yields
+    a superset — the persistence layer upserts idempotently on the primary key.
+    """
+    game = feed.get("gameData", {}) or {}
+    game_pk = int(game.get("game", {}).get("pk", 0) or feed.get("gamePk", 0) or 0)
+    plays = ((feed.get("liveData", {}) or {}).get("plays", {}) or {}).get("allPlays", []) or []
+    rows: list[PitchRow] = []
+    for play in plays:
+        about = play.get("about", {}) or {}
+        matchup = play.get("matchup", {}) or {}
+        pitcher = matchup.get("pitcher") or {}
+        batter = matchup.get("batter") or {}
+        at_bat = play.get("atBatIndex")
+        if at_bat is None:
+            continue
+        for event in play.get("playEvents", []) or []:
+            if not event.get("isPitch"):
+                continue
+            details = event.get("details", {}) or {}
+            pitch_data = event.get("pitchData", {}) or {}
+            count = event.get("count", {}) or {}
+            result = details.get("description")
+            rows.append(
+                PitchRow(
+                    game_pk=game_pk,
+                    at_bat_index=int(at_bat),
+                    pitch_number=int(event.get("pitchNumber", 0) or 0),
+                    inning=about.get("inning"),
+                    half=about.get("halfInning"),
+                    pitcher_id=pitcher.get("id"),
+                    pitcher=_name(pitcher),
+                    batter_id=batter.get("id"),
+                    batter=_name(batter),
+                    pitch_type=(details.get("type") or {}).get("description"),
+                    pitch_code=(details.get("type") or {}).get("code"),
+                    velo=pitch_data.get("startSpeed"),
+                    result=result,
+                    is_swing=_is_swing(result, details),
+                    is_whiff=_is_whiff(result),
+                    in_play=bool(details.get("isInPlay")) or (result or "").startswith("In play"),
+                    balls=count.get("balls"),
+                    strikes=count.get("strikes"),
+                )
+            )
+    return rows
+
+
+def resolve_game_pk(
+    client: MlbStatsClient, date: str, *, team_id: int = PADRES_TEAM_ID
+) -> int | None:
+    """Return the most relevant game's pk for the date, or ``None``."""
+    game = pick_game(client.live_games(date, team_id=team_id))
+    return int(game["game_pk"]) if game else None
 
 
 def pick_game(games: list[dict[str, Any]]) -> dict[str, Any] | None:
