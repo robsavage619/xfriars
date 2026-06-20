@@ -354,6 +354,71 @@ def _panel_statline(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
     return (vy + 20) - y
 
 
+def _panel_hero(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    """A big hero number with a label and a context line to its right."""
+    value = str(d["value"])
+    accent = d.get("accent", INK)
+    c.text(x, y + 50, value, 54, accent, w=900, ff="Big Shoulders Display")
+    lx = x + 132
+    c.text(lx, y + 26, str(d.get("label", "")), 11, BROWN, w=700, ls=0.8)
+    ctx = textwrap.wrap(str(d.get("context", "")), width=34)[:2]
+    cy = y + 42
+    for line in ctx:
+        c.text(lx, cy, line, 10.5, BROWN_DIM)
+        cy += 14
+    return 62
+
+
+def _panel_pitchmix(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    """Pitch-mix bars whose *color* encodes swinging-strike rate.
+
+    Each row is ``(label, count, note, swstr_rate)``: bar length = usage, bar
+    color = slate (low whiff) → gold (high whiff). The put-away pitch pops.
+    """
+    rows: list[tuple[str, float, str, float]] = d["rows"][:8]
+    c0 = _section_header(c, x, y + 12, d.get("title", "PITCH MIX"), d.get("right"))
+    if not rows:
+        return (c0 + 6) - y
+    peak = max((v for _, v, _, _ in rows), default=1.0) or 1.0
+    bx0, bx1 = x + 96, x + w - 132
+    r0, st = c0 + 9, 17
+    for i, (label, value, note, rate) in enumerate(rows):
+        yy = r0 + i * st
+        col = _tone_color(rate, 0.08, 0.16)  # SwStr%: <8% cold, >16% nasty
+        c.text(x, yy + 3, label, 10, INK)
+        c.line(bx0, yy, bx0 + (bx1 - bx0) * (value / peak), yy, col, 6, op=0.9, cap="round")
+        c.text(x + w - 118, yy + 3, str(int(value)), 10, INK, anchor="end", w=700)
+        if note:
+            c.text(x + w - 110, yy + 3, note, 9, BROWN_DIM)
+    return (r0 + (len(rows) - 1) * st + 12) - y
+
+
+def _panel_trend(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    """A labeled value line (e.g. fastball velocity by pitch) with end markers."""
+    vals: list[float] = d["values"]
+    c0 = _section_header(c, x, y + 12, d.get("title", "TREND"), d.get("right"))
+    if len(vals) < 2:
+        c.text(x, c0 + 14, "not enough pitches yet", 9, _MUTED)
+        return (c0 + 20) - y
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    top, bot = c0 + 8, c0 + 44
+    px0, px1 = x, x + w
+
+    def sx(i: int) -> float:
+        return px0 + i / (len(vals) - 1) * (px1 - px0)
+
+    def sy(v: float) -> float:
+        return bot - (v - lo) / span * (bot - top)
+
+    c.poly(" ".join(f"{sx(i):.1f},{sy(v):.1f}" for i, v in enumerate(vals)), BROWN)
+    c.circle(sx(0), sy(vals[0]), 3.2, BROWN_DIM)
+    c.text(sx(0), sy(vals[0]) - 7, f"{vals[0]:.0f}", 9, BROWN_DIM, w=700)
+    c.circle(sx(len(vals) - 1), sy(vals[-1]), 3.4, GOLD if vals[-1] >= vals[0] else SLATE)
+    c.text(sx(len(vals) - 1), sy(vals[-1]) - 7, f"{vals[-1]:.0f}", 9, BROWN, anchor="end", w=700)
+    return (bot + 6) - y
+
+
 _PANELS = {
     "dumbbell": _panel_dumbbell,
     "gauge": _panel_gauge,
@@ -363,6 +428,9 @@ _PANELS = {
     "pctbars": _panel_pctbars,
     "hbars": _panel_hbars,
     "statline": _panel_statline,
+    "hero": _panel_hero,
+    "pitchmix": _panel_pitchmix,
+    "trend": _panel_trend,
 }
 
 

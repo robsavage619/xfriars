@@ -21,6 +21,7 @@ from padres_analytics.config import PADRES_TEAM_ID
 from padres_analytics.detect.angles import PanelSpec, Stat, StoryAngle
 from padres_analytics.live import iter_pitches, parse_feed
 from padres_analytics.render.story_infographic import render_angle
+from padres_analytics.render.tokens import GOLD, INK
 
 
 def _padres_side(feed: dict[str, Any], team_id: int) -> str | None:
@@ -97,37 +98,46 @@ def live_angle(
     mine = [p for p in pitches if p.pitcher_id == pid]
     n = len(mine)
     whiffs = sum(1 for p in mine if p.is_whiff)
+    called = sum(1 for p in mine if (p.result or "") == "Called Strike")
+    csw = round(100 * (called + whiffs) / n) if n else 0  # called strikes + whiffs %
 
-    velos: dict[str, list[float]] = defaultdict(list)
-    whiff_by: dict[str, int] = defaultdict(int)
     counts: dict[str, int] = defaultdict(int)
+    whiff_by: dict[str, int] = defaultdict(int)
+    velos: dict[str, list[float]] = defaultdict(list)
     for p in mine:
         ptype = p.pitch_type or "Unknown"
         counts[ptype] += 1
         whiff_by[ptype] += int(p.is_whiff)
         if p.velo is not None:
             velos[ptype].append(p.velo)
-    rows = sorted(
+
+    def _avg_velo(vs: list[float]) -> float:
+        return sum(vs) / len(vs) if vs else 0.0
+
+    # Pitch-mix rows: (label, count, "velo · Nw", swinging-strike rate) — color encodes whiff rate.
+    mix = sorted(
         (
             (
                 ptype,
                 float(cnt),
-                f"{(sum(velos[ptype]) / len(velos[ptype])):.0f} mph"
-                + (f" · {whiff_by[ptype]}w" if whiff_by[ptype] else "")
+                f"{_avg_velo(velos[ptype]):.0f} · {whiff_by[ptype]}w"
                 if velos[ptype]
-                else (f"{whiff_by[ptype]}w" if whiff_by[ptype] else ""),
+                else f"{whiff_by[ptype]}w",
+                (whiff_by[ptype] / cnt if cnt else 0.0),
             )
             for ptype, cnt in counts.items()
         ),
-        key=lambda r: r[1],
+        key=lambda row: row[1],
         reverse=True,
     )
+    # Fastball velocity over the game (chronological) — is he holding or fading?
+    fastballs = [
+        p.velo for p in mine if p.velo and p.pitch_type in ("Four-Seam Fastball", "Sinker")
+    ]
 
     snap = parse_feed(feed)
     opp = _opponent_abbr(feed, side)
-    situation = ""
-    if snap.inning and snap.half:
-        situation = f" · {snap.half} {snap.inning}"
+    situation = f" · {snap.half} {snap.inning}" if (snap.inning and snap.half) else ""
     ip = str(line.get("inningsPitched", "0.0"))
     k, h, r, bb = (
         _i(line, "strikeOuts"),
@@ -140,20 +150,41 @@ def live_angle(
     return StoryAngle(
         key="live_pitcher",
         subject=f"{name} · vs {opp}{situation}",
-        title="ON THE BUMP",
-        headline=f"{ip} IP, {k} K, {r} R on {n} pitches, {whiffs} {w_word}.",
-        thesis="A live look at the Padres starter's line and pitch mix.",
+        title="DEALING" if csw >= 30 else "ON THE BUMP",
+        headline=f"{csw}% CSW on {n} pitches, {whiffs} {w_word} — {ip} IP, {k} K.",
+        thesis="A live look at the Padres starter's stuff: CSW%, pitch mix, and velocity.",
         direction="up",
-        effect=float(n),
+        effect=float(csw),
         reliability=0.5,
-        interest=float(n),
+        interest=float(csw),
         confidence="moderate",
         as_of=as_of or date.today(),
         panels=[
             PanelSpec(
+                "hero",
+                {
+                    "value": f"{csw}%",
+                    "label": "CSW RATE",
+                    "context": f"{n} pitches · {whiffs} {w_word} · {called} called",
+                    "accent": GOLD if csw >= 30 else INK,
+                },
+            ),
+            PanelSpec(
+                "pitchmix",
+                {
+                    "rows": mix,
+                    "title": "PITCH MIX",
+                    "right": "usage · velo · whiffs (color = SwStr%)",
+                },
+            ),
+            PanelSpec(
+                "trend",
+                {"values": fastballs, "title": "FASTBALL VELOCITY", "right": "mph, first → last"},
+            ),
+            PanelSpec(
                 "statline",
                 {
-                    "title": None,
+                    "title": "TONIGHT'S LINE",
                     "blocks": [
                         ("IP", ip),
                         ("H", str(h)),
@@ -163,15 +194,12 @@ def live_angle(
                     ],
                 },
             ),
-            PanelSpec(
-                "hbars", {"rows": rows, "title": "PITCH MIX", "right": "count · velo · whiffs"}
-            ),
         ],
         stats=[
+            Stat("csw", csw, "pct", "CSW rate", n, shown=True),
             Stat("pitches", n, "count", "pitches", n, shown=True),
             Stat("whiffs", whiffs, "count", "whiffs", n, shown=True),
             Stat("k", k, "count", "strikeouts", n, shown=True),
-            Stat("r", r, "count", "runs", n, shown=True),
         ],
         caveats=["live · unofficial — preliminary, revised after the game"],
         source="MLB GUMBO feed (live)",

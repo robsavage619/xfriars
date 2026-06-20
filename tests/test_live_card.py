@@ -98,10 +98,12 @@ def test_features_the_padre_not_the_busiest() -> None:
     assert "Michael King" in angle.subject
     assert "MacKenzie Gore" not in angle.subject
     assert "vs TEX" in angle.subject  # opponent labeled
-    assert "4 K" in angle.headline
+    # CSW-led: 1 called strike + 1 whiff on 2 pitches = 100% CSW
+    assert "100% CSW" in angle.headline
     assert "2 pitches" in angle.headline
     assert "1 whiff" in angle.headline
-    assert [p.kind for p in angle.panels] == ["statline", "hbars"]
+    assert "4 K" in angle.headline
+    assert [p.kind for p in angle.panels] == ["hero", "pitchmix", "trend", "statline"]
 
 
 def test_compose_audits_clean() -> None:
