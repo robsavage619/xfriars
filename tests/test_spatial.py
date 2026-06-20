@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import pytest
 
 from padres_analytics.detect.candidates import SpatialDataset
 from padres_analytics.detect.spatial import (
@@ -359,6 +363,49 @@ def test_bat_speed_filters_checked_swings(padres_db: duckdb.DuckDBPyConnection) 
 def test_bat_speed_none_without_swings(padres_db: duckdb.DuckDBPyConnection) -> None:
     """No tracked swings → no bat-speed card."""
     assert build_bat_speed(padres_db, 999, 2024) is None
+
+
+# ── Pipeline integration ─────────────────────────────────────────────────────
+
+
+def test_build_spatial_dispatch(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """The registry dispatches by card name and rejects unknown cards."""
+    from padres_analytics.detect.spatial import build_spatial
+
+    for i in range(60):
+        _insert(padres_db, ab=i + 1, events="single")
+    ds = build_spatial(padres_db, "spray", 1, 2024)
+    assert ds is not None
+    assert ds.card == "spray"
+    with pytest.raises(KeyError):
+        build_spatial(padres_db, "nope", 1, 2024)
+
+
+def test_spatial_candidate_round_trip(padres_db: duckdb.DuckDBPyConnection, tmp_path: Path) -> None:
+    """A spatial card flows through emit → candidate → draft → render → verify."""
+    from padres_analytics.detect.base import emit
+    from padres_analytics.detect.spatial import emit_spatial_candidate
+    from padres_analytics.tweets.draft import ingest_draft
+
+    for i in range(60):
+        _insert(padres_db, ab=i + 1, events="single")
+
+    candidate = emit_spatial_candidate(padres_db, "spray", 1, 2024)
+    assert candidate is not None
+    assert candidate.payload_kind == "spatial"
+    assert emit(padres_db, [candidate]) == 1
+
+    draft = {
+        "candidate_id": candidate.candidate_id,
+        "text": "Manny Machado spray chart.",  # no digits → digit-audit passes
+        "interesting_judgment": "pull tendency",
+        "model": "test",
+    }
+    draft_path = tmp_path / "draft.json"
+    draft_path.write_text(json.dumps(draft))
+
+    ingest_draft(padres_db, draft_path, tmp_path)
+    assert (tmp_path / f"{candidate.candidate_id}.png").exists()
 
 
 def test_zone_in_zone_rate_and_pitch_filter(padres_db: duckdb.DuckDBPyConnection) -> None:

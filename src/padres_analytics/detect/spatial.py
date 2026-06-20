@@ -10,9 +10,16 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from padres_analytics.detect.candidates import SpatialDataset, SpatialPoint
+from padres_analytics.detect.candidates import (
+    SpatialDataset,
+    SpatialPoint,
+    StatCandidate,
+    make_candidate_id,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import duckdb
 
 # Statcast Gameday pixel → field-feet, home plate at origin, +y toward center.
@@ -945,4 +952,119 @@ def build_hr_spray(
         source="Baseball Savant",
         headline=f"{name} {season} home runs ({n})",
         claim_scope=f"{season} season",
+    )
+
+
+# ── Registry: card name → builder, so the pipeline can pick a visual by name ────
+
+SPATIAL_BUILDERS: dict[str, Callable[..., SpatialDataset | None]] = {
+    "spray": build_spray,
+    "hr": build_hr_spray,
+    "launch": build_launch,
+    "movement": build_arsenal,
+    "zone": build_zone,
+    "hotcold": build_hot_cold,
+    "release": build_release,
+    "rolling": build_rolling,
+    "swingtake": build_swing_take,
+    "batspeed": build_bat_speed,
+}
+
+# Which source table each card draws from — for structural provenance.
+_CARD_SOURCE = {
+    "spray": "statcast_batted_balls",
+    "hr": "statcast_batted_balls",
+    "launch": "statcast_batted_balls",
+    "hotcold": "statcast_batted_balls",
+    "rolling": "statcast_batted_balls",
+    "movement": "statcast_pitches",
+    "zone": "statcast_pitches",
+    "release": "statcast_pitches",
+    "swingtake": "statcast_batter_pitches",
+    "batspeed": "statcast_batter_pitches",
+}
+
+
+def build_spatial(
+    conn: duckdb.DuckDBPyConnection,
+    card: str,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+) -> SpatialDataset | None:
+    """Dispatch to the builder registered for ``card`` (the pipeline entry point).
+
+    Args:
+        conn: Read connection to padres.db.
+        card: A key in :data:`SPATIAL_BUILDERS`.
+        player_id: MLBAM id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+
+    Returns:
+        The built ``SpatialDataset``, or ``None`` when the data is insufficient.
+
+    Raises:
+        KeyError: If ``card`` is not a registered spatial card.
+    """
+    if card not in SPATIAL_BUILDERS:
+        raise KeyError(f"Unknown spatial card {card!r}. Known: {sorted(SPATIAL_BUILDERS)}")
+    return SPATIAL_BUILDERS[card](conn, player_id, season, as_of=as_of)
+
+
+def emit_spatial_candidate(
+    conn: duckdb.DuckDBPyConnection,
+    card: str,
+    player_id: int,
+    season: int,
+    *,
+    as_of: date | None = None,
+    novelty_score: float = 1.0,
+) -> StatCandidate | None:
+    """Build a spatial card and wrap it as a ``StatCandidate`` for the draft pipeline.
+
+    The candidate carries the full ``SpatialDataset`` dump as ``facts_json`` (so the
+    draft renderer and digit-audit can use it) plus structural provenance (the source
+    table + as_of), which is what Path B verification checks for spatial payloads.
+
+    Args:
+        conn: Read connection to padres.db.
+        card: A registered spatial card name.
+        player_id: MLBAM id.
+        season: Season year.
+        as_of: Card date; defaults to today.
+        novelty_score: Score for the emit threshold (explicit requests default high).
+
+    Returns:
+        A ``StatCandidate`` (payload_kind="spatial"), or ``None`` when the card has
+        insufficient data to build.
+    """
+    dataset = build_spatial(conn, card, player_id, season, as_of=as_of)
+    if dataset is None:
+        return None
+
+    facts = dataset.model_dump(mode="json")
+    subject = f"{dataset.title}|{card}"
+    provenance = [
+        {
+            "source_table": _CARD_SOURCE.get(card, "statcast"),
+            "as_of": str(dataset.as_of),
+            "metric": card,
+            "player_id": player_id,
+            "season": season,
+        }
+    ]
+    return StatCandidate(
+        candidate_id=make_candidate_id(f"spatial.{card}", subject, facts),
+        detector=f"spatial.{card}",
+        subject=subject,
+        as_of=dataset.as_of,
+        category="season",
+        payload_kind="spatial",
+        facts_json=facts,
+        provenance_json=provenance,
+        coverage_window=dataset.coverage,
+        claim_scope=dataset.claim_scope,
+        novelty_score=novelty_score,
     )

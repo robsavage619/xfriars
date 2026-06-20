@@ -65,10 +65,11 @@ def verify_path_b(
     # Sanity-range assertions — format-level checks that don't require re-query
     _sanity_check_facts(facts_json, checks)
 
-    is_dataset = facts_json.get("kind") == "dataset"
+    # Dataset and spatial payloads carry structural provenance (source_table +
+    # metric), not raw SQL strings; only legacy TablePayload provenance needs sql.
+    is_structural = facts_json.get("kind") in ("dataset", "spatial")
 
     # Provenance completeness: every entry must have source_table and as_of.
-    # sql is only required for legacy TablePayload provenance (not dataset payloads).
     required_always = ("source_table", "as_of")
     required_legacy = ("sql",)
 
@@ -79,7 +80,7 @@ def verify_path_b(
                     f"Provenance entry {i} missing required key '{key}' "
                     f"for candidate {candidate_id}"
                 )
-        if not is_dataset:
+        if not is_structural:
             for key in required_legacy:
                 if key not in prov:
                     raise VerificationError(

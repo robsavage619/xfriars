@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from padres_analytics.detect.candidates import ChartDataset, TablePayload
+from padres_analytics.detect.candidates import ChartDataset, SpatialDataset, TablePayload
 from padres_analytics.render.cards import render
 from padres_analytics.tweets.models import TweetDraft
 from padres_analytics.tweets.verify import (
@@ -122,6 +122,9 @@ def ingest_draft(
     elif payload_kind == "table":
         payload = TablePayload.model_validate(facts_json)
         card_path = render(payload, cards_dir, draft.candidate_id)
+    elif payload_kind == "spatial":
+        spatial = SpatialDataset.model_validate(facts_json)
+        card_path = render(spatial, cards_dir, draft.candidate_id)
     else:
         raise DraftIngestError(f"Unsupported payload_kind: {payload_kind!r}")
 

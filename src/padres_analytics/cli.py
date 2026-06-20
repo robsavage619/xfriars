@@ -736,6 +736,45 @@ def batspeed(
     typer.echo(f"Rendered {dataset.n}-swing bat speed → {out}")
 
 
+@app.command("spatial-card")
+def spatial_card_cmd(
+    card: str = typer.Option(..., "--card", help="Spatial card name, e.g. spray, arsenal, zone."),
+    player: int = typer.Option(..., "--player", help="MLBAM player id."),
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Emit a spatial card as a stat candidate so the draft pipeline can post it."""
+    configure_logging()
+    from padres_analytics.detect.base import emit
+    from padres_analytics.detect.spatial import SPATIAL_BUILDERS, emit_spatial_candidate
+    from padres_analytics.storage.db import connect
+
+    if card not in SPATIAL_BUILDERS:
+        typer.echo(
+            f"Unknown card {card!r}. Available: {', '.join(sorted(SPATIAL_BUILDERS))}", err=True
+        )
+        raise typer.Exit(ERR)
+
+    ref_season = season or _la_today().year
+    with connect() as conn:
+        candidate = emit_spatial_candidate(conn, card, player, ref_season)
+        if candidate is None:
+            typer.echo(
+                f"Insufficient data to build a {card!r} card for player {player}, "
+                f"season {ref_season}. Ingest the source events first.",
+                err=True,
+            )
+            raise typer.Exit(ERR)
+        n = emit(conn, [candidate])
+
+    if n:
+        typer.echo(f"Emitted candidate {candidate.candidate_id} ({card}).")
+        typer.echo(
+            "Draft it: write a TweetDraft referencing that candidate_id, then 'pad draft ingest'."
+        )
+    else:
+        typer.echo(f"Candidate {candidate.candidate_id} already exists (skipped).")
+
+
 @app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),

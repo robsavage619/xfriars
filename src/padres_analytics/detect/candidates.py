@@ -193,7 +193,7 @@ def make_candidate_id(detector: str, subject: str | None, facts: dict) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
-def audit_corpus(payload: TablePayload | SeriesPayload | ChartDataset) -> str:
+def audit_corpus(payload: TablePayload | SeriesPayload | ChartDataset | SpatialDataset) -> str:
     """Return the canonical JSON string the digit-audit greps against.
 
     Every renderable number in the payload must appear in this string. Used so the
