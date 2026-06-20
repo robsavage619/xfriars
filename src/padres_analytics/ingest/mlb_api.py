@@ -279,6 +279,88 @@ class MlbStatsClient:
         """
         return self._get(f"game/{game_pk}/feed/live", base=self._feed_base)
 
+    # ── Matchup & situational splits (live) ───────────────────────────────
+
+    def vs_pitcher(self, batter_id: int, pitcher_id: int, season: int) -> dict[str, Any]:
+        """Fetch a batter's career-to-date line against one pitcher for a season.
+
+        Uses the ``vsPlayer`` split, which can return several split rows; the
+        counting stats are summed and the average recomputed from the totals.
+
+        Args:
+            batter_id: MLBAM id of the hitter.
+            pitcher_id: MLBAM id of the opposing pitcher.
+            season: 4-digit year.
+
+        Returns:
+            Flat dict ``{"ab","h","hr","bb","k","avg"}`` or ``{}`` if no data.
+        """
+        try:
+            data = self._get(
+                f"people/{batter_id}/stats",
+                stats="vsPlayer",
+                group="hitting",
+                opposingPlayerId=pitcher_id,
+                season=season,
+            )
+        except MlbApiError as exc:
+            logger.error("vs_pitcher %d vs %d failed: %s", batter_id, pitcher_id, exc)
+            return {}
+
+        splits = (data.get("stats") or [{}])[0].get("splits") or []
+        if not splits:
+            return {}
+
+        ab = h = hr = bb = k = 0
+        for s in splits:
+            st = s.get("stat") or {}
+            try:
+                ab += int(st.get("atBats", 0) or 0)
+                h += int(st.get("hits", 0) or 0)
+                hr += int(st.get("homeRuns", 0) or 0)
+                bb += int(st.get("baseOnBalls", 0) or 0)
+                k += int(st.get("strikeOuts", 0) or 0)
+            except (ValueError, TypeError):
+                continue
+
+        avg = f"{h / ab:.3f}".lstrip("0") if ab else ".000"
+        return {"ab": ab, "h": h, "hr": hr, "bb": bb, "k": k, "avg": avg}
+
+    def team_risp(self, team_id: int, season: int) -> dict[str, Any]:
+        """Fetch a team's hitting line with runners in scoring position.
+
+        Args:
+            team_id: MLB team id.
+            season: 4-digit year.
+
+        Returns:
+            Flat dict ``{"avg","ab","h"}`` or ``{}`` if no data.
+        """
+        try:
+            data = self._get(
+                f"teams/{team_id}/stats",
+                stats="statSplits",
+                group="hitting",
+                sitCodes="risp",
+                season=season,
+            )
+        except MlbApiError as exc:
+            logger.error("team_risp %d failed: %s", team_id, exc)
+            return {}
+
+        splits = (data.get("stats") or [{}])[0].get("splits") or []
+        if not splits:
+            return {}
+
+        st = splits[0].get("stat") or {}
+        try:
+            ab = int(st.get("atBats", 0) or 0)
+            h = int(st.get("hits", 0) or 0)
+        except (ValueError, TypeError):
+            return {}
+        avg = str(st.get("avg") or "") or (f"{h / ab:.3f}".lstrip("0") if ab else ".000")
+        return {"avg": avg, "ab": ab, "h": h}
+
     # ── Season stats ──────────────────────────────────────────────────────
 
     def season_stats(

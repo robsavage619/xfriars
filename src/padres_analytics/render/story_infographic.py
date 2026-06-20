@@ -307,6 +307,53 @@ def _panel_pctbars(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
     return (r0 + (len(rows) - 1) * st + 12) - y
 
 
+def _panel_hbars(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    """Labeled horizontal bars (e.g. pitch-mix counts).
+
+    Each row is ``(label, value, note)``: the label sits left, a bar runs out to
+    a width proportional to ``value / max(values)``, the ``note`` (e.g. avg velo)
+    trails the bar end, and the integer value is right-aligned.
+    """
+    rows: list[tuple[str, float, str]] = d["rows"][:8]
+    title = d["title"]
+    right = d.get("right")
+    c0 = _section_header(c, x, y + 12, title, right)
+    if not rows:
+        return (c0 + 6) - y
+    peak = max((v for _, v, _ in rows), default=1.0) or 1.0
+    bx0, bx1 = x + 92, x + w - 40
+    r0, st = c0 + 8, 16
+    for i, (label, value, note) in enumerate(rows):
+        yy = r0 + i * st
+        bw = (bx1 - bx0) * (value / peak)
+        c.text(x, yy + 3, label, 10, INK)
+        c.line(bx0, yy, bx0 + bw, yy, BROWN, 5, op=0.85, cap="round")
+        if note:
+            c.text(bx0 + bw + 8, yy + 3, note, 9, BROWN_DIM, w=600)
+        c.text(x + w, yy + 3, str(int(value)), 10, INK, anchor="end", w=700)
+    return (r0 + (len(rows) - 1) * st + 12) - y
+
+
+def _panel_statline(c: _Canvas, x: float, y: float, w: float, d: dict) -> float:
+    """A row of big stat blocks: each ``(label, value_str)`` as value-over-label.
+
+    Used for a box-score line (e.g. IP / K / R / BB) — punchy, scannable.
+    """
+    blocks: list[tuple[str, str]] = d["blocks"][:6]
+    title = d.get("title")
+    c0 = _section_header(c, x, y + 12, title, d.get("right")) if title else y + 12
+    if not blocks:
+        return (c0 + 6) - y
+    n = len(blocks)
+    step = w / n
+    vy = c0 + 30
+    for i, (label, value) in enumerate(blocks):
+        cx = x + step * (i + 0.5)
+        c.text(cx, vy, value, 30, INK, w=900, ff="Big Shoulders Display", anchor="middle")
+        c.text(cx, vy + 14, label, 8.5, BROWN_DIM, w=600, ls=0.8, anchor="middle")
+    return (vy + 20) - y
+
+
 _PANELS = {
     "dumbbell": _panel_dumbbell,
     "gauge": _panel_gauge,
@@ -314,6 +361,8 @@ _PANELS = {
     "contact": _panel_contact,
     "ladder": _panel_ladder,
     "pctbars": _panel_pctbars,
+    "hbars": _panel_hbars,
+    "statline": _panel_statline,
 }
 
 

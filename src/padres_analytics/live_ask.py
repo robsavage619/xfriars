@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from padres_analytics.config import PADRES_TEAM_ID
 from padres_analytics.live import BatterLine, _batter_line, iter_pitches, parse_feed
 
 _PITCHER_WORDS = ("pitch", "throw", "velo", "stuff", "arm", "mound", "fastball", "slider")
 _BATTER_WORDS = ("hit", "plate", "bat", "line", "swing", "at-bat", "ab", "knock")
+_MATCHUP_WORDS = ("against", "vs", "facing")
+_RISP_WORDS = ("risp", "runners in scoring", "with runners")
 
 
 def participants(feed: dict[str, Any]) -> list[tuple[int, str]]:
@@ -107,6 +110,106 @@ def answer_from_feed(question: str, feed: dict[str, Any]) -> str:
     return f"{name} isn't in tonight's game yet.{stamp}"
 
 
+def _roles(feed: dict[str, Any]) -> tuple[set[int], set[int]]:
+    """Return ``(pitcher_ids, batter_ids)`` seen in the feed's plays."""
+    pitchers: set[int] = set()
+    batters: set[int] = set()
+    plays = ((feed.get("liveData", {}) or {}).get("plays", {}) or {}).get("allPlays", []) or []
+    for play in plays:
+        matchup = play.get("matchup", {}) or {}
+        pid = (matchup.get("pitcher") or {}).get("id")
+        bid = (matchup.get("batter") or {}).get("id")
+        if pid:
+            pitchers.add(int(pid))
+        if bid:
+            batters.add(int(bid))
+    return pitchers, batters
+
+
+def _resolve_matchup(question: str, feed: dict[str, Any]) -> tuple[int, str, int, str] | None:
+    """Resolve a ``(batter_id, batter_name, pitcher_id, pitcher_name)`` matchup.
+
+    Matches up to two names from the question against the players in the game,
+    then assigns batter/pitcher roles from the feed's play-by-play. Returns
+    ``None`` if two distinct players in opposing roles can't be identified.
+    """
+    people = participants(feed)
+    pitchers, batters = _roles(feed)
+    q = question.lower()
+
+    hits: list[tuple[int, str]] = []
+    for pid, name in people:
+        if name and name.lower() in q and pid not in {h[0] for h in hits}:
+            hits.append((pid, name))
+    if len(hits) < 2:
+        last_hits = [
+            (pid, name) for pid, name in people if name and name.split()[-1].lower() in q.split()
+        ]
+        for pid, name in last_hits:
+            if pid not in {h[0] for h in hits}:
+                hits.append((pid, name))
+
+    batter: tuple[int, str] | None = None
+    pitcher: tuple[int, str] | None = None
+    for pid, name in hits:
+        if pitcher is None and pid in pitchers:
+            pitcher = (pid, name)
+        elif batter is None and pid in batters:
+            batter = (pid, name)
+    if batter is None or pitcher is None or batter[0] == pitcher[0]:
+        return None
+    return batter[0], batter[1], pitcher[0], pitcher[1]
+
+
+def _format_matchup(bname: str, pname: str, line: dict[str, Any], season: int) -> str:
+    """Format a ``vs_pitcher`` line into a one-line answer."""
+    stamp = "  ·  live · unofficial"
+    parts = [f"{line['h']}-for-{line['ab']}"]
+    if line.get("hr"):
+        parts.append(f"{line['hr']} HR")
+    if line.get("bb"):
+        parts.append(f"{line['bb']} BB")
+    if line.get("k"):
+        parts.append(f"{line['k']} K")
+    return f"{bname} vs {pname}: {', '.join(parts)} ({season}){stamp}"
+
+
+def answer_with_client(question: str, feed: dict[str, Any], client: Any, season: int) -> str:
+    """Answer a question, reaching to the API for matchup/RISP intents.
+
+    Pure feed-only intents are delegated to :func:`answer_from_feed`.
+
+    Args:
+        question: Plain-language question.
+        feed: GUMBO feed payload.
+        client: An ``MlbStatsClient`` (or any object exposing ``vs_pitcher``
+            and ``team_risp``).
+        season: 4-digit season year for the network lookups.
+
+    Returns:
+        A one-line, stamped answer.
+    """
+    stamp = "  ·  live · unofficial"
+    q = question.lower()
+
+    if any(w in q for w in _RISP_WORDS):
+        risp = client.team_risp(PADRES_TEAM_ID, season)
+        if not risp:
+            return f"Padres RISP splits aren't available yet.{stamp}"
+        return f"Padres with RISP: {risp['avg']} ({risp['h']}-for-{risp['ab']}), {season}{stamp}"
+
+    if any(w in q for w in _MATCHUP_WORDS):
+        resolved = _resolve_matchup(question, feed)
+        if resolved is not None:
+            bid, bname, pid, pname = resolved
+            line = client.vs_pitcher(bid, pid, season)
+            if not line:
+                return f"No prior matchup data for {bname} vs {pname}.{stamp}"
+            return _format_matchup(bname, pname, line, season)
+
+    return answer_from_feed(question, feed)
+
+
 def answer(question: str, date: str) -> str:
     """Fetch the Padres' current game and answer ``question``.
 
@@ -120,9 +223,10 @@ def answer(question: str, date: str) -> str:
     from padres_analytics.ingest.mlb_api import MlbStatsClient
     from padres_analytics.live import resolve_game_pk
 
+    season = int(date[:4])
     with MlbStatsClient() as client:
         game_pk = resolve_game_pk(client, date)
         if game_pk is None:
             return f"No Padres game found on {date}."
         feed = client.live_feed(game_pk)
-    return answer_from_feed(question, feed)
+        return answer_with_client(question, feed, client, season)

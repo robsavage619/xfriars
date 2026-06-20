@@ -1016,6 +1016,88 @@ def live_ask_cmd(
         raise typer.Exit(ERR) from exc
 
 
+@live_app.command("serve")
+def live_serve_cmd(
+    on: str = typer.Option("", "--on", help="Date YYYY-MM-DD. Defaults to today (LA)."),
+    game_pk: int = typer.Option(0, "--game-pk", help="Watch a specific game, skip resolution."),
+    preview_interval: float = typer.Option(60.0, "--preview-interval", help="Poll gap pre-game."),
+    live_interval: float = typer.Option(10.0, "--live-interval", help="Poll gap once live."),
+    max_cycles: int = typer.Option(0, "--max-cycles", help="Cap polls (0 = until Final)."),
+) -> None:
+    """Daemon: poll the Padres' game from warmup to Final, persisting pitches.
+
+    Schedule it daily near first pitch (see live_serve.py for cron/launchd snippets).
+    """
+    configure_logging()
+    from padres_analytics.ingest.live_serve import serve, serve_today
+    from padres_analytics.ingest.mlb_api import MlbApiError, MlbStatsClient
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    on_date = on or _la_today().isoformat()
+    cap = max_cycles or None
+    try:
+        with MlbStatsClient() as client, connect() as conn:
+            initialize(conn)  # ensure live_pitches exists (schema v10+)
+            if game_pk:
+                polls = serve(
+                    client,
+                    conn,
+                    game_pk,
+                    preview_interval=preview_interval,
+                    live_interval=live_interval,
+                    max_cycles=cap,
+                )
+            else:
+                polls = serve_today(
+                    client,
+                    conn,
+                    on_date,
+                    preview_interval=preview_interval,
+                    live_interval=live_interval,
+                    max_cycles=cap,
+                )
+            if polls is None:
+                typer.echo(f"No Padres game found on {on_date}.")
+                return
+            typer.echo(f"Done — {polls} poll(s).")
+    except MlbApiError as exc:
+        typer.echo(f"Error reaching the MLB feed: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+    except KeyboardInterrupt:
+        typer.echo("\nStopped.")
+
+
+@live_app.command("card")
+def live_card_cmd(
+    on: str = typer.Option("", "--on", help="Date YYYY-MM-DD. Defaults to today (LA)."),
+    game_pk: int = typer.Option(0, "--game-pk", help="Render a specific game, skip resolution."),
+) -> None:
+    """Render a live infographic of tonight's starter (pitch mix), stamped unofficial."""
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import MlbApiError, MlbStatsClient
+    from padres_analytics.live import resolve_game_pk
+    from padres_analytics.live_card import render_live_card
+
+    on_date = on or _la_today().isoformat()
+    try:
+        with MlbStatsClient() as client:
+            pk = game_pk or resolve_game_pk(client, on_date)
+            if pk is None:
+                typer.echo(f"No Padres game found on {on_date}.")
+                return
+            feed = client.live_feed(pk)
+        out = render_live_card(feed, CARDS_DIR, f"live_{pk}")
+    except MlbApiError as exc:
+        typer.echo(f"Error reaching the MLB feed: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    if out is None:
+        typer.echo("No pitches thrown yet — nothing to render.")
+        return
+    typer.echo(f"Rendered live card → {out}")
+
+
 @app.command()
 def hr_spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),
