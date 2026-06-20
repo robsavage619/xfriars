@@ -12,6 +12,7 @@ is invented in the renderer.
 
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 
@@ -535,12 +536,17 @@ def audit_rendered(angle: StoryAngle, svg: str) -> list[str]:
     Returns:
         Human-readable violations; empty means the card is consistent.
     """
+    # Audit against rendered TEXT only (not coordinates/colors in attributes), and
+    # require a whole-number match so "5" can't satisfy itself inside "0.05" or "25".
+    text = " ".join(re.findall(r">([^<]+)<", svg))
     violations: list[str] = []
     for st in angle.stats:
         if not st.shown:
             continue
         token = _stat_token(st.unit, st.value)
-        if token is not None and token not in svg:
+        if token is None:
+            continue
+        if not re.search(rf"(?<![\d.]){re.escape(token)}(?!\d)", text):
             violations.append(f"{st.key}={token} ({st.label}) not shown on card")
     return violations
 

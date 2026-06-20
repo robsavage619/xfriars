@@ -890,6 +890,7 @@ def story_infographic_cmd(
     """
     configure_logging()
     from padres_analytics.detect.angles import discover
+    from padres_analytics.detect.reconcile import ReconcileError, verify_angle
     from padres_analytics.render.cards import RenderError
     from padres_analytics.render.story_infographic import render_angle
     from padres_analytics.storage.db import connect
@@ -898,17 +899,24 @@ def story_infographic_cmd(
     with connect(read_only=True) as conn:
         angles = discover(conn, ref_season)
 
-    if angle:
-        angles = [a for a in angles if a.key == angle]
-    if not angles:
-        typer.echo(
-            "No story to render (nothing cleared the gates, or unknown --angle). "
-            "Try 'pad discover' to see candidates.",
-            err=True,
-        )
-        raise typer.Exit(ERR)
+        if angle:
+            angles = [a for a in angles if a.key == angle]
+        if not angles:
+            typer.echo(
+                "No story to render (nothing cleared the gates, or unknown --angle). "
+                "Try 'pad discover' to see candidates.",
+                err=True,
+            )
+            raise typer.Exit(ERR)
 
-    chosen = angles[0]
+        chosen = angles[0]
+        # Verify every number traces to source before we render anything postable.
+        try:
+            verify_angle(conn, chosen)
+        except ReconcileError as exc:
+            typer.echo(f"Refusing to render — {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
     try:
         out = render_angle(chosen, CARDS_DIR, f"story_{chosen.key}_{ref_season}")
     except (RenderError, ValueError) as exc:
@@ -916,7 +924,7 @@ def story_infographic_cmd(
         raise typer.Exit(ERR) from exc
 
     typer.echo(f"[{chosen.key}] {chosen.headline}")
-    typer.echo(f"Rendered story → {out}")
+    typer.echo(f"Rendered story → {out}  (numbers reconciled vs source ✓)")
 
 
 @live_app.command("now")

@@ -87,6 +87,7 @@ class StoryAngle:
     caveats: list[str] = field(default_factory=list)
     source: str = "Baseball Savant · MLB Stats API"
     headshot: str | None = None  # optional player headshot as a data: URI
+    subject_id: int | None = None  # MLBAM id of the subject player, for reconciliation
 
 
 # --------------------------------------------------------------------------- #
@@ -313,6 +314,7 @@ def detect_player_luck(ctx: _Ctx) -> StoryAngle | None:
         interest=abs(owed) * r * 1.05,  # individual stories pop slightly
         confidence=confidence_tier(r),
         as_of=ctx.as_of,
+        subject_id=pid,
         panels=panels,
         stats=stats,
         caveats=[f"{pa} PA — {confidence_tier(r)} confidence" if r < 0.7 else f"{pa} PA"],
@@ -380,6 +382,7 @@ def detect_approach_outlier(ctx: _Ctx) -> StoryAngle | None:
         interest=abs(50 - chase) * 0.6 * r,
         confidence=confidence_tier(r),
         as_of=ctx.as_of,
+        subject_id=pid,
         panels=[PanelSpec("pctbars", {"rows": bars, "subject": full})],
         stats=stats,
         caveats=[f"{pa} PA, {ctx.season}"],
@@ -427,6 +430,7 @@ def detect_power_outlier(ctx: _Ctx) -> StoryAngle | None:
         interest=(float(brl_rank) - 50) * 0.6 * r,
         confidence=confidence_tier(r),
         as_of=ctx.as_of,
+        subject_id=int(pid),
         panels=[PanelSpec("pctbars", {"rows": bars, "subject": full})],
         stats=stats,
         caveats=[f"{int(bbe)} batted balls, {ctx.season}"],
