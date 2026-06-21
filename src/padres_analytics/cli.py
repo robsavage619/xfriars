@@ -985,6 +985,44 @@ def discover_cmd(
             typer.echo(f"   ↳ {a.rank_note}")
 
 
+@app.command("daily")
+def daily_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """The daily briefing — grade due calls, find today's story, render + caption + queue it.
+
+    The engine's heartbeat: one run that grades matured predictions, discovers the
+    strongest verified story, drafts a caption, logs the call, and queues the card
+    on the Board for approval. Nothing posts.
+    """
+    configure_logging()
+    from padres_analytics.daily import run_briefing
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    yr = season or _la_today().year
+    with connect() as conn:
+        initialize(conn)
+        b = run_briefing(conn, yr, as_of=_la_today(), out_dir=CARDS_DIR)
+
+    g = b.graded
+    typer.echo(
+        f"Graded due calls: {g['correct']} correct, {g['incorrect']} incorrect, {g['push']} push."
+    )
+    sc = b.scorecard
+    accuracy = sc["accuracy"]
+    acc = f"{accuracy:.1%}" if isinstance(accuracy, float) else "—"
+    typer.echo(f"Record: {sc['correct']}-{sc['incorrect']} ({acc}) · {sc['open']} open.")
+    for note in b.notes:
+        typer.echo(note)
+    if b.story is not None:
+        typer.echo(f"\nToday's story · [{b.story.key}] {b.story.confidence} confidence")
+        typer.echo(f"  {b.story.headline}")
+        typer.echo(f"  card:    {b.image_path}")
+        typer.echo(f"  caption: {b.caption}")
+        typer.echo("\nReview on the Board, then 'pad draft approve' to post.")
+
+
 @app.command("sync")
 def sync_cmd(
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
