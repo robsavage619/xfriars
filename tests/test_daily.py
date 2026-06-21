@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from padres_analytics.board import list_cards
-from padres_analytics.daily import build_caption, run_briefing
-from padres_analytics.detect.angles import Stat, StoryAngle
+from padres_analytics.daily import run_briefing
+from padres_analytics.detect.angles import StoryAngle
 
 if TYPE_CHECKING:
     import duckdb
@@ -36,31 +36,8 @@ def _league(conn: duckdb.DuckDBPyConnection) -> None:
         )
 
 
-def test_build_caption_carries_verdict_gloss_and_confidence() -> None:
-    """The draft caption leads with the headline, glosses the jargon, states confidence."""
-    angle = StoryAngle(
-        key="change",
-        subject="Gavin Sheets",
-        title="HIT A WALL",
-        headline="Gavin Sheets has cooled hard — 176 points of on-base off his prior form.",
-        thesis="t",
-        direction="down",
-        effect=176,
-        reliability=0.96,
-        interest=1.0,
-        confidence="high",
-        as_of=date(2026, 6, 20),
-        stats=[Stat("chg_recent", 0.267, "woba", "recent OBP", 60, shown=False)],
-        caveats=["15-game windows, 121 PA — a results split, not a talent verdict"],
-    )
-    cap = build_caption(angle)
-    assert cap.startswith("Gavin Sheets has cooled hard")
-    assert "In plain terms: on-base percentage is" in cap  # the glossary gloss
-    assert "High confidence" in cap and "results split" in cap
-
-
 def test_run_briefing_queues_a_verified_story(padres_db: duckdb.DuckDBPyConnection) -> None:
-    """A clear change surfaces, verifies, gets a caption, and lands on the Board."""
+    """A clear change surfaces, verifies, gets an engagement-shaped post, lands on Board."""
     _league(padres_db)
     padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Sheets, Gavin')")
     _game = (
@@ -77,7 +54,9 @@ def test_run_briefing_queues_a_verified_story(padres_db: duckdb.DuckDBPyConnecti
         padres_db, 2026, as_of=date(2026, 7, 5), out_dir=Path("/tmp"), render_fn=_stub_render
     )
     assert b.story is not None and b.story.key == "change"
-    assert b.caption and "In plain terms" in b.caption
+    assert b.caption and "?" in b.caption  # the post ends on a reply hook
+    assert b.reply and "In plain terms" in b.reply  # the gloss rides in the first reply
+    assert not b.warnings  # a clean, algorithm-aligned post
     assert b.image_path and b.image_path.endswith(".png")
     cards = list_cards(padres_db)
     assert any(c["angle_key"] == "change" for c in cards)  # queued for approval

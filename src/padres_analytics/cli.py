@@ -1053,10 +1053,18 @@ def daily_cmd(
     for note in b.notes:
         typer.echo(note)
     if b.story is not None:
+        from padres_analytics.caption import POSTING_TIPS
+
         typer.echo(f"\nToday's story · [{b.story.key}] {b.story.confidence} confidence")
-        typer.echo(f"  {b.story.headline}")
-        typer.echo(f"  card:    {b.image_path}")
-        typer.echo(f"  caption: {b.caption}")
+        typer.echo(f"  card:  {b.image_path}")
+        typer.echo(f"  POST:  {b.caption}")
+        if b.reply:
+            typer.echo(f"  REPLY: {b.reply}")
+        if b.warnings:
+            typer.echo("  caption flags: " + "; ".join(b.warnings))
+        typer.echo("\nReach levers (the algorithm rewards these, the caption can't):")
+        for tip in POSTING_TIPS:
+            typer.echo(f"  · {tip}")
         typer.echo("\nReview on the Board, then 'pad draft approve' to post.")
 
 
