@@ -628,6 +628,98 @@ def detect_change(ctx: _Ctx) -> StoryAngle | None:
     )
 
 
+# Pitcher luck gates. FIP (ERA scaled to the league via the season constant)
+# strips out everything but K/BB/HBP/HR, so a wide ERA-minus-FIP gap is the pitching
+# analogue of the hitter's wOBA-minus-xwOBA luck signal. Symmetric to detect_player_luck.
+_PITCHER_MIN_OUTS = 90  # 30 IP floor — below this the estimator is too noisy to tell
+_PITCHER_GATE_RUNS = 0.50  # min |ERA - FIP| in runs to be worth telling
+_PITCHER_BF_PRIOR = 300  # batters-faced prior for the reliability weight on the gap
+
+
+def detect_pitcher_luck(ctx: _Ctx) -> StoryAngle | None:
+    """The Padres pitcher whose ERA most diverges from his FIP (luck, not skill).
+
+    FIP = ``(13*HR + 3*(BB+HBP) - 2*K)/IP + C`` with ``C`` the league constant
+    that scales FIP onto the ERA baseline (read from ``league_pitching_constants``,
+    derived from real league totals — never hardcoded). ERA above FIP = unlucky
+    (bound to improve); below = outrunning the peripherals.
+    """
+    from padres_analytics.ingest.mlb_api import innings_to_outs
+
+    const_row = ctx.conn.execute(
+        "SELECT fip_const FROM league_pitching_constants WHERE season = ?", [ctx.season]
+    ).fetchone()
+    if const_row is None or const_row[0] is None:
+        return None
+    const = float(const_row[0])
+    ph = ",".join("?" * len(ctx.ids))
+    rows = ctx.conn.execute(
+        f"""
+        SELECT player_id, player_name, ip, era, so, bb, hr, hbp, tbf
+        FROM player_season_pitching
+        WHERE player_id IN ({ph}) AND season = ? AND hr IS NOT NULL
+        """,
+        [*ctx.ids, ctx.season],
+    ).fetchall()
+    best: tuple[float, tuple] | None = None
+    for pid, name, ip, era, so, bb, hr, hbp, tbf in rows:
+        outs = innings_to_outs(str(ip))
+        if outs < _PITCHER_MIN_OUTS or era in (None, ""):
+            continue
+        innings = outs / 3.0
+        fip = (13 * (hr or 0) + 3 * ((bb or 0) + (hbp or 0)) - 2 * (so or 0)) / innings + const
+        gap = float(era) - fip  # positive = unlucky (ERA should fall toward FIP)
+        bf = int(tbf or 0)
+        r = reliability(bf, k=_PITCHER_BF_PRIOR)
+        score = abs(gap) * r
+        if abs(gap) >= _PITCHER_GATE_RUNS and (best is None or score > best[0]):
+            best = (score, (pid, name, float(era), fip, gap, bf))
+    if best is None:
+        return None
+
+    _, (pid, name, era, fip, gap, bf) = best
+    unlucky = gap > 0
+    full = _full(name)
+    r = reliability(bf, k=_PITCHER_BF_PRIOR)
+    headline = (
+        f"{full}'s {era:.2f} ERA hides a {fip:.2f} FIP - {abs(gap):.2f} runs of hard luck."
+        if unlucky
+        else f"{full}'s {era:.2f} ERA is outrunning a {fip:.2f} FIP by {abs(gap):.2f} runs."
+    )
+    thesis = (
+        "Strip out the balls in play and the strikeouts, walks and homers say a "
+        "better pitcher than the ERA. Regression should help."
+        if unlucky
+        else "The peripherals haven't earned the ERA yet — some give-back is the honest call."
+    )
+    stats = [
+        Stat("pit_era", round(era, 2), "count", f"{full} ERA", bf, "MLB Stats API"),
+        Stat("pit_fip", round(fip, 2), "count", f"{full} FIP", bf, "MLB Stats API"),
+        Stat("pit_gap", round(abs(gap), 2), "count", "runs of ERA-minus-FIP gap", bf),
+        Stat("pit_const", round(const, 2), "count", "league FIP constant", 0, shown=False),
+    ]
+    return StoryAngle(
+        key="pitcher_luck",
+        subject=full,
+        title="HARD LUCK ON THE MOUND" if unlucky else "OUTRUNNING THE ARM",
+        headline=headline,
+        thesis=thesis,
+        direction="up" if unlucky else "down",
+        effect=abs(gap),
+        reliability=r,
+        interest=abs(gap) * 100 * r,  # runs scaled to sit alongside points-of-wOBA stories
+        confidence=confidence_tier(r),
+        as_of=ctx.as_of,
+        subject_id=pid,
+        panels=[PanelSpec("ladder", {"actual": era, "true_talent": fip, "league": fip, "owed": 0})],
+        stats=stats,
+        caveats=[
+            f"{bf} batters faced, {ctx.season} — FIP on the league ERA scale (C={const:.2f})",
+            "FIP credits only K/BB/HBP/HR; batted-ball luck and defense live in the gap",
+        ],
+    )
+
+
 def _names(ctx: _Ctx) -> list[str]:
     """Roster player names aligned to ``ctx.ids`` order (best-effort)."""
     ph = ",".join("?" * len(ctx.ids))
@@ -645,6 +737,7 @@ _DETECTORS = (
     detect_approach_outlier,
     detect_power_outlier,
     detect_change,
+    detect_pitcher_luck,
 )
 
 
@@ -755,6 +848,7 @@ def _stat_tokens(st: Stat) -> set[str]:
     if st.unit == "woba":
         toks.add(f"{st.value:.3f}".lstrip("0"))
     toks.add(f"{st.value:.1f}")
+    toks.add(f"{st.value:.2f}")  # ERA/FIP and other rate stats render to 2 places
     return toks
 
 

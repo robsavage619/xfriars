@@ -23,6 +23,27 @@ logger = logging.getLogger(__name__)
 HTTP_TIMEOUT = 30.0
 POLITENESS_DELAY = 2.0
 
+
+def innings_to_outs(ip: str) -> int:
+    """Convert a baseball innings string to whole outs.
+
+    ``inningsPitched`` is notation, not a decimal: the fraction counts thirds
+    of an inning (``.1`` = 1 out, ``.2`` = 2 outs). Naive ``float(ip)`` corrupts
+    any rate built on it (FIP, ERA). ``"136.2"`` → ``410`` outs.
+    """
+    ip = (ip or "").strip()
+    if not ip:
+        return 0
+    whole, _, frac = ip.partition(".")
+    try:
+        outs = int(whole or 0) * 3
+        if frac:
+            outs += int(frac[0])  # only the first fractional digit is meaningful (0/1/2)
+        return outs
+    except ValueError:
+        return 0
+
+
 # Stat categories available from /stats/leaders
 HITTING_LEADER_STATS = (
     "homeRuns",
@@ -614,6 +635,10 @@ class MlbStatsClient:
                     "saves": _i("saves"),
                     "so": _i("strikeOuts"),
                     "bb": _i("baseOnBalls"),
+                    "hr": _i("homeRuns"),
+                    "hbp": _i("hitByPitch"),
+                    "er": _i("earnedRuns"),
+                    "tbf": _i("battersFaced"),
                     "ip": str(st.get("inningsPitched", "") or ""),
                     "era": str(st.get("era", "") or ""),
                     "whip": str(st.get("whip", "") or ""),
@@ -621,6 +646,63 @@ class MlbStatsClient:
             )
         logger.info("team_season_pitching: team=%d season=%d -> %d", team_id, season, len(out))
         return out
+
+    def league_pitching_constant(self, season: int) -> dict[str, float]:
+        """Compute the season's FIP constant from league-wide pitching totals.
+
+        FIP is scaled to the ERA baseline via ``C = lgERA - lgCore`` where
+        ``lgCore = (13*HR + 3*(BB+HBP) - 2*K) / IP`` over every pitcher in the
+        league (one call, no ``teamId``). Grounds the constant in real data
+        instead of a hardcoded ~3.10 (an ungrounded threshold is a smell).
+
+        Returns:
+            ``{"season", "fip_const", "lg_era", "lg_ip"}``.
+
+        Raises:
+            MlbApiError: When the league response carries no usable innings.
+        """
+        data = self._get(
+            "stats",
+            stats="season",
+            group="pitching",
+            season=season,
+            gameType="R",
+            sportId=1,
+            playerPool="all",
+            limit=2000,
+        )
+        splits = data.get("stats", [{}])[0].get("splits", [])
+        hr = bb = hbp = so = er = 0
+        outs = 0
+        for s in splits:
+            st = s.get("stat", {})
+
+            def _i(key: str, st: dict = st) -> int:
+                try:
+                    return int(st.get(key, 0) or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            hr += _i("homeRuns")
+            bb += _i("baseOnBalls")
+            hbp += _i("hitByPitch")
+            so += _i("strikeOuts")
+            er += _i("earnedRuns")
+            outs += innings_to_outs(str(st.get("inningsPitched", "") or ""))
+        if outs == 0:
+            raise MlbApiError(f"league_pitching_constant: no innings for season {season}")
+        ip = outs / 3.0
+        lg_era = er * 9.0 / ip
+        lg_core = (13 * hr + 3 * (bb + hbp) - 2 * so) / ip
+        const = lg_era - lg_core
+        logger.info(
+            "league_pitching_constant: season=%d pitchers=%d lgERA=%.2f C=%.2f",
+            season,
+            len(splits),
+            lg_era,
+            const,
+        )
+        return {"season": float(season), "fip_const": const, "lg_era": lg_era, "lg_ip": ip}
 
     # ── Affiliates (farm system) ────────────────────────────────────────────
 
@@ -897,11 +979,32 @@ def ingest_pitcher_seasons(
         )
         """
     )
+    # FIP inputs added after the table shipped — ALTER so existing DBs gain them.
+    for col in ("hr INTEGER", "hbp INTEGER", "er INTEGER", "tbf INTEGER"):
+        conn.execute(f"ALTER TABLE player_season_pitching ADD COLUMN IF NOT EXISTS {col}")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS league_pitching_constants (
+            season INTEGER PRIMARY KEY, fip_const DOUBLE, lg_era DOUBLE, lg_ip DOUBLE,
+            ingested_at TIMESTAMP DEFAULT now()
+        )
+        """
+    )
     total = 0
     source = f"mlb-stats-api/team_season_pitching/{team_id}"
     with record_run(conn, source, note=f"{start_season}-{end_season}") as _run:  # noqa: SIM117
         with MlbStatsClient() as client:
             for season in range(start_season, end_season + 1):
+                try:
+                    lc = client.league_pitching_constant(season)
+                    conn.execute("DELETE FROM league_pitching_constants WHERE season = ?", [season])
+                    conn.execute(
+                        "INSERT INTO league_pitching_constants (season, fip_const, lg_era, lg_ip) "
+                        "VALUES (?, ?, ?, ?)",
+                        [season, lc["fip_const"], lc["lg_era"], lc["lg_ip"]],
+                    )
+                except MlbApiError as exc:
+                    logger.error("league_pitching_constant %d failed: %s", season, exc)
                 try:
                     rows = client.team_season_pitching(team_id, season)
                 except MlbApiError as exc:
@@ -918,8 +1021,8 @@ def ingest_pitcher_seasons(
                         """
                         INSERT INTO player_season_pitching (
                             player_id, player_name, season, team_id, games, gs, wins,
-                            losses, saves, so, bb, ip, era, whip, source
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            losses, saves, so, bb, hr, hbp, er, tbf, ip, era, whip, source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT DO NOTHING
                         """,
                         [
@@ -934,6 +1037,10 @@ def ingest_pitcher_seasons(
                             r["saves"],
                             r["so"],
                             r["bb"],
+                            r["hr"],
+                            r["hbp"],
+                            r["er"],
+                            r["tbf"],
                             r["ip"],
                             r["era"],
                             r["whip"],
