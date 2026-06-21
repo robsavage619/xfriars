@@ -199,3 +199,52 @@ def test_injured_players_are_not_featured(padres_db: duckdb.DuckDBPyConnection) 
 
     subjects = {a.subject for a in discover(padres_db, 2026, as_of=date(2026, 6, 20))}
     assert not any("Hurt" in s or "Slugger" in s for s in subjects)
+
+
+def _games(
+    conn: duckdb.DuckDBPyConnection,
+    pid: int,
+    name: str,
+    lines: list[tuple[int, int]],
+    start_day: int = 1,
+) -> None:
+    """Insert sequential single-game (ab, hits) lines for a batter from June `start_day`."""
+    for i, (ab, h) in enumerate(lines):
+        conn.execute(
+            "INSERT INTO player_game_batting (player_id, player_name, season, game_date, "
+            "game_pk, ab, hits, bb, hbp, source, ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [pid, name, 2026, f"2026-06-{start_day + i:02d}", 7000 + i, ab, h, 0, 0, "t", _NOW],
+        )
+
+
+def test_change_fires_on_a_separable_split(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """A batter ice-cold then red-hot over two full windows surfaces a change story."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Tatis Jr., Fernando')")
+    cold = [(4, 0)] * 15  # ~.000 over 60 AB
+    hot = [(4, 2)] * 15  # ~.500 over 60 AB
+    _games(padres_db, 1, "Tatis Jr., Fernando", cold + hot)
+
+    angles = discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    chg = next((a for a in angles if a.key == "change"), None)
+    assert chg is not None
+    assert chg.direction == "up"
+    assert chg.title == "FLIPPED A SWITCH"
+    assert chg.reliability >= 0.80  # p_real gate
+    assert not audit_angle(chg)
+
+
+def test_change_rejects_noise_and_small_samples(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Steady production, and a big swing on too few PA, both yield no change story."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Steady, Sam')")
+    padres_db.execute("INSERT INTO team_rosters VALUES (2, 'Tiny, Tim')")
+    _games(padres_db, 1, "Steady, Sam", [(4, 1)] * 30)  # flat .250 over two full windows
+    _games(padres_db, 2, "Tiny, Tim", [(1, 0)] * 15 + [(1, 1)] * 15)  # huge swing, 15 PA/window
+
+    angles = discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    assert not any(a.key == "change" for a in angles)

@@ -20,6 +20,7 @@ Defensibility rests on three things baked in here:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -456,11 +457,194 @@ def detect_power_outlier(ctx: _Ctx) -> StoryAngle | None:
     )
 
 
+# Change-detection gates. A before/after split is the noisiest story we tell, so
+# the bar is a *statistical* one: the two windows must be distinguishable, not
+# merely different. The split is pre-registered (recent N games vs the prior N) —
+# we never search for the split point that maximizes separation, which would
+# inflate significance through multiple comparisons (the classic streak fallacy).
+_CHANGE_WINDOW_GAMES = 15  # games per window in the fixed, pre-registered split
+_CHANGE_MIN_PA_PER_WINDOW = 35  # below this a window can't support a rate claim
+_CHANGE_GATE_PTS = 60  # min |OBP swing| in points to be worth telling
+_CHANGE_MIN_PREAL = 0.80  # min P(real) from the two-proportion test
+
+
+def _normal_cdf(z: float) -> float:
+    """Standard-normal CDF via the error function (no SciPy dependency)."""
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _two_proportion(reaches1: int, pa1: int, reaches2: int, pa2: int) -> tuple[float, float]:
+    """Pooled two-proportion z-test on two on-base rates.
+
+    Returns:
+        ``(z, p_real)`` where ``p_real`` is the two-sided confidence that the
+        two rates differ (``2·Phi(|z|) - 1``). ``(0.0, 0.0)`` when a window is
+        empty or the pooled rate is degenerate.
+    """
+    if pa1 <= 0 or pa2 <= 0:
+        return 0.0, 0.0
+    p1, p2 = reaches1 / pa1, reaches2 / pa2
+    pooled = (reaches1 + reaches2) / (pa1 + pa2)
+    se = math.sqrt(pooled * (1.0 - pooled) * (1.0 / pa1 + 1.0 / pa2))
+    if se == 0.0:
+        return 0.0, 0.0
+    z = (p2 - p1) / se
+    return z, 2.0 * _normal_cdf(abs(z)) - 1.0
+
+
+def _change_windows(
+    ctx: _Ctx, pid: int
+) -> tuple[tuple[int, int], tuple[int, int], list[float], tuple[str, str]] | None:
+    """Split a batter's game log into a pre-registered prior/recent window pair.
+
+    Returns ``((reaches_prior, pa_prior), (reaches_recent, pa_recent), obp_series,
+    (split_date, last_date))`` or ``None`` when there aren't two full windows.
+    On-base reaches use ``H + BB + HBP`` over ``AB + BB + HBP`` (SF/SH absent from
+    the game log, so this is OBP-class, not exact OBP — surfaced as a caveat).
+    """
+    rows = ctx.conn.execute(
+        """
+        SELECT game_date, ab, hits, bb, hbp FROM player_game_batting
+        WHERE player_id = ? AND season = ? AND (ab + bb + hbp) > 0
+        ORDER BY game_date
+        """,
+        [pid, ctx.season],
+    ).fetchall()
+    if len(rows) < 2 * _CHANGE_WINDOW_GAMES:
+        return None
+    prior, recent = (
+        rows[-2 * _CHANGE_WINDOW_GAMES : -_CHANGE_WINDOW_GAMES],
+        rows[-_CHANGE_WINDOW_GAMES:],
+    )
+
+    def _tally(window: list) -> tuple[int, int, list[float]]:
+        reaches = pa = 0
+        series: list[float] = []
+        for _, ab, hits, bb, hbp in window:
+            r, p = hits + bb + hbp, ab + bb + hbp
+            reaches += r
+            pa += p
+            series.append(r / p if p else 0.0)
+        return reaches, pa, series
+
+    r0, pa0, s0 = _tally(prior)
+    r1, pa1, s1 = _tally(recent)
+    if min(pa0, pa1) < _CHANGE_MIN_PA_PER_WINDOW:
+        return None
+    span = (str(recent[0][0]), str(recent[-1][0]))
+    return (r0, pa0), (r1, pa1), s0 + s1, span
+
+
+def detect_change(ctx: _Ctx) -> StoryAngle | None:
+    """A batter whose recent on-base results break from his prior form.
+
+    The honest claim is "results have changed," not "talent has changed": OBP over
+    a dozen games is far short of the ~460-PA OBP stabilization point, so the story
+    is gated on a two-proportion test (the windows must be statistically separable)
+    and framed and caveated as a results split, never a verdict on true talent.
+    """
+    best: tuple[float, tuple] | None = None
+    for pid, name in zip(ctx.ids, _names(ctx), strict=False):
+        win = _change_windows(ctx, pid)
+        if win is None:
+            continue
+        (r0, pa0), (r1, pa1), series, span = win
+        obp0, obp1 = r0 / pa0, r1 / pa1
+        delta = _pts(obp1 - obp0)
+        _, p_real = _two_proportion(r0, pa0, r1, pa1)
+        if abs(delta) < _CHANGE_GATE_PTS or p_real < _CHANGE_MIN_PREAL:
+            continue
+        score = abs(delta) * p_real
+        if best is None or score > best[0]:
+            best = (score, (pid, name, obp0, obp1, delta, p_real, pa0, pa1, series, span))
+    if best is None:
+        return None
+
+    _, (pid, name, obp0, obp1, delta, p_real, pa0, pa1, series, span) = best
+    up = delta > 0
+    full = _full(name)
+    headline = (
+        f"{full} has flipped a switch: {abs(delta)} points of on-base over his recent stretch."
+        if up
+        else f"{full} has cooled hard — {abs(delta)} points of on-base off his prior form."
+    )
+    swung = "stepped up" if up else "fallen off"
+    thesis = (
+        f"The on-base line has {swung} sharply over his recent games — a split the "
+        "two-window test calls real. Whether it's a new level or variance needs more games."
+    )
+    # prior/recent/P(real) are provenance until the dedicated before/after panel
+    # draws them; the headline delta is the one shown, audited claim for now.
+    stats = [
+        Stat(
+            "chg_prior",
+            round(obp0, 3),
+            "woba",
+            "prior-window OBP",
+            pa0,
+            "MLB Stats API",
+            shown=False,
+        ),
+        Stat(
+            "chg_recent",
+            round(obp1, 3),
+            "woba",
+            "recent-window OBP",
+            pa1,
+            "MLB Stats API",
+            shown=False,
+        ),
+        Stat("chg_delta", abs(delta), "pts", "points of OBP change", pa0 + pa1),
+        Stat(
+            "chg_preal",
+            round(p_real * 100),
+            "pct",
+            "confidence the split is real",
+            pa0 + pa1,
+            shown=False,
+        ),
+    ]
+    panels = [PanelSpec("sparkline", {"values": series, "span": span})]
+    return StoryAngle(
+        key="change",
+        subject=full,
+        title="FLIPPED A SWITCH" if up else "HIT A WALL",
+        headline=headline,
+        thesis=thesis,
+        direction="up" if up else "down",
+        effect=abs(delta),
+        reliability=p_real,
+        interest=abs(delta) * p_real,
+        confidence=confidence_tier(p_real),
+        as_of=ctx.as_of,
+        subject_id=pid,
+        panels=panels,
+        stats=stats,
+        caveats=[
+            f"{_CHANGE_WINDOW_GAMES}-game windows, {pa0 + pa1} PA — a results split, "
+            "not a talent verdict",
+            "OBP-class rate (SF/SH not in the game log); recent through " + span[1],
+        ],
+    )
+
+
+def _names(ctx: _Ctx) -> list[str]:
+    """Roster player names aligned to ``ctx.ids`` order (best-effort)."""
+    ph = ",".join("?" * len(ctx.ids))
+    rows = ctx.conn.execute(
+        f"SELECT player_id, player_name FROM team_rosters WHERE player_id IN ({ph})",
+        ctx.ids,
+    ).fetchall()
+    lookup = {int(pid): name for pid, name in rows}
+    return [lookup.get(int(pid), "") for pid in ctx.ids]
+
+
 _DETECTORS = (
     detect_team_luck,
     detect_player_luck,
     detect_approach_outlier,
     detect_power_outlier,
+    detect_change,
 )
 
 
