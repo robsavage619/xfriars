@@ -28,6 +28,8 @@ scan_app = typer.Typer(help="Generic metric scanner (registry-driven).")
 app.add_typer(scan_app, name="scan")
 live_app = typer.Typer(help="In-game (live) reads from the MLB GUMBO feed.")
 app.add_typer(live_app, name="live")
+predictions_app = typer.Typer(help="Self-grading predictions — log, grade, scorecard.")
+app.add_typer(predictions_app, name="predictions")
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +597,56 @@ def ingest_all_events_cmd(
         typer.echo(f"{group}: {total} rows across {len(results)} players.")
         if empty:
             typer.echo(f"  no data for: {', '.join(empty)}")
+
+
+@predictions_app.command("log")
+def predictions_log_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    horizon: int = typer.Option(30, "--horizon", help="Days until a call comes due."),
+) -> None:
+    """Log today's falsifiable luck calls as open, dated predictions."""
+    configure_logging()
+    from padres_analytics.detect.angles import discover
+    from padres_analytics.predict import log_predictions
+    from padres_analytics.storage.db import connect
+
+    ref_season = season or _la_today().year
+    with connect() as conn:
+        angles = discover(conn, ref_season, as_of=_la_today())
+        n = log_predictions(conn, angles, ref_season, as_of=_la_today(), horizon_days=horizon)
+    typer.echo(f"Logged {n} prediction(s), due in {horizon} days.")
+
+
+@predictions_app.command("grade")
+def predictions_grade_cmd() -> None:
+    """Grade every open prediction that has come due by re-measuring its metric."""
+    configure_logging()
+    from padres_analytics.predict import grade_predictions
+    from padres_analytics.storage.db import connect
+
+    with connect() as conn:
+        tally = grade_predictions(conn, as_of=_la_today())
+    typer.echo(
+        f"Graded: {tally['correct']} correct, {tally['incorrect']} incorrect, "
+        f"{tally['push']} push, {tally['ungradeable']} ungradeable."
+    )
+
+
+@predictions_app.command("scorecard")
+def predictions_scorecard_cmd() -> None:
+    """Print the public batting average on the engine's own calls."""
+    configure_logging()
+    from padres_analytics.predict import scorecard
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        s = scorecard(conn)
+    accuracy = s["accuracy"]
+    acc = f"{accuracy:.1%}" if isinstance(accuracy, float) else "—"
+    typer.echo(
+        f"Record: {s['correct']}-{s['incorrect']} ({acc}) · "
+        f"{s['push']} push · {s['open']} open · {s['graded']} graded."
+    )
 
 
 @ingest_app.command("league-windows")
