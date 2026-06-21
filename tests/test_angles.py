@@ -407,3 +407,49 @@ def test_league_control_noops_without_cohort(padres_db: duckdb.DuckDBPyConnectio
     assert not any(
         a.key == "league_control" for a in discover(padres_db, 2026, as_of=date(2026, 6, 25))
     )
+
+
+def _bbe(conn: duckdb.DuckDBPyConnection, pid: int, name: str, woba_seq: list[float]) -> None:
+    """Insert a chronological sequence of batted balls (xwOBA on contact) for a hitter."""
+    for i, w in enumerate(woba_seq):
+        conn.execute(
+            "INSERT INTO statcast_batted_balls (player_id, player_name, season, game_type, "
+            "game_date, game_pk, at_bat_number, pitch_number, estimated_woba) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [pid, name, 2026, "R", "2026-06-01", 1, i, 1, w],
+        )
+
+
+def test_contact_change_fires_on_a_real_quality_shift(
+    padres_db: duckdb.DuckDBPyConnection,
+) -> None:
+    """Soft contact turning loud over two BBE windows surfaces, audited."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Tatis Jr., Fernando')")
+    soft = [0.10, 0.20] * 25  # 50 BBE, ~.150 xwOBACON
+    loud = [0.55, 0.65] * 25  # 50 BBE, ~.600 xwOBACON
+    _bbe(padres_db, 1, "Tatis Jr., Fernando", soft + loud)
+
+    angles = discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    cc = next((a for a in angles if a.key == "contact_change"), None)
+    assert cc is not None
+    assert cc.direction == "up"
+    assert cc.title == "SQUARING IT UP"
+    assert not audit_angle(cc)
+
+
+def test_contact_change_rejects_flat_and_thin_samples(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Steady contact, and too few batted balls, both yield no contact-change story."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Flat, Fred')")
+    padres_db.execute("INSERT INTO team_rosters VALUES (2, 'Thin, Theo')")
+    _bbe(padres_db, 1, "Flat, Fred", [0.25, 0.35] * 50)  # 100 BBE, no shift
+    _bbe(padres_db, 2, "Thin, Theo", [0.10, 0.60] * 20)  # 40 BBE total — below 2 windows
+
+    assert not any(
+        a.key == "contact_change" for a in discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    )

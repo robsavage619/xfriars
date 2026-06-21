@@ -628,6 +628,132 @@ def detect_change(ctx: _Ctx) -> StoryAngle | None:
     )
 
 
+# Contact-change gates. Where detect_change watches *results* (on-base outcomes),
+# this watches *contact quality* — xwOBA on contact (xwOBACON) from the batted-ball
+# expected-wOBA, which strips out luck and the defense. Per-BBE xwOBA is high
+# variance (an out ~0, a homer ~2), so the windows are compared with a Welch
+# two-sample test and the bar stays deliberately conservative.
+_CONTACT_WINDOW_BBE = 50  # batted balls per window in the pre-registered split
+_CONTACT_MIN_BBE = 40  # below this a window can't support a contact-quality claim
+_CONTACT_GATE_PTS = 50  # min |xwOBACON swing| in points to be worth telling
+_CONTACT_MIN_PREAL = 0.75  # min P(real) from the Welch test
+
+
+def _welch(prior: list[float], recent: list[float]) -> tuple[float, float]:
+    """Welch two-sample test on two xwOBACON windows.
+
+    Returns ``(delta, p_real)`` — the mean difference (recent minus prior) and the
+    two-sided confidence the means differ. ``(0.0, 0.0)`` if a window is too
+    small or has no spread.
+    """
+    n0, n1 = len(prior), len(recent)
+    if n0 < 2 or n1 < 2:
+        return 0.0, 0.0
+    m0, m1 = sum(prior) / n0, sum(recent) / n1
+    v0 = sum((x - m0) ** 2 for x in prior) / (n0 - 1)
+    v1 = sum((x - m1) ** 2 for x in recent) / (n1 - 1)
+    se = math.sqrt(v0 / n0 + v1 / n1)
+    if se == 0.0:
+        return m1 - m0, 0.0
+    t = (m1 - m0) / se
+    return m1 - m0, 2.0 * _normal_cdf(abs(t)) - 1.0
+
+
+def _contact_windows(ctx: _Ctx, pid: int) -> tuple[list[float], list[float], str] | None:
+    """Split a batter's chronological xwOBACON into prior/recent BBE windows."""
+    rows = ctx.conn.execute(
+        """
+        SELECT game_date, estimated_woba FROM statcast_batted_balls
+        WHERE player_id = ? AND season = ? AND game_type = 'R' AND estimated_woba IS NOT NULL
+        ORDER BY game_date, at_bat_number, pitch_number
+        """,
+        [pid, ctx.season],
+    ).fetchall()
+    if len(rows) < 2 * _CONTACT_MIN_BBE:
+        return None
+    window = rows[-2 * _CONTACT_WINDOW_BBE :]
+    split = len(window) // 2
+    prior = [float(w) for _, w in window[:split]]
+    recent = [float(w) for _, w in window[split:]]
+    if min(len(prior), len(recent)) < _CONTACT_MIN_BBE:
+        return None
+    return prior, recent, str(window[-1][0])
+
+
+def detect_contact_change(ctx: _Ctx) -> StoryAngle | None:
+    """A batter whose quality of contact (xwOBACON) has genuinely shifted.
+
+    Deeper than detect_change's on-base results: this reads the expected wOBA of
+    his batted balls, so it tracks how hard and how well he's squaring the ball up
+    — net of luck and defense. Per-BBE xwOBA is noisy, so the windows must clear a
+    Welch two-sample test, and the story is contact quality, not a talent verdict.
+    """
+    best: tuple[float, tuple] | None = None
+    for pid, name in zip(ctx.ids, _names(ctx), strict=False):
+        win = _contact_windows(ctx, pid)
+        if win is None:
+            continue
+        prior, recent, last_day = win
+        delta_raw, p_real = _welch(prior, recent)
+        delta = _pts(delta_raw)
+        if abs(delta) < _CONTACT_GATE_PTS or p_real < _CONTACT_MIN_PREAL:
+            continue
+        score = abs(delta) * p_real
+        if best is None or score > best[0]:
+            best = (score, (pid, name, prior, recent, delta, p_real, last_day))
+    if best is None:
+        return None
+
+    _, (pid, name, prior, recent, delta, p_real, last_day) = best
+    up = delta > 0
+    full = _full(name)
+    m0, m1 = sum(prior) / len(prior), sum(recent) / len(recent)
+    n_bbe = len(prior) + len(recent)
+    headline = (
+        f"{full} is squaring it up: {abs(delta)} points of expected wOBA on contact, lately."
+        if up
+        else f"{full}'s contact has gone soft — {abs(delta)} points of expected wOBA on contact."
+    )
+    thesis = (
+        "This is the quality of contact, not the luck — the expected wOBA on his "
+        "batted balls has moved, net of where the fielders stood."
+    )
+    stats = [
+        Stat("cc_prior", round(m0, 3), "woba", "prior xwOBACON", len(prior), shown=False),
+        Stat("cc_recent", round(m1, 3), "woba", "recent xwOBACON", len(recent), shown=False),
+        Stat("cc_delta", abs(delta), "pts", "points of xwOBACON change", n_bbe),
+        Stat(
+            "cc_preal",
+            round(p_real * 100),
+            "pct",
+            "confidence the shift is real",
+            n_bbe,
+            shown=False,
+        ),
+    ]
+    panels = [PanelSpec("sparkline", {"values": prior + recent, "span": ("", last_day)})]
+    return StoryAngle(
+        key="contact_change",
+        subject=full,
+        title="SQUARING IT UP" if up else "LOSING THE BARREL",
+        headline=headline,
+        thesis=thesis,
+        direction="up" if up else "down",
+        effect=abs(delta),
+        reliability=p_real,
+        interest=abs(delta) * p_real * 1.05,  # contact quality is a sharper read than results
+        confidence=confidence_tier(p_real),
+        as_of=ctx.as_of,
+        subject_id=pid,
+        panels=panels,
+        stats=stats,
+        caveats=[
+            f"{n_bbe} batted balls in two windows — contact quality, not a talent verdict",
+            "xwOBA on contact (excludes walks/strikeouts); recent through " + last_day,
+        ],
+    )
+
+
 # Pitcher luck gates. FIP (ERA scaled to the league via the season constant)
 # strips out everything but K/BB/HBP/HR, so a wide ERA-minus-FIP gap is the pitching
 # analogue of the hitter's wOBA-minus-xwOBA luck signal. Symmetric to detect_player_luck.
@@ -893,6 +1019,7 @@ _DETECTORS = (
     detect_approach_outlier,
     detect_power_outlier,
     detect_change,
+    detect_contact_change,
     detect_pitcher_luck,
     detect_league_control,
 )

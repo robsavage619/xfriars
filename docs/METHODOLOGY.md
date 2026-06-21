@@ -82,6 +82,16 @@ noise?
 (~460 PA), so a change is reported as *"results have shifted,"* never *"he's a
 different hitter."* That's a difference the card states out loud.
 
+### Contact-quality change (a deeper read)
+
+On-base results mix in luck and defense. A second detector watches the **quality of
+contact** instead: the expected wOBA of his batted balls (xwOBACON), split into a
+recent vs. prior window of 50 batted balls each. Because a single batted ball's
+expected wOBA is wildly variable (an out is near 0, a homer near 2), the two windows
+are compared with a **Welch two-sample test**, and the bar stays conservative. This
+answers a different question — *is he squaring the ball up better or worse?* —
+independent of where the results have fallen.
+
 ## League control: is it him, or the whole league?
 
 **Question:** a Padre's numbers moved — but did everyone's? This is the step almost
