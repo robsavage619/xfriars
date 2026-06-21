@@ -1137,16 +1137,23 @@ def discover(
 def _rerank(
     conn: duckdb.DuckDBPyConnection, angles: list[StoryAngle], ctx: _Ctx
 ) -> list[StoryAngle]:
-    """Reweight raw interest by surprise (unusual for the subject) + novelty."""
+    """Reweight raw interest by surprise, novelty, and historical engagement."""
     from padres_analytics.detect.surprise import novelty, subject_surprise
+    from padres_analytics.engagement import engagement_prior
 
     ranked: list[StoryAngle] = []
     for angle in angles:
         surprise = subject_surprise(conn, angle, ctx.season)
         nov_mult, nov_note = novelty(conn, angle, ctx.as_of)
-        note = " · ".join(n for n in (surprise.note, nov_note) if n)
+        eng_mult = engagement_prior(conn, angle)
+        eng_note = "" if eng_mult == 1.0 else f"engagement x{eng_mult:.2f}"
+        note = " · ".join(n for n in (surprise.note, nov_note, eng_note) if n)
         ranked.append(
-            replace(angle, interest=angle.interest * surprise.multiplier * nov_mult, rank_note=note)
+            replace(
+                angle,
+                interest=angle.interest * surprise.multiplier * nov_mult * eng_mult,
+                rank_note=note,
+            )
         )
     return sorted(ranked, key=lambda a: a.interest, reverse=True)
 

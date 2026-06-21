@@ -30,6 +30,8 @@ live_app = typer.Typer(help="In-game (live) reads from the MLB GUMBO feed.")
 app.add_typer(live_app, name="live")
 predictions_app = typer.Typer(help="Self-grading predictions — log, grade, scorecard.")
 app.add_typer(predictions_app, name="predictions")
+metrics_app = typer.Typer(help="Engagement metrics — record what posts actually land.")
+app.add_typer(metrics_app, name="metrics")
 
 logger = logging.getLogger(__name__)
 
@@ -597,6 +599,41 @@ def ingest_all_events_cmd(
         typer.echo(f"{group}: {total} rows across {len(results)} players.")
         if empty:
             typer.echo(f"  no data for: {', '.join(empty)}")
+
+
+@metrics_app.command("record")
+def metrics_record_cmd(
+    tweet_id: str = typer.Option(..., "--tweet-id", help="The posted tweet's id."),
+    angle_key: str = typer.Option(..., "--angle-key", help="Story angle key (e.g. pitcher_luck)."),
+    subject: str = typer.Option("", "--subject", help="Story subject (player/team)."),
+    impressions: int = typer.Option(0, "--impressions"),
+    likes: int = typer.Option(0, "--likes"),
+    reposts: int = typer.Option(0, "--reposts"),
+    replies: int = typer.Option(0, "--replies"),
+    bookmarks: int = typer.Option(0, "--bookmarks"),
+    follows: int = typer.Option(0, "--follows", help="Follows attributed to this post."),
+) -> None:
+    """Record a posted tweet's engagement, tagged with the story angle it came from."""
+    configure_logging()
+    from padres_analytics.engagement import record_metrics
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    with connect() as conn:
+        initialize(conn)
+        record_metrics(
+            conn,
+            tweet_id,
+            angle_key=angle_key,
+            subject=subject,
+            impressions=impressions,
+            likes=likes,
+            reposts=reposts,
+            replies=replies,
+            bookmarks=bookmarks,
+            follows=follows,
+        )
+    typer.echo(f"Recorded metrics for {tweet_id} [{angle_key}]. The board will learn from it.")
 
 
 @predictions_app.command("log")
