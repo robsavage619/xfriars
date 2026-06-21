@@ -353,3 +353,71 @@ def ingest_batted_balls_for(
             logger.error("batted_balls ingest failed for player=%d: %s", player_id, exc)
             results[key] = 0
     return results
+
+
+def ingest_pitches_for(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    pitchers: list[tuple[int, str | None]],
+) -> dict[str, int]:
+    """Ingest pitch-by-pitch events for several pitchers; one ``ingest_runs`` row each.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: Season year.
+        pitchers: ``(pitcher_id, pitcher_name)`` pairs.
+
+    Returns:
+        Dict mapping ``"<name|id>"`` → rows inserted. Per-pitcher failures are
+        logged and recorded as 0 rather than aborting the batch.
+    """
+    source = f"baseball-savant/pitches/{season}"
+    results: dict[str, int] = {}
+    for pitcher_id, pitcher_name in pitchers:
+        key = pitcher_name or str(pitcher_id)
+        try:
+            with record_run(conn, f"{source}/{pitcher_id}") as run:
+                n = ingest_pitches(conn, season, pitcher_id, pitcher_name)
+                results[key] = n
+                run["rows_written"] = n
+        except Exception as exc:
+            logger.error("pitches ingest failed for pitcher=%d: %s", pitcher_id, exc)
+            results[key] = 0
+    return results
+
+
+def ingest_roster_events(conn: duckdb.DuckDBPyConnection, season: int) -> dict[str, dict[str, int]]:
+    """Ingest event-level data for the whole active roster in one pass.
+
+    Classifies each active player by ``team_rosters.position_code`` — pitchers
+    get pitch-by-pitch events (``statcast_pitches``), everyone else gets
+    batted balls (``statcast_batted_balls``) — and runs the per-player ingests,
+    surfacing a per-player row count so silent gaps are visible.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: Season year.
+
+    Returns:
+        ``{"batters": {...}, "pitchers": {...}}`` of name → rows inserted.
+    """
+    rows = conn.execute(
+        """
+        SELECT player_id, player_name, position_code
+        FROM team_rosters
+        WHERE status IS NULL OR status ILIKE 'Active'
+        ORDER BY position_code, player_name
+        """
+    ).fetchall()
+    batters = [(int(pid), name) for pid, name, pos in rows if pos != "P"]
+    pitchers = [(int(pid), name) for pid, name, pos in rows if pos == "P"]
+    logger.info(
+        "ingest_roster_events: %d batters, %d pitchers (season %d)",
+        len(batters),
+        len(pitchers),
+        season,
+    )
+    return {
+        "batters": ingest_batted_balls_for(conn, season, batters),
+        "pitchers": ingest_pitches_for(conn, season, pitchers),
+    }

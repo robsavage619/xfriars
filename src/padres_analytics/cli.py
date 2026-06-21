@@ -568,6 +568,35 @@ def ingest_pitches_cmd(
     typer.echo(f"Done. {n} pitches written to statcast_pitches.")
 
 
+@ingest_app.command("all-events")
+def ingest_all_events_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Ingest event-level data for the whole active roster (batted balls + pitches)."""
+    configure_logging()
+    from padres_analytics.ingest.statcast_events import ingest_roster_events
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting roster-wide events for season {ref_season} …")
+
+    with connect() as conn:
+        initialize(conn)
+        try:
+            summary = ingest_roster_events(conn, ref_season)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    for group, results in summary.items():
+        total = sum(results.values())
+        empty = [name for name, n in results.items() if n == 0]
+        typer.echo(f"{group}: {total} rows across {len(results)} players.")
+        if empty:
+            typer.echo(f"  no data for: {', '.join(empty)}")
+
+
 @app.command()
 def spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),

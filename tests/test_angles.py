@@ -199,3 +199,135 @@ def test_injured_players_are_not_featured(padres_db: duckdb.DuckDBPyConnection) 
 
     subjects = {a.subject for a in discover(padres_db, 2026, as_of=date(2026, 6, 20))}
     assert not any("Hurt" in s or "Slugger" in s for s in subjects)
+
+
+def _games(
+    conn: duckdb.DuckDBPyConnection,
+    pid: int,
+    name: str,
+    lines: list[tuple[int, int]],
+    start_day: int = 1,
+) -> None:
+    """Insert sequential single-game (ab, hits) lines for a batter from June `start_day`."""
+    for i, (ab, h) in enumerate(lines):
+        conn.execute(
+            "INSERT INTO player_game_batting (player_id, player_name, season, game_date, "
+            "game_pk, ab, hits, bb, hbp, source, ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [pid, name, 2026, f"2026-06-{start_day + i:02d}", 7000 + i, ab, h, 0, 0, "t", _NOW],
+        )
+
+
+def test_change_fires_on_a_separable_split(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """A batter ice-cold then red-hot over two full windows surfaces a change story."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Tatis Jr., Fernando')")
+    cold = [(4, 0)] * 15  # ~.000 over 60 AB
+    hot = [(4, 2)] * 15  # ~.500 over 60 AB
+    _games(padres_db, 1, "Tatis Jr., Fernando", cold + hot)
+
+    angles = discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    chg = next((a for a in angles if a.key == "change"), None)
+    assert chg is not None
+    assert chg.direction == "up"
+    assert chg.title == "FLIPPED A SWITCH"
+    assert chg.reliability >= 0.80  # p_real gate
+    assert not audit_angle(chg)
+
+
+def test_change_rejects_noise_and_small_samples(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Steady production, and a big swing on too few PA, both yield no change story."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Steady, Sam')")
+    padres_db.execute("INSERT INTO team_rosters VALUES (2, 'Tiny, Tim')")
+    _games(padres_db, 1, "Steady, Sam", [(4, 1)] * 30)  # flat .250 over two full windows
+    _games(padres_db, 2, "Tiny, Tim", [(1, 0)] * 15 + [(1, 1)] * 15)  # huge swing, 15 PA/window
+
+    angles = discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    assert not any(a.key == "change" for a in angles)
+
+
+def _pitching(
+    conn: duckdb.DuckDBPyConnection,
+    pid: int,
+    name: str,
+    *,
+    ip: str,
+    era: str,
+    so: int,
+    bb: int,
+    hr: int,
+    hbp: int,
+    tbf: int,
+) -> None:
+    """Insert a pitcher-season row (creating the ingest-made table on first use)."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS player_season_pitching (player_id INTEGER, "
+        "player_name VARCHAR, season INTEGER, team_id INTEGER, so INTEGER, bb INTEGER, "
+        "hr INTEGER, hbp INTEGER, tbf INTEGER, ip VARCHAR, era VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO player_season_pitching (player_id, player_name, season, team_id, so, bb, "
+        "hr, hbp, tbf, ip, era) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [pid, name, 2026, 135, so, bb, hr, hbp, tbf, ip, era],
+    )
+
+
+def _fip_const(conn: duckdb.DuckDBPyConnection, const: float = 3.10) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS league_pitching_constants (season INTEGER, fip_const DOUBLE, "
+        "lg_era DOUBLE, lg_ip DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO league_pitching_constants (season, fip_const, lg_era, lg_ip) VALUES (?,?,?,?)",
+        [2026, const, 4.20, 20000.0],
+    )
+
+
+def test_pitcher_luck_surfaces_the_widest_era_fip_gap(
+    padres_db: duckdb.DuckDBPyConnection,
+) -> None:
+    """An ace ERA hiding bad peripherals beats a smaller gap, with direction + audit."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    _fip_const(padres_db)
+    padres_db.execute("INSERT INTO team_rosters VALUES (10, 'Lucky, Lou')")
+    padres_db.execute("INSERT INTO team_rosters VALUES (11, 'Solid, Sid')")
+    # Lou: shiny 1.50 ERA but weak peripherals -> high FIP -> big lucky gap.
+    _pitching(
+        padres_db, 10, "Lucky, Lou", ip="40.0", era="1.50", so=25, bb=22, hr=6, hbp=3, tbf=170
+    )
+    # Sid: 3.20 ERA matching a ~3.2 FIP -> negligible gap.
+    _pitching(
+        padres_db, 11, "Solid, Sid", ip="40.0", era="3.20", so=40, bb=12, hr=4, hbp=2, tbf=165
+    )
+
+    angles = discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    pit = next((a for a in angles if a.key == "pitcher_luck"), None)
+    assert pit is not None
+    assert "Lou" in pit.subject  # the wider gap wins
+    assert pit.direction == "down"  # ERA outrunning FIP = lucky
+    assert pit.title == "OUTRUNNING THE ARM"
+    assert not audit_angle(pit)
+
+
+def test_pitcher_luck_needs_innings_and_a_constant(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Below the IP floor, or with no league constant, no pitcher story fires."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (10, 'Tiny, Tim')")
+    # A huge gap but only 10 IP — below the 30 IP floor.
+    _pitching(padres_db, 10, "Tiny, Tim", ip="10.0", era="9.00", so=4, bb=10, hr=4, hbp=2, tbf=70)
+    # No league_pitching_constants row yet -> detector must no-op, not crash.
+    assert not any(
+        a.key == "pitcher_luck" for a in discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    )
+    _fip_const(padres_db)  # now a constant exists, but IP still too low
+    assert not any(
+        a.key == "pitcher_luck" for a in discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    )
