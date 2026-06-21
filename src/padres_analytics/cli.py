@@ -1633,6 +1633,55 @@ def serve(
     subprocess.run(cmd, check=False)
 
 
+@app.command()
+def coverage(
+    capability: str = typer.Option(
+        "", "--can", help="Check one capability gate (e.g. approach-trend) and exit."
+    ),
+) -> None:
+    """Audit what stats the engine actually holds before it analyzes anything.
+
+    Reports per-domain season span, granularity, freshness, and player coverage,
+    and flags which analytical capabilities are currently unsupported. Pass
+    ``--can <capability>`` to gate a single claim.
+    """
+    configure_logging()
+    from padres_analytics.storage.coverage import audit, can_support
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        reports = audit(conn)
+
+    if capability:
+        ok, why = can_support(reports, capability)
+        mark = "✓ supported" if ok else "✗ UNSUPPORTED"
+        typer.echo(f"{capability}: {mark} — {why}")
+        raise typer.Exit(code=0 if ok else 1)
+
+    bad = 0
+    for r in reports:
+        seasons = (
+            f"{r.seasons[0]}-{r.seasons[-1]}"
+            if len(r.seasons) > 1
+            else (str(r.seasons[0]) if r.seasons else "-")
+        )
+        latest = f", latest {r.latest_date}" if r.latest_date else ""
+        flag = "" if r.status == "OK" else "  ⚠"
+        typer.echo(
+            f"[{r.status:7s}] {r.domain:24s} {r.table:34s} "
+            f"rows={r.rows:<7d} seasons={seasons:<11s} players={r.n_players}{latest}{flag}"
+        )
+        if r.status != "OK":
+            typer.echo(f"          → {r.reason}")
+            bad += 1
+        if r.blocks:
+            typer.echo(f"          cannot back: {', '.join(r.blocks)}")
+    typer.echo(
+        f"\n{len(reports)} domains · {bad} not OK — "
+        "verify the capability you need is backed before promising a card."
+    )
+
+
 def main() -> None:
     """Entrypoint for the pad CLI."""
     configure_logging(logging.DEBUG if "--verbose" in sys.argv else logging.INFO)
