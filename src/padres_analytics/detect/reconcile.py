@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 _TOL_WOBA = 0.002  # wOBA points (stats round to 3 decimals)
 _TOL_PCT = 1  # re-read percentile: within 1 (rounding)
 _TOL_XRANK = 18  # cross-source percentile re-rank is coarse on a small league sample
+_TOL_RUNS = 0.02  # ERA/FIP round to 2 decimals
+_TOL_PTS = 1  # integer points-of-rate deltas
 
 
 class ReconcileError(ValueError):
@@ -155,6 +157,106 @@ def _crosscheck_barrel_rank(
     return []
 
 
+def _reconcile_pitcher(
+    conn: duckdb.DuckDBPyConnection, season: int, pid: int, sm: dict[str, float]
+) -> list[str]:
+    """Independently recompute ERA (from the season row) and FIP (from the formula)."""
+    from padres_analytics.ingest.mlb_api import innings_to_outs
+
+    row = conn.execute(
+        "SELECT ip, era, so, bb, hr, hbp FROM player_season_pitching "
+        "WHERE player_id = ? AND season = ?",
+        [pid, season],
+    ).fetchone()
+    const_row = conn.execute(
+        "SELECT fip_const FROM league_pitching_constants WHERE season = ?", [season]
+    ).fetchone()
+    if row is None or row[1] in (None, "") or const_row is None or const_row[0] is None:
+        return [f"pitcher_luck: no source row/constant for player {pid}"]
+    ip, era, so, bb, hr, hbp = row
+    outs = innings_to_outs(str(ip))
+    if outs == 0:
+        return [f"pitcher_luck: zero innings for player {pid}"]
+    innings = outs / 3.0
+    fip = (13 * (hr or 0) + 3 * ((bb or 0) + (hbp or 0)) - 2 * (so or 0)) / innings + float(
+        const_row[0]
+    )
+    out: list[str] = []
+    if "pit_era" in sm and not _close(round(float(era), 2), sm["pit_era"], _TOL_RUNS):
+        out.append(f"pitcher_luck pit_era: card={sm['pit_era']} source={round(float(era), 2)}")
+    if "pit_fip" in sm and not _close(round(fip, 2), sm["pit_fip"], _TOL_RUNS):
+        out.append(f"pitcher_luck pit_fip: card={sm['pit_fip']} recomputed={round(fip, 2)}")
+    return out
+
+
+def _reconcile_windowed(
+    conn: duckdb.DuckDBPyConnection, angle: StoryAngle, sm: dict[str, float]
+) -> list[str]:
+    """Re-run the detector's own source derivation for the subject and match the card.
+
+    Window detectors (change / contact / league control) read game-level source
+    directly; re-running their derivation against current data catches staleness
+    and tampering between discovery and post (Path B — re-run provenance).
+    """
+    from padres_analytics.detect.angles import (
+        _change_windows,
+        _cohort_drift,
+        _contact_windows,
+        _context,
+        _pts,
+        _subject_window_obp,
+    )
+
+    pid = angle.subject_id
+    if pid is None:
+        return [f"{angle.key}: no subject_id to reconcile against"]
+    ctx = _context(conn, angle.as_of.year, angle.as_of)
+    if ctx is None:
+        return [f"{angle.key}: no context to reconcile against"]
+
+    def _rate(k: str, label: str, calc: float) -> str | None:
+        if k in sm and not _close(round(calc, 3), sm[k], _TOL_WOBA):
+            return f"{label} {k}: card={sm[k]} recomputed={round(calc, 3)}"
+        return None
+
+    def _delta(k: str, label: str, calc: int) -> str | None:
+        if k in sm and not _close(calc, sm[k], _TOL_PTS):
+            return f"{label} {k}: card={sm[k]} recomputed={calc}"
+        return None
+
+    out: list[str] = []
+    if angle.key == "change":
+        win = _change_windows(ctx, pid)
+        if win is None:
+            return ["change: windows no longer derive from source"]
+        (r0, pa0), (r1, pa1), _, _ = win
+        o0, o1 = r0 / pa0, r1 / pa1
+        checks = [_rate("chg_prior", "change", o0), _rate("chg_recent", "change", o1)]
+        checks.append(_delta("chg_delta", "change", abs(_pts(o1 - o0))))
+        out = [c for c in checks if c]
+    elif angle.key == "contact_change":
+        win = _contact_windows(ctx, pid)
+        if win is None:
+            return ["contact_change: windows no longer derive from source"]
+        prior, recent, _ = win
+        m0, m1 = sum(prior) / len(prior), sum(recent) / len(recent)
+        checks = [_rate("cc_prior", "contact_change", m0), _rate("cc_recent", "contact_change", m1)]
+        checks.append(_delta("cc_delta", "contact_change", abs(_pts(m1 - m0))))
+        out = [c for c in checks if c]
+    elif angle.key == "league_control":
+        drift = _cohort_drift(ctx)
+        if drift is None:
+            return ["league_control: cohort drift no longer derives from source"]
+        lg_mean, _, _, ((ps, pe), (rs, re)) = drift
+        obp0, _ = _subject_window_obp(ctx, pid, ps, pe)
+        obp1, _ = _subject_window_obp(ctx, pid, rs, re)
+        if obp0 is None or obp1 is None:
+            return ["league_control: subject windows no longer derive from source"]
+        residual = abs(_pts((obp1 - obp0) - lg_mean))
+        out = [c for c in [_delta("lc_residual", "league_control", residual)] if c]
+    return out
+
+
 def reconcile(conn: duckdb.DuckDBPyConnection, angle: StoryAngle) -> list[str]:
     """Re-derive the angle's numbers from source; return human-readable mismatches.
 
@@ -173,6 +275,12 @@ def reconcile(conn: duckdb.DuckDBPyConnection, angle: StoryAngle) -> list[str]:
         if angle.subject_id is None:
             return [f"{angle.key}: no subject_id to reconcile against"]
         return _reconcile_player(conn, season, angle.key, angle.subject_id, sm)
+    if angle.key == "pitcher_luck":
+        if angle.subject_id is None:
+            return ["pitcher_luck: no subject_id to reconcile against"]
+        return _reconcile_pitcher(conn, season, angle.subject_id, sm)
+    if angle.key in ("change", "contact_change", "league_control"):
+        return _reconcile_windowed(conn, angle, sm)
     return []  # live/unofficial cards are not reconciled against season tables
 
 
