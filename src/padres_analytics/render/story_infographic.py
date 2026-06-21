@@ -18,7 +18,7 @@ import textwrap
 from functools import lru_cache
 from pathlib import Path
 
-from padres_analytics.detect.angles import StoryAngle
+from padres_analytics.detect.angles import StoryAngle, lead_gloss
 from padres_analytics.render.cards import _html_to_png
 from padres_analytics.render.tokens import (
     BIG_SHOULDERS_TTF,
@@ -493,6 +493,14 @@ def compose(angle: StoryAngle) -> str:
     for ln in sub_lines:
         c.text(_ML, y, ln, 12, BROWN)
         y += 15
+    # Plain-language gloss of the lead jargon stat — make it readable for a casual
+    # fan, not just the initiated (accessibility, the same in every card).
+    gloss = lead_gloss(angle)
+    if gloss:
+        y += 3
+        for gl in textwrap.wrap(gloss, width=86)[:2]:
+            c.text(_ML, y, gl, 9, _MUTED, italic=True)
+            y += 12
     y += 8
 
     # panels

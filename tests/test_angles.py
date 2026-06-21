@@ -7,9 +7,12 @@ from typing import TYPE_CHECKING
 
 from padres_analytics.detect.angles import (
     REGRESSION_PA_PRIOR,
+    Stat,
+    StoryAngle,
     audit_angle,
     confidence_tier,
     discover,
+    lead_gloss,
     regress,
     reliability,
 )
@@ -453,3 +456,32 @@ def test_contact_change_rejects_flat_and_thin_samples(padres_db: duckdb.DuckDBPy
     assert not any(
         a.key == "contact_change" for a in discover(padres_db, 2026, as_of=date(2026, 6, 25))
     )
+
+
+def test_lead_gloss_translates_the_headline_stat() -> None:
+    """A card's lead jargon stat gets a plain-language gloss; ungloss-able -> None."""
+    angle = StoryAngle(
+        key="pitcher_luck",
+        subject="Wandy Peralta",
+        title="OUTRUNNING THE ARM",
+        headline="Peralta's 1.96 ERA outruns a 4.49 FIP.",
+        thesis="t",
+        direction="down",
+        effect=2.5,
+        reliability=0.4,
+        interest=1.0,
+        confidence="low",
+        as_of=date(2026, 6, 20),
+        subject_id=10,
+        stats=[
+            Stat("pit_era", 1.96, "count", "ERA", 100),
+            Stat("pit_fip", 4.49, "count", "FIP", 100),
+        ],
+    )
+    gloss = lead_gloss(angle)
+    assert gloss is not None and gloss.startswith("ERA is")  # first glossable stat wins
+    # the gloss lands on the card (wrapped across lines, so check a one-line fragment)
+    assert "earned runs a pitcher allows" in compose(angle)
+
+    bare = type(angle)(**{**angle.__dict__, "stats": [Stat("x", 1, "count", "x", 0)]})
+    assert lead_gloss(bare) is None

@@ -133,6 +133,39 @@ def _pts(woba_delta: float) -> int:
     return round(woba_delta * 1000)
 
 
+# Maps an angle's lead Stat key to a glossary slug, so the card can spell out its
+# headline jargon for a casual fan (accessibility, enforced for every angle).
+_STAT_GLOSS_SLUG = {
+    "p_woba": "woba",
+    "p_xwoba": "xwoba",
+    "p_true": "xwoba",
+    "team_woba": "woba",
+    "team_xwoba": "xwoba",
+    "true_talent": "xwoba",
+    "pit_era": "era",
+    "pit_fip": "fip",
+    "cc_recent": "xwobacon",
+    "cc_prior": "xwobacon",
+    "chg_recent": "obp",
+    "chg_prior": "obp",
+}
+
+
+def lead_gloss(angle: StoryAngle) -> str | None:
+    """A plain-language definition of the card's lead jargon stat, for a casual fan.
+
+    Returns the glossary gloss for the first stat the card asserts that has one, or
+    ``None`` when nothing on the card needs translating.
+    """
+    from padres_analytics.glossary import explain
+
+    for st in angle.stats:
+        slug = _STAT_GLOSS_SLUG.get(st.key)
+        if slug:
+            return explain(slug)
+    return None
+
+
 @dataclass(frozen=True)
 class _Ctx:
     """Shared inputs handed to every detector (computed once)."""
