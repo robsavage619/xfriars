@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -589,6 +590,58 @@ class MlbStatsClient:
             )
         return out
 
+    def league_window_hitting(self, season: int, start: str, end: str) -> list[dict[str, Any]]:
+        """Fetch every league hitter's on-base inputs for a date window (one call).
+
+        Uses the ``byDateRange`` split so a single request returns the whole
+        qualified league for an arbitrary calendar window — the cohort needed to
+        control a player's change against league-wide drift over the same dates.
+
+        Args:
+            season: 4-digit year.
+            start: ISO window start (inclusive).
+            end: ISO window end (inclusive).
+
+        Returns:
+            List of dicts: player_id, player_name, ab, hits, bb, hbp, pa.
+        """
+        data = self._get(
+            "stats",
+            stats="byDateRange",
+            group="hitting",
+            season=season,
+            sportId=1,
+            gameType="R",
+            startDate=start,
+            endDate=end,
+            limit=2000,
+        )
+        splits = data.get("stats", [{}])[0].get("splits", [])
+        out = []
+        for s in splits:
+            player = s.get("player") or s.get("person") or {}
+            st = s.get("stat", {})
+
+            def _i(key: str, st: dict = st) -> int:
+                try:
+                    return int(st.get(key, 0) or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            out.append(
+                {
+                    "player_id": player.get("id"),
+                    "player_name": player.get("fullName"),
+                    "ab": _i("atBats"),
+                    "hits": _i("hits"),
+                    "bb": _i("baseOnBalls"),
+                    "hbp": _i("hitByPitch"),
+                    "pa": _i("plateAppearances"),
+                }
+            )
+        logger.info("league_window_hitting: %s..%s -> %d hitters", start, end, len(out))
+        return out
+
     # ── Team-season pitching (historical) ──────────────────────────────────
 
     def team_season_pitching(self, team_id: int, season: int) -> list[dict[str, Any]]:
@@ -1049,6 +1102,90 @@ def ingest_pitcher_seasons(
                     )
                 total += len(rows)
     logger.info("ingest_pitcher_seasons: %d-%d wrote %d rows", start_season, end_season, total)
+    return total
+
+
+def ingest_league_windows(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    as_of: date,
+    window_days: int = 25,
+) -> int:
+    """Ingest league-wide hitting for two calendar windows: the control cohort.
+
+    Pulls every qualified league hitter's on-base inputs for the ``recent``
+    window (the ``window_days`` ending at ``as_of``) and the ``prior`` window
+    (the ``window_days`` before that), so a detector can control a player's
+    change against league-wide drift over the *same* calendar dates.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: Season year.
+        as_of: End of the recent window (inclusive).
+        window_days: Length of each window in calendar days.
+
+    Returns:
+        Total league-hitter window rows written across both windows.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS league_window_batting (
+            season INTEGER NOT NULL, window_label VARCHAR NOT NULL,
+            start_date DATE NOT NULL, end_date DATE NOT NULL,
+            player_id INTEGER NOT NULL, player_name VARCHAR,
+            ab INTEGER, hits INTEGER, bb INTEGER, hbp INTEGER, pa INTEGER,
+            ingested_at TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (season, window_label, player_id)
+        )
+        """
+    )
+    recent_start = as_of - timedelta(days=window_days - 1)
+    prior_end = recent_start - timedelta(days=1)
+    prior_start = prior_end - timedelta(days=window_days - 1)
+    windows = (
+        ("prior", prior_start, prior_end),
+        ("recent", recent_start, as_of),
+    )
+    total = 0
+    with record_run(conn, "mlb-stats-api/league_window_hitting", note=str(as_of)) as _run:  # noqa: SIM117
+        with MlbStatsClient() as client:
+            for label, start, end in windows:
+                try:
+                    rows = client.league_window_hitting(season, start.isoformat(), end.isoformat())
+                except MlbApiError as exc:
+                    logger.error("league_windows %s failed: %s", label, exc)
+                    continue
+                conn.execute(
+                    "DELETE FROM league_window_batting WHERE season = ? AND window_label = ?",
+                    [season, label],
+                )
+                for r in rows:
+                    if r["player_id"] is None:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO league_window_batting (
+                            season, window_label, start_date, end_date, player_id, player_name,
+                            ab, hits, bb, hbp, pa
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        [
+                            season,
+                            label,
+                            start,
+                            end,
+                            r["player_id"],
+                            r["player_name"],
+                            r["ab"],
+                            r["hits"],
+                            r["bb"],
+                            r["hbp"],
+                            r["pa"],
+                        ],
+                    )
+                total += len(rows)
+    logger.info("ingest_league_windows: as_of=%s wrote %d rows", as_of, total)
     return total
 
 

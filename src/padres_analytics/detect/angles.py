@@ -720,6 +720,162 @@ def detect_pitcher_luck(ctx: _Ctx) -> StoryAngle | None:
     )
 
 
+# League-control gates. The differentiator: a player's change is only *his* if it
+# clears league-wide drift over the same calendar window. We control subject Δ
+# against a NON-team cohort's Δ (per feedback_league_control_causation) and ask
+# whether the residual is large versus normal player-to-player drift (its spread).
+_LEAGUE_CTRL_MIN_PA = 30  # PA floor per window, for both the subject and cohort members
+_LEAGUE_CTRL_Z_GATE = 1.5  # |residual / cohort drift SD| to clear (~0.87 two-sided)
+_LEAGUE_CTRL_MIN_PTS = 40  # min |controlled change| in OBP points to be worth telling
+
+
+def _obp_class(reaches: int, pa: int) -> float | None:
+    return reaches / pa if pa else None
+
+
+def _cohort_drift(
+    ctx: _Ctx,
+) -> tuple[float, float, int, tuple[tuple[str, str], tuple[str, str]]] | None:
+    """Mean and SD of the non-team cohort's window-over-window OBP drift.
+
+    Reads the two stored calendar windows from ``league_window_batting``, keeps
+    league hitters who are NOT Padres and cleared the PA floor in *both* windows,
+    and returns ``(mean_delta, sd_delta, n_cohort, (prior_dates, recent_dates))``
+    — the secular drift to subtract and the spread to judge a residual against.
+    """
+    rows = ctx.conn.execute(
+        """
+        SELECT window_label, start_date, end_date, player_id, ab, hits, bb, hbp
+        FROM league_window_batting WHERE season = ?
+        """,
+        [ctx.season],
+    ).fetchall()
+    if not rows:
+        return None
+    team = set(ctx.ids)
+    prior: dict[int, float] = {}
+    recent: dict[int, float] = {}
+    bounds: dict[str, tuple[str, str]] = {}
+    for win, start, end, pid, ab, hits, bb, hbp in rows:
+        bounds[win] = (str(start), str(end))
+        if int(pid) in team:
+            continue
+        pa = (ab or 0) + (bb or 0) + (hbp or 0)
+        if pa < _LEAGUE_CTRL_MIN_PA:
+            continue
+        obp = _obp_class((hits or 0) + (bb or 0) + (hbp or 0), pa)
+        if obp is not None:
+            (prior if win == "prior" else recent)[int(pid)] = obp
+    deltas = [recent[pid] - prior[pid] for pid in prior.keys() & recent.keys()]
+    if len(deltas) < 20 or "prior" not in bounds or "recent" not in bounds:
+        return None
+    mean = sum(deltas) / len(deltas)
+    var = sum((d - mean) ** 2 for d in deltas) / (len(deltas) - 1)
+    sd = math.sqrt(var)
+    if sd == 0.0:
+        return None
+    return mean, sd, len(deltas), (bounds["prior"], bounds["recent"])
+
+
+def _subject_window_obp(ctx: _Ctx, pid: int, start: str, end: str) -> tuple[float | None, int]:
+    """A Padres batter's OBP-class rate over a calendar window (inclusive)."""
+    row = ctx.conn.execute(
+        """
+        SELECT SUM(hits + bb + hbp), SUM(ab + bb + hbp)
+        FROM player_game_batting
+        WHERE player_id = ? AND season = ? AND game_date BETWEEN ? AND ?
+        """,
+        [pid, ctx.season, start, end],
+    ).fetchone()
+    if row is None or row[1] is None:
+        return None, 0
+    pa = int(row[1])
+    return _obp_class(int(row[0]), pa), pa
+
+
+def detect_league_control(ctx: _Ctx) -> StoryAngle | None:
+    """The Padre whose change is most *his own* once league drift is removed.
+
+    Controls each hitter's window-over-window OBP change against a non-team league
+    cohort's drift over the same calendar dates, then asks whether the residual is
+    large versus normal player-to-player variation. This separates a real
+    individual swing from "the whole league is hot/cold right now".
+    """
+    drift = _cohort_drift(ctx)
+    if drift is None:
+        return None
+    lg_mean, lg_sd, n_cohort, ((p_start, p_end), (r_start, r_end)) = drift
+    best: tuple[float, tuple] | None = None
+    for pid, name in zip(ctx.ids, _names(ctx), strict=False):
+        obp0, pa0 = _subject_window_obp(ctx, pid, p_start, p_end)
+        obp1, pa1 = _subject_window_obp(ctx, pid, r_start, r_end)
+        if obp0 is None or obp1 is None or min(pa0, pa1) < _LEAGUE_CTRL_MIN_PA:
+            continue
+        residual = (obp1 - obp0) - lg_mean  # change net of league drift
+        z = residual / lg_sd
+        if abs(_pts(residual)) < _LEAGUE_CTRL_MIN_PTS or abs(z) < _LEAGUE_CTRL_Z_GATE:
+            continue
+        score = abs(z)
+        if best is None or score > best[0]:
+            best = (score, (pid, name, obp0, obp1, residual, z, pa0 + pa1))
+    if best is None:
+        return None
+
+    _, (pid, name, obp0, obp1, residual, z, pa) = best
+    up = residual > 0
+    full = _full(name)
+    res_pts = abs(_pts(residual))
+    raw_pts = abs(_pts(obp1 - obp0))
+    lg_pts = _pts(lg_mean)
+    r = 2.0 * _normal_cdf(abs(z)) - 1.0  # confidence the residual is real
+    headline = (
+        f"Even with the league hitting, {full} is {res_pts} points of on-base above the field."
+        if up
+        else f"This isn't the league cooling: {full} is {res_pts} points of on-base below it."
+    )
+    thesis = (
+        f"His on-base moved {raw_pts} points while the league drifted {lg_pts:+d}. "
+        f"Net of that, the swing is {abs(z):.1f} SDs past normal player-to-player drift — it's him."
+    )
+    stats = [
+        Stat("lc_residual", res_pts, "pts", "points net of league drift", pa),
+        Stat("lc_raw", raw_pts, "pts", "raw OBP change", pa, shown=False),
+        Stat("lc_league", abs(lg_pts), "pts", "league drift", n_cohort, shown=False),
+        Stat("lc_z", round(abs(z), 1), "count", "SDs past cohort drift", pa, shown=False),
+    ]
+    return StoryAngle(
+        key="league_control",
+        subject=full,
+        title="NOT THE LEAGUE — HIM" if up else "NOT THE LEAGUE, JUST HIM",
+        headline=headline,
+        thesis=thesis,
+        direction="up" if up else "down",
+        effect=res_pts,
+        reliability=r,
+        interest=res_pts * r * 1.1,  # the causal-control angle is the differentiator, boosted
+        confidence=confidence_tier(r),
+        as_of=ctx.as_of,
+        subject_id=pid,
+        panels=[
+            PanelSpec(
+                "ladder",
+                {
+                    "actual": obp1,
+                    "true_talent": obp0,
+                    "league": obp0 + lg_mean,
+                    "owed": _pts(residual),
+                },
+            )
+        ],
+        stats=stats,
+        caveats=[
+            f"{r_start}..{r_end} vs {p_start}..{p_end}; "
+            f"controlled vs {n_cohort} non-Padres hitters",
+            "OBP-class rate; calendar-matched windows; a results swing, not a talent verdict",
+        ],
+    )
+
+
 def _names(ctx: _Ctx) -> list[str]:
     """Roster player names aligned to ``ctx.ids`` order (best-effort)."""
     ph = ",".join("?" * len(ctx.ids))
@@ -738,6 +894,7 @@ _DETECTORS = (
     detect_power_outlier,
     detect_change,
     detect_pitcher_luck,
+    detect_league_control,
 )
 
 

@@ -597,6 +597,32 @@ def ingest_all_events_cmd(
             typer.echo(f"  no data for: {', '.join(empty)}")
 
 
+@ingest_app.command("league-windows")
+def ingest_league_windows_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+    days: int = typer.Option(25, "--days", help="Length of each calendar window in days."),
+) -> None:
+    """Ingest the non-team league cohort for two calendar windows (league-control control)."""
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_league_windows
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    as_of = _la_today()
+    typer.echo(f"Ingesting league windows ({days}d) ending {as_of}, season {ref_season} …")
+
+    with connect() as conn:
+        initialize(conn)
+        try:
+            n = ingest_league_windows(conn, ref_season, as_of, days)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} league-hitter window rows written to league_window_batting.")
+
+
 @app.command()
 def spray(
     player: int = typer.Option(..., "--player", help="MLBAM batter id."),

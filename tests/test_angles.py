@@ -331,3 +331,79 @@ def test_pitcher_luck_needs_innings_and_a_constant(padres_db: duckdb.DuckDBPyCon
     assert not any(
         a.key == "pitcher_luck" for a in discover(padres_db, 2026, as_of=date(2026, 6, 25))
     )
+
+
+_PRIOR = ("2026-05-01", "2026-05-25")
+_RECENT = ("2026-05-26", "2026-06-19")
+
+
+def _league_window(
+    conn: duckdb.DuckDBPyConnection, pid: int, window: str, ab: int, hits: int
+) -> None:
+    """Insert one league-cohort window row (creating the ingest table on first use)."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS league_window_batting (season INTEGER, window_label VARCHAR, "
+        "start_date DATE, end_date DATE, player_id INTEGER, player_name VARCHAR, ab INTEGER, "
+        "hits INTEGER, bb INTEGER, hbp INTEGER, pa INTEGER)"
+    )
+    start, end = _PRIOR if window == "prior" else _RECENT
+    conn.execute(
+        "INSERT INTO league_window_batting (season, window_label, start_date, end_date, player_id, "
+        "player_name, ab, hits, bb, hbp, pa) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [2026, window, start, end, pid, f"Lg {pid}", ab, hits, 0, 0, ab],
+    )
+
+
+def _subject_games(
+    conn: duckdb.DuckDBPyConnection, pid: int, window: str, ab: int, hits: int
+) -> None:
+    """Insert the subject's games inside a window's date bounds (one game per row)."""
+    start, _ = _PRIOR if window == "prior" else _RECENT
+    day = int(start[-2:])
+    month = start[5:7]
+    conn.execute(
+        "INSERT INTO player_game_batting (player_id, player_name, season, game_date, game_pk, ab, "
+        "hits, bb, hbp, source, ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [pid, "Subject, Sam", 2026, f"2026-{month}-{day:02d}", 1, ab, hits, 0, 0, "t", _NOW],
+    )
+
+
+def test_league_control_isolates_a_player_from_league_drift(
+    padres_db: duckdb.DuckDBPyConnection,
+) -> None:
+    """A Padre collapsing while the league holds steady surfaces, controlled and audited."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    # Non-Padres cohort: ~flat league with a little spread (prior ~.300, recent ~.305).
+    for i in range(30):
+        _league_window(padres_db, 1000 + i, "prior", 100, 30)
+        _league_window(padres_db, 1000 + i, "recent", 100, 28 + (i % 9))  # mean ~.32, real spread
+    # The Padre: scorching prior window, ice-cold recent window — a big personal swing.
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Subject, Sam')")
+    for _ in range(6):
+        _subject_games(padres_db, 1, "prior", 10, 5)  # .500 over 60 AB
+        _subject_games(padres_db, 1, "recent", 10, 2)  # .200 over 60 AB
+
+    angles = discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    lc = next((a for a in angles if a.key == "league_control"), None)
+    assert lc is not None
+    assert "Sam" in lc.subject
+    assert lc.direction == "down"
+    assert not audit_angle(lc)
+    # the controlled (residual) change is reported, distinct from the raw change
+    assert any(s.key == "lc_residual" for s in lc.stats)
+
+
+def test_league_control_noops_without_cohort(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """With no league_window_batting cohort, the detector must no-op, not crash."""
+    _aux(padres_db)
+    for i in range(6):
+        _expected(padres_db, 900 + i, f"League, G{i}", 300, 0.320, 0.322)
+    padres_db.execute("INSERT INTO team_rosters VALUES (1, 'Subject, Sam')")
+    for _ in range(6):
+        _subject_games(padres_db, 1, "prior", 10, 5)
+        _subject_games(padres_db, 1, "recent", 10, 2)
+    assert not any(
+        a.key == "league_control" for a in discover(padres_db, 2026, as_of=date(2026, 6, 25))
+    )
