@@ -2,6 +2,39 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — Live path, story infographics, spatial cards, scout → deep dive → Board
+
+### Added — In-game (live) path
+- **`live.py` + `pad live now`** — GUMBO feed client: pulls the current Padres game from the MLB live feed and emits pitch-level reads (unofficial, read-only).
+- **`ingest/live_poll.py` + `ingest/live_serve.py`** — live poller and `pad live serve` daemon; `pad live watch` streams updates as they land.
+- **`live_ask.py` + `pad live ask`** — plain-language question intent over the in-game feed (matchup / RISP / count-state reads).
+- **`live_moments.py`** — gated, ranked in-game moment detector (not a fixed template): only moments that clear the significance gate surface a card.
+- **`live_card.py` + `pad live card`** — analytical live pitcher card: CSW% hero, whiff-colored pitch mix, velo trend, player headshot; team-correct and legible to casual fans.
+- `storage/schemas.py` — `live_pitches` table; schema bumped through v10.
+
+### Added — Story infographics (multi-module narrative cards)
+- **`detect/story.py`** + **`render/story_infographic.py`** + **`render/templates/card_story.html.j2`** — composed `StoryCard` image type: hero hook + player percentile panels + narrative, separating skill from luck across several lenses with every claim significance-gated.
+- **`pad story` / `pad discover`** — story-discovery engine: ranked, gated, audited infographics. Copy aligned to `VOICE.md` (FanGraphs-adjacent, fan lean).
+- **Number reconciliation** — rendered numbers are verified against source, not just displayed.
+
+### Added — Spatial visual library
+- Panel-spec'd geometry kit driving spatial cards: `pad spray` (HR spray), `pad arsenal`, `pad zone`, `pad release` (release-point / arm-slot deception), rolling-xwOBA, swing/take run-value, and bat-speed (bat-tracking) distribution cards.
+- Studio spatial-card picker (full-stack) + detector → spatial-card auto-mapping; spatial cards wired into the draft/render/verify pipeline.
+
+### Added — Scout → deep dive → Board
+- **`pad scout`** — shallow leads scout: surfaces flags (starting points for a deep dive), never stories. The lead is never posted on its own.
+- **`board.py`** — the Board: store + API where Claude-generated cards and scout leads land; Studio is the editorial-light gallery over it.
+- **Surprise + novelty ranking** — candidates rank by what is unusual *for the subject*, not by raw magnitude.
+
+### Added — Data-coverage preflight
+- **`storage/coverage.py` + `pad coverage`** — the engine knows its own stat coverage (season span, granularity, freshness, player coverage) before it detects, scouts, or tells a story; `can_support()` gates analysis on verified completeness.
+
+### Changed
+- **Player availability gate** — only available players are featured; injured / out-for-season bats are filtered on roster status.
+- CI: `gitleaks` runs on pre-push as well as pre-commit; `.github` CI / CODEOWNERS / dependabot config removed.
+
+---
+
 ## [Unreleased] — P3: Conjunction + scope framing + milestone proximity
 
 ### Added

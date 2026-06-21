@@ -69,3 +69,30 @@ def test_funk_story_composes(padres_db: duckdb.DuckDBPyConnection) -> None:
 def test_funk_story_none_without_standings(padres_db: duckdb.DuckDBPyConnection) -> None:
     """No Padres standings row → no story."""
     assert build_funk_story(padres_db, 2026) is None
+
+
+def test_compose_embeds_real_logo() -> None:
+    """Hard gate: every composed card carries the real xFriars logo <image>, never text."""
+    from padres_analytics.detect.angles import PanelSpec, StoryAngle
+    from padres_analytics.render.story_infographic import compose, xfriars_logo_uri
+
+    uri = xfriars_logo_uri()
+    assert uri.startswith("data:image/png;base64,")
+
+    angle = StoryAngle(
+        key="t",
+        subject="THE OFFENSE",
+        title="IT'S NOT THE COACH",
+        headline="h",
+        thesis="t",
+        direction="flat",
+        effect=0.0,
+        reliability=0.5,
+        interest=0.0,
+        confidence="moderate",
+        as_of=date(2026, 6, 20),
+        panels=[PanelSpec("hero", {"value": 0, "label": "x", "context": "y"})],
+    )
+    svg = compose(angle)
+    assert uri in svg  # the real logo, embedded
+    assert ">xFriars<" not in svg  # never the text wordmark

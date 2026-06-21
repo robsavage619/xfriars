@@ -12,8 +12,10 @@ is invented in the renderer.
 
 from __future__ import annotations
 
+import base64
 import re
 import textwrap
+from functools import lru_cache
 from pathlib import Path
 
 from padres_analytics.detect.angles import StoryAngle
@@ -29,7 +31,27 @@ from padres_analytics.render.tokens import (
     SLATE,
     SPACE_GROTESK_TTF,
     TEXT_MUTED,
+    XFRIARS_LOGO_PNG,
 )
+
+
+@lru_cache(maxsize=1)
+def xfriars_logo_uri() -> str:
+    """Return the real xFriars logo as a base64 data URI.
+
+    Hard gate: every card must carry the real brand mark, never a text wordmark.
+    Raises if the asset is missing so a logo-less card fails loudly instead of
+    silently shipping off-brand.
+
+    Raises:
+        FileNotFoundError: if the logo asset is absent.
+    """
+    if not XFRIARS_LOGO_PNG.exists():
+        raise FileNotFoundError(
+            f"xFriars logo asset missing: {XFRIARS_LOGO_PNG} — cards must use the real logo"
+        )
+    return "data:image/png;base64," + base64.b64encode(XFRIARS_LOGO_PNG.read_bytes()).decode()
+
 
 _W = 480
 _ML, _MR = 26, 26
@@ -450,26 +472,21 @@ def compose(angle: StoryAngle) -> str:
     # header
     c.text(_ML, 33, f"SAN DIEGO PADRES  ·  {angle.subject.upper()}", 9, BROWN_DIM, w=600, ls=2.0)
     c.text(_ML - 2, 72, angle.title, 40, INK, w=800, ff="Big Shoulders Display", ls=0.5)
+    # Brand mark — the real logo, always (hard gate: xfriars_logo_uri raises if missing).
+    lw = 86
+    lh = lw * 334 / 1414
+    c.parts.append(
+        f'<image href="{xfriars_logo_uri()}" x="{_W - _MR - lw:.1f}" y="22" '
+        f'width="{lw}" height="{lh:.1f}"/>'
+    )
     if angle.headshot:
-        cx, cy, rr = _W - _MR - 30, 44, 30
+        cx, cy, rr = _W - _MR - lw - 40, 31, 22
         c.parts.append(
             f'<defs><clipPath id="hsclip"><circle cx="{cx}" cy="{cy}" r="{rr}"/></clipPath></defs>'
             f'<image href="{angle.headshot}" x="{cx - rr}" y="{cy - rr}" '
             f'width="{rr * 2}" height="{rr * 2}" preserveAspectRatio="xMidYMid slice" '
             f'clip-path="url(#hsclip)"/>'
             f'<circle cx="{cx}" cy="{cy}" r="{rr}" fill="none" stroke="{GOLD}" stroke-width="2"/>'
-        )
-    else:
-        c.text(
-            _W - _MR,
-            39,
-            "xFriars",
-            22,
-            GOLD,
-            w=900,
-            anchor="end",
-            ff="Big Shoulders Display",
-            italic=True,
         )
     sub_lines = textwrap.wrap(angle.headline, width=64)[:2]
     y = 92

@@ -114,10 +114,13 @@ def test_headshot_injected_and_rendered() -> None:
     assert angle.headshot == uri
     svg = compose(angle)
     assert "<image" in svg and uri in svg
-    # without a resolver, no photo and the wordmark stays
+    # without a resolver: no player photo, but the real xFriars logo <image> is
+    # always present (hard gate — cards never fall back to a text wordmark).
     plain = live_angle(_feed())
     assert plain is not None and plain.headshot is None
-    assert "<image" not in compose(plain)
+    svg_plain = compose(plain)
+    assert "<image" in svg_plain  # the brand logo
+    assert uri not in svg_plain  # but not the player headshot
 
 
 def test_compose_audits_clean() -> None:
