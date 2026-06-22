@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING
 from padres_analytics.config import PADRES_TEAM_ID
 from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
+    ChartDataset,
+    Column,
+    Mark,
     StatCandidate,
-    TablePayload,
     make_candidate_id,
 )
 from padres_analytics.detect.scoring import novelty_score
@@ -161,25 +163,32 @@ def _build_leaderboard_candidate(
 
     padre_idx = next((i for i, r in enumerate(display_rows) if r[3] == PADRES_TEAM_ID), None)
 
-    table_rows = [
-        [
-            str(r[0]),
-            r[1] or "—",
-            r[2] or "—",
-            _format_value(r[4], fmt),
-        ]
-        for r in display_rows
+    # Bar rows: [labelled player, numeric value]. Padre row highlighted.
+    def _num(v: str) -> float:
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return 0.0
+
+    data_rows: list[list[str | int | float | None]] = [
+        [f"{r[1] or '—'} ({r[2] or '—'})", _num(r[4])] for r in display_rows
     ]
+    highlight = [Mark(row_index=padre_idx, label="Padres")] if padre_idx is not None else []
 
     padre_row = next((r for r in rows if r[3] == PADRES_TEAM_ID), None)
     padre_name = padre_row[1] if padre_row else "Padre"
     padre_value = _format_value(padre_row[4], fmt) if padre_row else "—"
     padre_value_raw = padre_row[4] if padre_row else "0"
 
-    title = f"{season} MLB {_STAT_TITLES.get(stat_type, abbr)} Leaders"
+    title = f"{season} MLB {_STAT_TITLES.get(stat_type, abbr)} LEADERS"
     subtitle = f"{abbr} — {season} regular season · through {as_of.isoformat()}"
     headline = f"{padre_name} ranks #{padre_rank} in MLB {abbr} ({padre_value}) in {season}"
 
+    higher_is_better = stat_type not in ("earnedRunAverage", "whip")
+    measure_fmt = "d" if fmt == "int" else ".3f"
+
+    # Path A cross-validation reads these keys from facts (flat for table, nested
+    # under .facts for dataset — verify_path_a handles both).
     facts: dict = {
         "stat_type": stat_type,
         "stat_abbr": abbr,
@@ -192,40 +201,45 @@ def _build_leaderboard_candidate(
         "total_in_table": len(display_rows),
     }
 
-    payload = TablePayload(
+    dataset = ChartDataset(
         title=title,
         subtitle=subtitle,
         as_of=as_of,
-        columns=["Rank", "Player", "Team", abbr],
-        rows=table_rows,
-        highlight_row=padre_idx,
+        columns=[
+            Column(key="player", label="Player", role="dimension"),
+            Column(
+                key="value",
+                label=abbr,
+                role="measure",
+                format=measure_fmt,
+                higher_is_better=higher_is_better,
+            ),
+        ],
+        rows=data_rows,
+        highlight=highlight,
+        framing=headline,
         source="MLB Stats API",
         headline=headline,
         claim_scope=claim_scope,
+        population_label=f"MLB {abbr} leaders, {season}",
+        card_hint="bar",
+        facts=facts,
     )
 
-    # Novelty scoring
     rank_rarity = max(0.0, 1.0 - (padre_rank - 1) / 25)
-    magnitude = 0.7
-    timeliness = 0.8
-    rootability = 0.75
-    legibility = 0.9
-
     score, components = novelty_score(
         {
             "rarity": rank_rarity,
-            "magnitude": magnitude,
-            "timeliness": timeliness,
-            "rootability": rootability,
-            "legibility": legibility,
+            "magnitude": 0.7,
+            "timeliness": 0.8,
+            "rootability": 0.75,
+            "legibility": 0.9,
         },
         detector="leaderboard",
     )
 
     cid = make_candidate_id(
-        "leaderboard",
-        f"SDP|{season}|{stat_type}",
-        {**payload.model_dump(mode="json"), **facts},
+        "leaderboard", f"SDP|{season}|{stat_type}", dataset.model_dump(mode="json")
     )
 
     return StatCandidate(
@@ -234,18 +248,10 @@ def _build_leaderboard_candidate(
         subject=f"SDP|{season}|{stat_type}",
         as_of=as_of,
         category="season",
-        payload_kind="table",
-        facts_json={**payload.model_dump(mode="json"), **facts},
+        payload_kind="dataset",
+        facts_json=dataset.model_dump(mode="json"),
         provenance_json=[
-            {
-                "source_table": "mlb_leaders",
-                "sql": (
-                    "SELECT rank, player_name, team_abbr, value "
-                    "FROM mlb_leaders WHERE season=? AND stat_type=? ORDER BY rank"
-                ),
-                "params": {"season": season, "stat_type": stat_type},
-                "as_of": str(as_of),
-            }
+            {"source_table": "mlb_leaders", "as_of": str(as_of)},
         ],
         coverage_window=f"{season}-{season}",
         claim_scope=claim_scope,

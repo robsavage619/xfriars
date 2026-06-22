@@ -80,9 +80,10 @@ def test_milestone_watch_fires_close_chase(hist_conn: duckdb.DuckDBPyConnection)
     assert len(tatis) == 1
     c = tatis[0]
     assert c.detector == "milestone_watch"
-    assert c.facts_json["gap_war"] == pytest.approx(0.1)
-    assert c.facts_json["target_name"] == "Manny Machado"
-    assert c.facts_json["target_rank"] == 3
+    assert c.payload_kind == "dataset"
+    assert c.facts_json["facts"]["gap_war"] == pytest.approx(0.1)
+    assert c.facts_json["facts"]["target_name"] == "Manny Machado"
+    assert c.facts_json["facts"]["target_rank"] == 3
     assert "passing Manny Machado" in c.facts_json["headline"]
     assert "3rd" in c.facts_json["headline"]
     assert c.novelty_score >= 0.90  # gap <= 0.5 and target rank <= 5
@@ -114,16 +115,17 @@ def test_milestone_watch_reemit_gate(hist_conn: duckdb.DuckDBPyConnection) -> No
     assert second == []
 
 
-def test_milestone_watch_table_highlights_chaser(hist_conn: duckdb.DuckDBPyConnection) -> None:
+def test_milestone_watch_hero_shows_chase(hist_conn: duckdb.DuckDBPyConnection) -> None:
     from padres_analytics.detect.milestones import MilestoneWatchDetector
 
     det = MilestoneWatchDetector()
     c = next(c for c in det.run(hist_conn, date(2026, 6, 10)) if "665487" in (c.subject or ""))
-    rows = c.facts_json["rows"]
-    hl = c.facts_json["highlight_row"]
-    assert rows[hl][1] == "Fernando Tatis Jr."
-    # The target sits directly above the chaser in the table
-    assert rows[hl - 1][1] == "Manny Machado"
+    # Hero card: the gap is the one big number, the chase target is in the context line.
+    hero = c.facts_json["hero"]
+    assert hero["value"] == "0.1"
+    assert "3rd" in hero["label"]
+    assert "Manny Machado" in hero["context"]
+    assert c.facts_json["facts"]["player_name"] == "Fernando Tatis Jr."
 
 
 # ── WarSeasonFirstSinceDetector ───────────────────────────────────────────────

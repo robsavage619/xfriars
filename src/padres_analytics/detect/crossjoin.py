@@ -7,7 +7,13 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from padres_analytics.detect.base import register
-from padres_analytics.detect.candidates import StatCandidate, TablePayload, make_candidate_id
+from padres_analytics.detect.candidates import (
+    ChartDataset,
+    Column,
+    Mark,
+    StatCandidate,
+    make_candidate_id,
+)
 
 if TYPE_CHECKING:
     import duckdb
@@ -144,11 +150,12 @@ class DollarPerWarDetector:
         # Re-sort by eff_rank ascending so display order is consistent
         bottom_10_sorted = sorted(bottom_10, key=lambda r: r[4])
 
-        table_rows = [
-            [str(r[4]), r[0], f"${r[1]}M", str(r[2]), f"${r[3]}M"] for r in bottom_10_sorted
+        # Bar rows: [team, $/WAR]. SD highlighted. Higher $/WAR = worse value.
+        data_rows: list[list[str | int | float | None]] = [
+            [r[0], round(float(r[3]), 2)] for r in bottom_10_sorted
         ]
-
         sd_idx = next((i for i, r in enumerate(bottom_10_sorted) if r[0] == _SD_BREF), None)
+        highlight = [Mark(row_index=sd_idx, label="Padres")] if sd_idx is not None else []
 
         headline = (
             f"In {season}, the Padres spent ${sd_row_raw[3]}M per WAR — "
@@ -156,38 +163,50 @@ class DollarPerWarDetector:
             f"(${sd_row_raw[1]}M payroll, {sd_row_raw[2]} WAR)"
         )
 
-        payload = TablePayload(
-            title=f"{season} MLB Payroll Efficiency",
-            subtitle=f"$/WAR — least efficient 10 of {total_teams} MLB teams",
+        dataset = ChartDataset(
+            title=f"{season} PAYROLL EFFICIENCY",
+            subtitle=f"$/WAR · least efficient {len(data_rows)} of {total_teams} MLB teams",
             as_of=as_of,
-            columns=["Rank", "Team", "Payroll", "WAR", "$/WAR"],
-            rows=table_rows,
-            highlight_row=sd_idx,
+            columns=[
+                Column(key="team", label="Team", role="dimension"),
+                Column(
+                    key="m_per_war",
+                    label="$/WAR",
+                    role="measure",
+                    unit="M",
+                    format=".2f",
+                    higher_is_better=False,
+                ),
+            ],
+            rows=data_rows,
+            highlight=highlight,
+            framing=headline,
             source="Spotrac / Baseball Reference",
             headline=headline,
             claim_scope="since_2015",
+            population_label=f"MLB teams, {season}",
+            card_hint="bar",
+            facts={
+                "season": season,
+                "sd_eff_rank": int(sd_eff_rank),
+                "sd_total_teams": total_teams,
+                "sd_payroll_m": float(sd_row_raw[1]),
+                "sd_war": float(sd_row_raw[2]),
+                "sd_m_per_war": float(sd_row_raw[3]),
+                "_no_rank": True,  # bottom-10 slice — row order is not the MLB rank
+            },
         )
-
-        facts = {
-            **payload.model_dump(mode="json"),
-            "season": season,
-            "sd_eff_rank": int(sd_eff_rank),
-            "sd_total_teams": total_teams,
-            "sd_payroll_m": float(sd_row_raw[1]),
-            "sd_war": float(sd_row_raw[2]),
-            "sd_m_per_war": float(sd_row_raw[3]),
-        }
 
         prov = [
             {
-                "source_tables": ["hist.spotrac_player_contracts", "hist.bwar_player_seasons"],
-                "sql": _DOLLAR_PER_WAR_SQL.strip(),
-                "params": {"season": season},
+                "source_table": "spotrac_player_contracts",
                 "as_of": str(as_of),
             }
         ]
 
-        cid = make_candidate_id(self.name, f"SDP|{season}|payroll_efficiency", facts)
+        cid = make_candidate_id(
+            self.name, f"SDP|{season}|payroll_efficiency", dataset.model_dump(mode="json")
+        )
 
         rarity = max(0.0, 1.0 - (int(sd_eff_rank) - 1) / total_teams)
         novelty = round(0.55 + 0.30 * rarity, 3)
@@ -199,8 +218,8 @@ class DollarPerWarDetector:
                 subject=f"SDP|{season}|payroll_efficiency",
                 as_of=as_of,
                 category="historical",
-                payload_kind="table",
-                facts_json=facts,
+                payload_kind="dataset",
+                facts_json=dataset.model_dump(mode="json"),
                 provenance_json=prov,
                 coverage_window=f"{season}-{season}",
                 claim_scope="since_2015",
@@ -239,65 +258,55 @@ class TradeWarDetector:
         current_gm = current_gm_row[0]
         current_net = current_gm_row[5]
 
-        table_rows = [
-            [
-                r[0],  # GM name
-                f"{r[1]}-{r[2]}",  # era
-                str(r[3]),  # acq_5yr
-                str(r[4]),  # sur_5yr
-                str(r[5]),  # net_5yr
-            ]
-            for r in rows
+        # Bar rows: [GM (era), net WAR]. Current GM highlighted.
+        data_rows: list[list[str | int | float | None]] = [
+            [f"{r[0]} ({r[1]}-{r[2]})", round(float(r[5]), 1)] for r in rows
         ]
+        highlight = [Mark(row_index=highlight_idx, label=current_gm)]
 
         headline = (
             f"SD trade returns by GM era (5-year WAR window): "
             f"{current_gm} sits at {current_net:+.1f} net WAR since {current_gm_row[1]}"
         )
 
-        payload = TablePayload(
-            title="Padres Trades by GM Era",
-            subtitle="5-year WAR window · acquired vs surrendered",
+        dataset = ChartDataset(
+            title="TRADES BY GM ERA",
+            subtitle="Net WAR · 5-year window · acquired minus surrendered",
             as_of=as_of,
-            columns=["GM", "Era", "Acq WAR", "Sur WAR", "Net WAR"],
-            rows=table_rows,
-            highlight_row=highlight_idx,
+            columns=[
+                Column(key="gm", label="GM", role="dimension"),
+                Column(
+                    key="net_war",
+                    label="Net WAR",
+                    role="measure",
+                    format="+.1f",
+                    higher_is_better=True,
+                ),
+            ],
+            rows=data_rows,
+            highlight=highlight,
+            framing=headline,
             source="Baseball Reference / trade-movements",
             headline=headline,
             claim_scope="since_2010",
+            population_label="SD GM eras since 2010",
+            card_hint="bar",
+            facts={
+                "current_gm": current_gm,
+                "current_net_war": float(current_net),
+                "n_eras": len(rows),
+                "_no_rank": True,  # GM eras are chronological, not a ranking
+            },
         )
-
-        facts = {
-            **payload.model_dump(mode="json"),
-            "current_gm": current_gm,
-            "current_net_war": float(current_net),
-            "eras": [
-                {
-                    "gm": r[0],
-                    "era_start": r[1],
-                    "era_end": r[2],
-                    "acq_5yr": float(r[3]),
-                    "sur_5yr": float(r[4]),
-                    "net_5yr": float(r[5]),
-                }
-                for r in rows
-            ],
-        }
 
         prov = [
             {
-                "source_tables": [
-                    "hist.trade_movements",
-                    "hist.bwar_player_seasons",
-                    "hist.team_regime_assignments",
-                ],
-                "sql": _TRADE_WAR_SQL.strip(),
-                "params": {"sd_team_id": _SD_TEAM_ID},
+                "source_table": "trade_movements",
                 "as_of": str(as_of),
             }
         ]
 
-        cid = make_candidate_id(self.name, "SDP|trade_war_balance", facts)
+        cid = make_candidate_id(self.name, "SDP|trade_war_balance", dataset.model_dump(mode="json"))
 
         return [
             StatCandidate(
@@ -306,8 +315,8 @@ class TradeWarDetector:
                 subject="SDP|trade_war_balance",
                 as_of=as_of,
                 category="historical",
-                payload_kind="table",
-                facts_json=facts,
+                payload_kind="dataset",
+                facts_json=dataset.model_dump(mode="json"),
                 provenance_json=prov,
                 coverage_window="2010-present",
                 claim_scope="since_2010",

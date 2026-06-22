@@ -4,14 +4,14 @@
 
 <p align="center">
   <b>Engine behind <a href="https://x.com/xFriars">@xFriars</a> — San Diego Padres analytics on X.</b><br/>
-  Franchise history, current-season Statcast leaderboards, crossjoin queries, branded stat cards.
+  Franchise history · Statcast corpus · deterministic SQL detectors · story infographics · live in-game reads · branded cards.
 </p>
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="python 3.12"/></a>
   <a href="https://duckdb.org/"><img src="https://img.shields.io/badge/store-DuckDB-fff100" alt="DuckDB"/></a>
   <a href="studio/"><img src="https://img.shields.io/badge/studio-React%2019-61dafb" alt="React 19"/></a>
-  <a href="src/padres_analytics/storage/schemas.py"><img src="https://img.shields.io/badge/schema-v3-informational" alt="schema v3"/></a>
+  <a href="src/padres_analytics/storage/schemas.py"><img src="https://img.shields.io/badge/schema-v11-informational" alt="schema v11"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT"/></a>
 </p>
 
@@ -21,53 +21,82 @@
 
 ---
 
-## What this repo is
+## What this is
 
-This repo demonstrates the engine: data ingestion, deterministic SQL detectors, a
-verification regime, a D3-powered PNG renderer, and the `pad` CLI. The editorial
-model, interest weights, full detector SQL arsenal, and all data are intentionally
-not included.
+This is a portfolio of the architecture, methodology, and accuracy regime behind
+[@xFriars](https://x.com/xFriars). The public code demonstrates the engine — data
+ingestion, deterministic SQL detectors, a statistical verification harness, a
+D3-powered PNG renderer, and the `pad` CLI. The editorial model, interest weights,
+trained detectors, and all data are intentionally private and not included.
 
-The pipeline:
-
-```
-ingest (MLB API + Baseball Savant → padres.db)
-  → detect (SQL detectors → stat_candidates)
-    → /padres-stat skill (judge + caption → inbox JSON)
-      → pad draft ingest (validate → render PNG → verify)
-        → pad queue → pad draft approve → pad post
-```
-
-Every number that reaches a post card passed through the accuracy regime in
-`src/padres_analytics/detect/base.py`: provenance, coverage-bounded claims,
-and a two-path verification gate.
+This is not a turn-key tool meant to be cloned and run. The private half of the
+system (tuned detectors, historical corpus, voice model) is what makes the public
+half coherent. The engine skeleton is here to show the architecture.
 
 ---
 
-## Design principles
+## Data corpus and sources
 
-- **One payload, two outputs.** The same `facts_json` drives both the caption
-  and the rendered PNG. Text and image cannot diverge.
-- **Fail visibly.** A detector with incomplete or stale inputs emits nothing
-  and logs why. "Completed" only means nothing was quietly skipped.
-- **Coverage-bounded superlatives.** Claims are bounded to the data window that
-  supports them (`since 1990`, `since 2015`). Only Baseball Reference WAR
-  (1871–present) earns "all-time."
-- **Claude never computes numbers.** Detectors (SQL) compute; Claude writes
-  captions using only numbers present in the verified payload.
-- **Padres-anchored, league-aware.** The Padre is always the protagonist; the
-  table is league-wide with the Padre row highlighted. Padres-only starves;
-  league context gets shared by non-Padres fans.
-- **Fresh data, automatic.** A `_tbl()` resolver in every Statcast detector
-  prefers `main.{table}` (fresh ingest) over the historical attach. Run
-  `pad ingest statcast` and detectors silently upgrade.
+Four authoritative sources form the corpus. Each is used for what it is uniquely
+suited for, with cross-validation running between overlapping windows.
+
+| Source | Coverage | What it anchors |
+|---|---|---|
+| MLB Stats API | 2010–present | Schedule, box scores, game logs, season stats, leaderboards — the official live spine |
+| Baseball Reference bWAR | 1871–present | Historical WAR — the only source that earns "all-time" claims (155 seasons) |
+| Baseball Savant / Statcast | 2015–present | Percentile ranks, expected stats (xwOBA, xBA, xSLG), sprint speed, exit velocity, barrel rate — the granular physics layer |
+| Retrosheet transactions | 1880–2009 | Pre-API trade and transaction history (bridging the MLB API gap back 130 years) |
+
+**Coverage-bounded claims.** Every superlative is explicitly bounded to the window
+the source supports: `since 2015` for Statcast, `since 2010` for MLB API game logs,
+`since 1990` for franchise history, `since 1871` only when bWAR confirms it. No
+number escapes its provenance window.
+
+**Cross-validation.** Season stats from the MLB API are validated against Statcast
+aggregates for the same player-season. Disagreements surface as warnings before any
+candidate reaches a draft. The same number must appear identically in both
+`facts_json` and the rendered card — the renderer and the caption share one payload
+and cannot diverge.
 
 ---
 
-## Detectors
+## Accuracy architecture
 
-Detectors are SQL-first: a Python class wraps a query, validates provenance,
-and emits a `StatCandidate`. They register themselves at import time.
+### The verification regime
+
+Every number that reaches a post card passed through four gates:
+
+1. **Provenance gate** — the detector records which source and season window
+   produced each fact. A claim is rejected if its source can't cover the
+   stated scope.
+2. **Coverage preflight** (`pad coverage`) — before any analysis runs, the engine
+   audits its own data: per-domain season span, granularity, freshness, and
+   player coverage. `can_support()` blocks detection, scouting, and story
+   generation on unverified completeness. The engine cannot analyze what it
+   cannot prove it has.
+3. **Digit audit** — rendered numbers are extracted from the PNG and reconciled
+   against `facts_json`. A single digit mismatch aborts the draft.
+4. **Scope-upgrade guard** (`verify.py`) — the engine selects the strongest
+   *provably true* framing tier (franchise record → first since → Statcast era →
+   season best). Claude writes voice over verified facts and may never upgrade
+   the scope of a claim. The guard in `verify.py` enforces this structurally.
+
+### Claude's role is strictly voice
+
+Claude does not compute, rank, or select numbers. Detectors and the scan engine
+produce all statistics via SQL. Claude receives a `facts_json` payload containing
+only pre-verified facts and writes a caption from that payload — nothing else.
+This is a hard architectural constraint, not a style guide.
+
+---
+
+## Statistical methodology
+
+### Bespoke detectors
+
+SQL-first classes, one per stat. Each wraps a single deterministic query,
+validates provenance, emits a `StatCandidate`, and registers at import time via
+`detect/base.py`.
 
 | Detector | Type | Fires when |
 |---|---|---|
@@ -83,90 +112,143 @@ and emits a `StatCandidate`. They register themselves at import time.
 | `sprint_speed` | Statcast | any Padre in the MLB top 10 for sprint speed |
 | `barrel_rate` | Statcast | any Padre in the MLB top 10 for barrel rate |
 
+### Generic scan engine
+
+A declarative TOML metric registry drives the scan engine — no per-stat Python
+required. Each metric declares its population, lenses, milestones, and coverage
+window.
+
+| Layer | What it does |
+|---|---|
+| `detect/registry.py` | Loads the metric registry; validates `MetricSpec` / `PopulationSpec` / `ScanConfig` |
+| `detect/lenses.py` | `extremeness` (ECDF + empirical-Bayes shrinkage), `rank` (top-quartile cap), `pace` (milestone countdown), `milestone_proximity` (within 10% of threshold) |
+| `detect/conjunction.py` | Franchise scope evaluator (selects strongest true tier), named-anchor resolver ("first Padre since Gwynn (1997)"), conjunction grouper (multi-metric stories) |
+| `detect/scanner.py` | Iterates registry → lenses → Benjamini-Hochberg FDR correction → scope strengthening → top-K `ChartDataset` candidates |
+
+**ECDF + empirical-Bayes shrinkage** handles small-sample players: the extremeness
+lens estimates where a player sits in the empirical distribution of the metric,
+then shrinks toward the population mean proportional to sample size. A 30-PA outlier
+is ranked below a 300-PA outlier of the same rate.
+
+**Benjamini-Hochberg FDR correction** is applied across the full candidate set
+before scoring. Running dozens of detectors over a full roster inflates the
+false-discovery rate; BH correction keeps it bounded so the top-K candidates are
+signal, not noise.
+
+---
+
+## Scout → deep dive → story
+
+Three tiers turn raw signal into a publishable card:
+
+- **`pad scout`** — shallow lead scouting. Surfaces *flags* (a number that looks
+  anomalous for the subject), ranked by surprise and novelty relative to the
+  player's own baseline and the league cohort. A lead is a starting point, never a post.
+- **Deep dive** — a flagged lead is investigated across trends, splits,
+  correlations, and sample discipline. Only survivors advance.
+- **`pad story`** — story-discovery engine. Renders a multi-module `StoryCard`
+  (hero hook + percentile panels + narrative) that separates skill from luck across
+  several lenses, with every claim significance-gated and every rendered number
+  reconciled against source.
+
+Candidates and leads land on the **Board** (`board.py`), the store and API
+that backs the Studio review gallery.
+
+---
+
+## Live (in-game) path
+
+`pad live` reads the MLB **GUMBO** feed for pitch-level, in-game analysis —
+unofficial and read-only. Live moments are gated and ranked (`live_moments.py`):
+only moments that clear a significance threshold surface a card.
+
+| Command | What it does |
+|---|---|
+| `pad live now` | current pitch-level read of the active Padres game |
+| `pad live watch` | stream updates as they land |
+| `pad live ask` | plain-language question about the current game state |
+| `pad live card` | analytical live pitcher card — CSW% hero, whiff-colored mix, velo trend |
+
 ---
 
 ## Cards
 
-All cards render to PNG via Playwright + Jinja2 + D3.js v7. The design spec is
-[xFriars brand v2](src/padres_analytics/render/tokens.py): near-black canvas,
-white for hierarchy, gold as data ink and accent only.
+All cards render to PNG via Playwright + Jinja2 + D3.js v7. Design is
+[xFriars brand v3](src/padres_analytics/render/tokens.py) — editorial-light
+("Goldsberry"): warm paper canvas, near-black espresso ink carries hierarchy,
+gold demoted to a single hairline accent, no glows.
 
-**Table card** — leaderboard or franchise results table with Padre row highlighted.
-Big Shoulders Display (900) for titles, Space Grotesk for labels and cells.
+**Table card** — leaderboard or franchise results table with the Padre row highlighted.
 
-**Bar card** — D3 horizontal bar chart with gradient fills, glow highlight on
-the best metric, and hairline row rules. Powers `statcast_profile`.
+**Bar card** — D3 horizontal bar chart with hairline row rules. Powers `statcast_profile`.
 
----
+**Story card** — multi-module narrative infographic: hero hook + percentile panels
++ reconciled numbers, separating skill from luck.
 
-## Data sources
+**Spatial cards** — geometry-driven family: HR spray (`pad spray`), pitch arsenal
+(`pad arsenal`), zone (`pad zone`), release-point (`pad release`), rolling-xwOBA,
+swing/take run-value, and bat-tracking distribution.
 
-| Source | Coverage | Role |
-|---|---|---|
-| MLB Stats API | 2010–present | schedule, box scores, game logs, season stats, leaderboards |
-| Baseball Reference bWAR | 1871–present | historical WAR (via `savage-trade-evaluator` attach) |
-| Baseball Savant / Statcast | 2015–present | percentile ranks, expected stats, sprint speed, exit velo / barrels |
-| Retrosheet transactions | 1880–2009 | pre-API trade history (via attach) |
-
-`padres.db` is owned by this project. Historical data (`trades.db`) is attached
-READ-ONLY from `savage-trade-evaluator`. No data files are committed to this repo.
+**Live pitcher card** — in-game CSW% hero, whiff-colored pitch mix, velo trend.
 
 ---
 
-## Under the hood
+## Pipeline
+
+```
+ingest (MLB API + Baseball Savant → padres.db)
+  → detect / scan (SQL detectors + generic scan engine → stat_candidates)
+    → /padres-stat skill (judge + caption → inbox JSON)
+      → pad draft ingest (validate → digit audit → scope guard → render PNG → verify)
+        → pad queue → pad draft approve → pad post
+```
+
+---
+
+## Architecture
 
 **Backend** — Python 3.12, DuckDB, Playwright. A `typer` CLI (`pad <verb>`) drives
 ingestion, detection, draft management, and posting.
 
 **Frontend (Studio)** — React 19, TypeScript, Vite, Tailwind. Candidate review,
-draft queue, and PNG card preview. `pad studio` launches it.
+draft queue, and PNG card preview.
 
 ```
 src/padres_analytics/
-├── app/         # FastAPI Studio backend
-├── detect/      # SQL detectors (base + leaderboards + crossjoin + statcast)
-├── ingest/      # MLB API, Statcast (Baseball Savant), ingest-run tracking
-├── render/      # Playwright PNG renderer, Jinja2 templates, D3 bundle, MLB assets
-├── storage/     # DuckDB schema, connection helpers
-└── tweets/      # Ammo file exporter, draft pipeline
-studio/          # React SPA (candidate review + card preview)
-tests/           # pytest suite with snapshot tests
+├── app/         # FastAPI Studio + Board backend
+├── detect/      # SQL detectors, generic scan engine (registry, lenses, conjunction, scanner), scout, story, discovery
+├── ingest/      # MLB API, Statcast (Baseball Savant), live GUMBO poller/serve, ingest-run tracking
+├── render/      # Playwright PNG renderer, story + spatial templates, D3 bundle, MLB assets
+├── storage/     # DuckDB schema, coverage preflight, connection helpers
+├── live*.py     # In-game path: GUMBO reads, moment detector, ask intents, live pitcher card
+├── board.py     # The Board — store + API where cards and scout leads land
+└── tweets/      # Ammo file exporter, draft pipeline, digit audit, scope guard
+studio/          # React SPA — the Board gallery (candidate review + card preview)
+tests/           # pytest suite (247 tests)
+examples/        # Public metric registry + anchor bank (private/ overrides)
 ```
 
 ---
 
-## Run it yourself
+## Design principles
 
-```bash
-# Install and initialize
-uv sync
-uv run playwright install chromium
-uv run pad init                      # create padres.db, apply schema
-
-# Ingest current-season data
-uv run pad ingest mlb                # MLB Stats API: schedule, box scores, leaders
-uv run pad ingest statcast           # Baseball Savant: percentile ranks, xStats, sprint, barrels
-
-# Run detectors
-uv run pad detect run statcast_profile    # Statcast tool card for each Padre
-uv run pad detect run xstats_unlucky      # xwOBA luck leaderboard
-uv run pad detect list                    # show all candidates with novelty scores
-
-# Draft and review
-uv run pad ammo                      # export ammo file for /padres-stat skill
-uv run pad studio                    # open the Studio UI at http://localhost:5173
-```
-
----
-
-## Accuracy policy
-
-This project treats correctness as the non-negotiable constraint. Coverage is
-bounded: claims say "since 1990" or "since 2015," not "ever." Cross-validation
-runs on every detector before a candidate is approved. Claude does not invent
-numbers — it reads from `facts_json` only.
-
-See [`VOICE.md`](VOICE.md) for editorial style and the banned-tells list.
+- **One payload, two outputs.** The same `facts_json` drives both the caption
+  and the rendered PNG. Text and image cannot diverge.
+- **Fail visibly.** A detector with incomplete or stale inputs emits nothing
+  and logs why. "Completed" only means nothing was quietly skipped.
+- **Coverage-bounded superlatives.** Claims are bounded to the data window
+  that supports them. Only Baseball Reference WAR (1871–present) earns "all-time."
+- **Claude never computes numbers.** Detectors and the scan engine (SQL) compute;
+  Claude writes captions using only numbers present in the verified payload.
+- **Engine chooses scope; Claude cannot upgrade it.** The scan engine selects the
+  strongest *provably true* framing tier. A scope-upgrade guard in `verify.py`
+  blocks any caption that promotes the claim further.
+- **Padres-anchored, league-aware.** The Padre is always the protagonist; the table
+  is league-wide with the Padre row highlighted. Padres-only context starves; league
+  context earns reach beyond Padres fans.
+- **Fresh data, automatic.** A `resolve_table()` helper in every Statcast detector
+  prefers `main.{table}` (fresh ingest) over the historical attach. Run
+  `pad ingest statcast` and everything silently upgrades.
 
 ---
 

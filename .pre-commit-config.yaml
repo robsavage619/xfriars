@@ -38,3 +38,6 @@ repos:
     rev: v8.21.2
     hooks:
       - id: gitleaks
+        # Scan at commit AND push — with CI removed, pre-push is the last gate
+        # before secrets reach the remote.
+        stages: [pre-commit, pre-push]

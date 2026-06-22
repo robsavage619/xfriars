@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<script src="file://{{ baseball_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
+
+.card {
+  width: 540px; height: 675px; display: flex; flex-direction: column;
+  background: {{ paper }};
+  font-family: "Space Grotesk", sans-serif; color: {{ ink }};
+}
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header {
+  padding: 24px 30px 14px;
+  display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0;
+}
+.kicker {
+  font-weight: 600; font-size: 12px; color: {{ brown_dim }};
+  letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px;
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }};
+  letter-spacing: 0.01em; text-transform: uppercase;
+}
+.subtitle {
+  font-size: 12px; color: {{ text_muted }}; margin-top: 6px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 24px; width: auto; }
+.as-of { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+/* Legend — in-situ outcome key, no colorbar */
+.legend {
+  display: flex; justify-content: center; gap: 18px; padding: 2px 30px 0; flex-shrink: 0;
+}
+.legend span { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.06em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* Rigor harness — required denominators, printed on the card face */
+.harness {
+  display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px;
+  padding: 12px 30px 4px; flex-shrink: 0;
+}
+.chip {
+  font-size: 11px; color: {{ ink_soft }}; letter-spacing: 0.08em; text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+.chip b { color: {{ ink }}; font-weight: 700; }
+.note { padding: 2px 30px 0; text-align: center; font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.02em; flex-shrink: 0; }
+
+.footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0; margin-top: 8px;
+}
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres · Statcast</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  <div class="legend">
+    <span><i class="dot" style="background:{{ hr_fill }}"></i>HR</span>
+    <span><i class="dot" style="background:{{ xbh_fill }}"></i>XBH</span>
+    <span><i class="dot" style="background:{{ hit_fill }}"></i>Single</span>
+    <span><i class="dot" style="background:{{ out_fill }}"></i>Out</span>
+  </div>
+
+  <div class="harness">
+    <span class="chip"><b>{{ n }}</b> BBE</span>
+    <span class="chip">{{ coverage }}</span>
+    <span class="chip">{{ handedness }}</span>
+    <span class="chip">{{ park }}</span>
+  </div>
+  {% if note %}<div class="note">{{ note }}</div>{% endif %}
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const PTS = {{ points | safe }};
+  const FILLS = {
+    out: "{{ out_fill }}", hit: "{{ hit_fill }}", single: "{{ hit_fill }}",
+    double: "{{ xbh_fill }}", triple: "{{ xbh_fill }}", xbh: "{{ xbh_fill }}",
+    home_run: "{{ hr_fill }}", hr: "{{ hr_fill }}",
+  };
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth || 540;
+  const H = container.offsetHeight || 430;
+
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+
+  // Shared geometry kit draws the field and returns the field-feet → pixel projection.
+  const proj = window.Baseball.spray(svg, W, H, { brown: "{{ brown }}" });
+
+  // Plot outs first (recede), HRs last (loud, on top).
+  const order = { out: 0, hit: 1, single: 1, double: 2, triple: 2, xbh: 2, home_run: 3, hr: 3 };
+  const pts = PTS.slice().sort((a, b) => (order[a.kind] || 0) - (order[b.kind] || 0));
+
+  svg.append("g").selectAll("circle").data(pts).join("circle")
+    .attr("cx", d => proj.toPx(d.x, d.y)[0])
+    .attr("cy", d => proj.toPx(d.x, d.y)[1])
+    .attr("r", d => (d.kind === "home_run" || d.kind === "hr") ? 5.5 : 4)
+    .attr("fill", d => FILLS[d.kind] || FILLS.out)
+    .attr("stroke", d => (d.kind === "home_run" || d.kind === "hr") ? "{{ paper }}" : "none")
+    .attr("stroke-width", 1);
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

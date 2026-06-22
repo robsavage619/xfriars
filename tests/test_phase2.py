@@ -264,11 +264,13 @@ def test_leaderboard_candidate_built(padres_db: duckdb.DuckDBPyConnection) -> No
     cand = _build_leaderboard_candidate(padres_db, "stolenBases", 2026, date(2026, 6, 9))
     assert cand is not None
     assert cand.detector == "leaderboard"
-    assert cand.facts_json["padre_rank"] == 8
-    assert cand.facts_json["padre_value"] == "15"
-    assert cand.facts_json["padre_name"] == "Fernando Tatis Jr."
-    # Padre row should be highlighted
-    assert cand.facts_json["highlight_row"] is not None
+    assert cand.payload_kind == "dataset"
+    f = cand.facts_json["facts"]
+    assert f["padre_rank"] == 8
+    assert f["padre_value"] == "15"
+    assert f["padre_name"] == "Fernando Tatis Jr."
+    # Padre row should be highlighted on the bar card
+    assert any(m["label"] == "Padres" for m in cand.facts_json["highlight"])
 
 
 def test_leaderboard_no_padre_returns_none(padres_db: duckdb.DuckDBPyConnection) -> None:
@@ -318,8 +320,8 @@ def test_leaderboard_golden_tatis_sb(padres_db: duckdb.DuckDBPyConnection) -> No
     )
     cand = _build_leaderboard_candidate(padres_db, "stolenBases", 2026, date(2026, 6, 9))
     assert cand is not None
-    assert cand.facts_json["padre_rank"] == 8
-    assert cand.facts_json["padre_value"] == "15"
+    assert cand.facts_json["facts"]["padre_rank"] == 8
+    assert cand.facts_json["facts"]["padre_value"] == "15"
     assert "Tatis" in cand.facts_json["headline"]
     # Provenance must be present
     assert len(cand.provenance_json) == 1

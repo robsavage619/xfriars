@@ -20,29 +20,34 @@ from typing import TYPE_CHECKING
 
 from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
+    ChartDataset,
+    Column,
     StatCandidate,
     TablePayload,
     make_candidate_id,
 )
 from padres_analytics.detect.scoring import novelty_score
+from padres_analytics.detect.sql import fmt_name as _fmt_name
+from padres_analytics.detect.sql import max_year as _max_year
+from padres_analytics.detect.sql import ordinal as _ordinal
+from padres_analytics.detect.sql import padre_ids as _padre_ids
+from padres_analytics.detect.sql import resolve_table as _tbl
 
 if TYPE_CHECKING:
     import duckdb
 
 logger = logging.getLogger(__name__)
 
-_SD_TEAM_BREF = "SDP"
-
 # Statcast percentile rank columns to include in the player profile card.
 # Tuples: (column_name, display_label)
 # All columns are "higher = better" percentile ranks (0-100).
 _PROFILE_METRICS: list[tuple[str, str]] = [
     ("xwoba", "xwOBA"),
-    ("exit_velocity", "EXIT VELO"),
-    ("brl_percent", "BARREL %"),
-    ("hard_hit_percent", "HARD HIT %"),
-    ("sprint_speed", "SPRINT SPD"),
-    ("k_percent", "K-CONTROL"),
+    ("exit_velocity", "Exit Velo"),
+    ("brl_percent", "Barrel %"),
+    ("hard_hit_percent", "Hard Hit %"),
+    ("sprint_speed", "Sprint Speed"),
+    ("k_percent", "K-Control"),
 ]
 
 # Minimum qualifying thresholds
@@ -50,94 +55,6 @@ _MIN_PROFILE_METRICS = 4  # non-null metrics required to emit a profile card
 _MIN_PA_XSTATS = 100  # plate appearances for xstats gap
 _MIN_COMPETITIVE_RUNS = 10  # sprint speed competitive runs
 _MIN_BARREL_ATTEMPTS = 100  # batted ball attempts for barrel rate
-
-
-# ── Shared helpers ────────────────────────────────────────────────────────────
-
-
-def _fmt_name(raw: str) -> str:
-    """Convert Statcast 'Last, First' format to 'First Last'.
-
-    Args:
-        raw: Raw player name string, possibly 'Last, First'.
-
-    Returns:
-        'First Last' humanized name.
-    """
-    if "," in raw:
-        last, first = raw.split(",", 1)
-        return f"{first.strip()} {last.strip()}"
-    return raw
-
-
-def _ordinal(n: float | int) -> str:
-    """Format a percentile as an ordinal string.
-
-    Args:
-        n: Numeric percentile (0-100).
-
-    Returns:
-        String like '95th', '1st', '42nd'.
-    """
-    i = round(n)
-    if 11 <= i % 100 <= 13:
-        return f"{i}th"
-    return f"{i}{('st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th', 'th')[i % 10]}"
-
-
-def _tbl(conn: duckdb.DuckDBPyConnection, name: str) -> str:
-    """Resolve the qualified table name, preferring main. over hist. when populated.
-
-    Checks main.{name} (padres.db, from ``pad ingest statcast``) first.
-    Falls back to hist.{name} (trades.db read-only attachment).
-
-    Args:
-        conn: Connection with hist attached.
-        name: Unqualified table name.
-
-    Returns:
-        Qualified table reference string (e.g. 'statcast_sprint_speed' or
-        'hist.statcast_sprint_speed').
-    """
-    try:
-        row = conn.execute(f"SELECT MAX(year) FROM {name}").fetchone()
-        if row and row[0] is not None:
-            return name  # main. (unqualified resolves to main schema)
-    except Exception:
-        pass
-    return f"hist.{name}"
-
-
-def _max_year(conn: duckdb.DuckDBPyConnection, table: str) -> int | None:
-    """Return the maximum year value for a Statcast table, checking main. then hist.
-
-    Args:
-        conn: Connection with hist attached.
-        table: Unqualified table name.
-
-    Returns:
-        Maximum year, or None if table is absent in both schemas.
-    """
-    src = _tbl(conn, table)
-    row = conn.execute(f"SELECT MAX(year) FROM {src}").fetchone()
-    return row[0] if row and row[0] is not None else None
-
-
-def _padre_ids(conn: duckdb.DuckDBPyConnection, year: int) -> set[int]:
-    """Return MLBAM IDs for all Padre players in hist.bwar_player_seasons for a given year.
-
-    Args:
-        conn: Connection with hist attached.
-        year: Season year.
-
-    Returns:
-        Set of mlb_id integers on the SDP roster that year.
-    """
-    rows = conn.execute(
-        "SELECT mlb_id FROM hist.bwar_player_seasons WHERE year_id = ? AND team_id = ?",
-        [year, _SD_TEAM_BREF],
-    ).fetchall()
-    return {r[0] for r in rows}
 
 
 def _leaderboard_candidate(
@@ -363,9 +280,6 @@ class StatcastProfileDetector:
             if len(valid) < _MIN_PROFILE_METRICS:
                 continue
 
-            # Build bar-chart rows: ["", label, percentile_value]
-            table_rows = [["", label, round(v, 0)] for label, v in valid]
-
             # Highlight the strongest metric
             best_idx = max(range(len(valid)), key=lambda i: valid[i][1])
 
@@ -382,30 +296,38 @@ class StatcastProfileDetector:
             )
 
             facts: dict = {
-                "player_id": player_id,
+                "padre_player_id": player_id,
                 "player_name": player_name,
                 "statcast_year": statcast_year,
                 "bwar_year": bwar_year,
                 "avg_percentile": round(avg_pctile, 1),
                 "best_metric": best_label,
                 "best_percentile": best_val,
-                "metrics": {label: v for label, v in valid},
+                **{label: v for label, v in valid},
             }
 
-            # "Fernando Tatis Jr." → "TATIS JR."
-            name_parts = player_name.split()
-            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else player_name
-
-            payload = TablePayload(
-                title=f"{last_name.upper()} — STATCAST PROFILE",
-                subtitle=f"{statcast_year} Season · Statcast Percentile Rankings",
+            # Slider-shaped dataset: one 0-100 measure, one row per metric → select_card → "slider"
+            dataset = ChartDataset(
+                title=player_name.upper(),
+                subtitle=f"{statcast_year} · Statcast Percentile Rankings",
                 as_of=as_of,
-                columns=["", "Metric", "Pctile"],
-                rows=table_rows,
-                highlight_row=best_idx,
+                columns=[
+                    Column(key="metric", label="Metric", role="dimension"),
+                    Column(
+                        key="percentile",
+                        label="Percentile",
+                        role="measure",
+                        domain=(0.0, 100.0),
+                        higher_is_better=True,
+                    ),
+                ],
+                rows=[[label, round(v, 0)] for label, v in valid],
+                framing=headline,
                 source="Baseball Savant",
                 headline=headline,
                 claim_scope="since_2015",
+                card_hint="slider",
+                facts=facts,
             )
 
             # Novelty: elite profiles and high-contrast profiles are more interesting
@@ -425,7 +347,7 @@ class StatcastProfileDetector:
             cid = make_candidate_id(
                 self.name,
                 f"SDP|{player_id}|{statcast_year}",
-                {**payload.model_dump(mode="json"), **facts},
+                dataset.model_dump(mode="json"),
             )
 
             candidates.append(
@@ -435,17 +357,11 @@ class StatcastProfileDetector:
                     subject=f"SDP|{player_id}|{statcast_year}",
                     as_of=as_of,
                     category="season",
-                    payload_kind="table",
-                    facts_json={**payload.model_dump(mode="json"), **facts},
+                    payload_kind="dataset",
+                    facts_json=dataset.model_dump(mode="json"),
                     provenance_json=[
                         {
-                            "source_table": "hist.statcast_batter_percentile_ranks",
-                            "sql": (
-                                "SELECT player_id, player_name, xwoba, exit_velocity, "
-                                "brl_percent, hard_hit_percent, sprint_speed, k_percent "
-                                f"FROM hist.statcast_batter_percentile_ranks "
-                                f"WHERE year = {statcast_year} AND player_id = {player_id}"
-                            ),
+                            "source_table": "statcast_batter_percentile_ranks",
                             "as_of": str(as_of),
                         }
                     ],
@@ -751,9 +667,156 @@ class BarrelRateDetector:
         return [cand] if cand else []
 
 
+# ── power_cluster (scatter) ────────────────────────────────────────────────────
+
+_MIN_BBE_SCATTER = 50  # batted-ball events to qualify for the power cluster
+
+
+class PowerClusterDetector:
+    """League-wide Exit Velo vs Barrel% scatter with Padres highlighted.
+
+    A Baseball-Savant-style "power cluster": every qualified MLB hitter is a
+    background dot; the Padres are hot, labeled dots. Emits a ChartDataset with
+    spatial_x/spatial_y roles, which the selector routes to the scatter card.
+    """
+
+    name = "power_cluster"
+
+    def run(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        as_of: date,
+    ) -> list[StatCandidate]:
+        """Build the power-cluster scatter candidate.
+
+        Args:
+            conn: Read-only padres.db connection with hist attached.
+            as_of: Reference date.
+
+        Returns:
+            A single-element list (or empty if data is unavailable).
+        """
+        from padres_analytics.detect.candidates import Mark
+        from padres_analytics.detect.sql import padre_ids_roster
+
+        year = _max_year(conn, "statcast_batter_exitvelo_barrels")
+        if year is None:
+            logger.warning("power_cluster: no statcast_batter_exitvelo_barrels data")
+            return []
+
+        src = _tbl(conn, "statcast_batter_exitvelo_barrels")
+        rows = conn.execute(
+            f"""
+            SELECT player_id, player_name, avg_hit_speed, brl_percent
+            FROM {src}
+            WHERE year = ? AND attempts >= ?
+              AND avg_hit_speed IS NOT NULL AND brl_percent IS NOT NULL
+            ORDER BY brl_percent DESC
+            """,
+            [year, _MIN_BBE_SCATTER],
+        ).fetchall()
+        if len(rows) < 20:
+            logger.debug("power_cluster: too few qualified hitters (%d)", len(rows))
+            return []
+
+        roster = padre_ids_roster(conn, min(year, as_of.year))
+        if not roster:
+            roster = _padre_ids(conn, min(year, as_of.year))
+
+        data_rows: list[list[str | int | float | None]] = []
+        highlights: list[Mark] = []
+        padres: list[tuple[str, float, float]] = []
+        for pid, raw_name, ev, brl in rows:
+            name = _fmt_name(str(raw_name))
+            data_rows.append([name, round(float(ev), 1), round(float(brl), 1)])
+            if pid in roster:
+                # Label by surname to keep the plot legible
+                surname = name.split()[-1] if name.split() else name
+                highlights.append(Mark(row_index=len(data_rows) - 1, label=surname, note=None))
+                padres.append((name, float(ev), float(brl)))
+
+        if not padres:
+            logger.debug("power_cluster: no Padres in qualified set for year=%d", year)
+            return []
+
+        # Lead Padre = highest barrel rate (rows are barrel-sorted, Padres preserve order)
+        lead_name, lead_ev, lead_brl = max(padres, key=lambda p: p[2])
+        league_ev = sum(r[1] for r in data_rows) / len(data_rows)  # type: ignore[misc]
+        headline = (
+            f"{lead_name} sits in the Padres' power cluster — {lead_brl:.1f}% barrels "
+            f"at {lead_ev:.1f} mph exit velo ({year}, vs {league_ev:.1f} MLB avg)"
+        )
+
+        dataset = ChartDataset(
+            title="THE POWER CLUSTER",
+            subtitle=f"{year} · Exit Velo vs Barrel% · Qualified MLB Hitters",
+            as_of=as_of,
+            columns=[
+                Column(key="player", label="Player", role="label"),
+                Column(key="exit_velo", label="Exit Velo", role="spatial_x", unit="mph"),
+                Column(key="barrel_pct", label="Barrel %", role="spatial_y", unit="%"),
+            ],
+            rows=data_rows,
+            highlight=highlights,
+            framing=headline,
+            source="Baseball Savant",
+            headline=headline,
+            claim_scope="since_2015",
+            population_label=f"Qualified MLB hitters, {year}",
+            n=len(data_rows),
+            card_hint="scatter",
+            facts={
+                "lead_player": lead_name,
+                "lead_exit_velo": round(lead_ev, 1),
+                "lead_barrel_pct": round(lead_brl, 1),
+                "league_avg_exit_velo": round(league_ev, 1),
+                "padres_count": len(padres),
+                "metric_year": year,
+            },
+        )
+
+        rarity = min(0.80 + lead_brl / 100.0, 0.97)
+        score, components = novelty_score(
+            {
+                "rarity": rarity,
+                "magnitude": min(lead_brl / 25.0, 0.95),
+                "timeliness": 0.80,
+                "rootability": 0.88,
+                "legibility": 0.85,
+            },
+            detector=self.name,
+        )
+        cid = make_candidate_id(
+            self.name, f"SDP|power_cluster|{year}", dataset.model_dump(mode="json")
+        )
+
+        return [
+            StatCandidate(
+                candidate_id=cid,
+                detector=self.name,
+                subject=f"SDP|power_cluster|{year}",
+                as_of=as_of,
+                category="season",
+                payload_kind="dataset",
+                facts_json=dataset.model_dump(mode="json"),
+                provenance_json=[
+                    {"source_table": "statcast_batter_exitvelo_barrels", "as_of": str(as_of)}
+                ],
+                coverage_window=f"{year}-{year}",
+                claim_scope="since_2015",
+                novelty_score=score,
+                novelty_components=components,
+            )
+        ]
+
+
 # ── Registration ──────────────────────────────────────────────────────────────
 
 register(StatcastProfileDetector())
-register(XStatsUnluckyDetector())
+# XStatsUnluckyDetector retired: the scan engine's "DUE FOR A BREAKOUT" leaderboard
+# (registry metric xwoba_gap) now owns the xwOBA-luck story with honest regression
+# framing. Keeping the class for reference; no longer registered (avoids duplicate
+# Cronenworth cards the fan panel flagged).
 register(SprintSpeedDetector())
 register(BarrelRateDetector())
+register(PowerClusterDetector())

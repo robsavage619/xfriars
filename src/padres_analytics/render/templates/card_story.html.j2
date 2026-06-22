@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
+
+.card { width: 540px; height: 675px; display: flex; flex-direction: column; background: {{ paper }}; font-family: "Space Grotesk", sans-serif; color: {{ ink }}; }
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header { padding: 20px 30px 0; display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0; }
+.kicker { font-weight: 600; font-size: 11px; color: {{ brown_dim }}; letter-spacing: 0.22em; text-transform: uppercase; }
+.title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 46px; line-height: 0.92; color: {{ ink }}; letter-spacing: 0.01em; text-transform: uppercase; margin-top: 3px; }
+.subtitle { font-size: 11px; color: {{ text_muted }}; margin-top: 5px; letter-spacing: 0.1em; text-transform: uppercase; }
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; margin-left: 14px; }
+.logo-img { height: 22px; width: auto; }
+.as-of { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.hero { display: flex; align-items: center; gap: 14px; padding: 14px 30px 12px; flex-shrink: 0; }
+.hero-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 72px; line-height: 0.8; color: {{ ink }}; font-variant-numeric: tabular-nums; }
+.hero-label { font-weight: 700; font-size: 14px; color: {{ ink_soft }}; letter-spacing: 0.18em; text-transform: uppercase; }
+.hero-context { font-size: 13px; color: {{ text_muted }}; margin-top: 3px; }
+
+.blocks { flex: 1; padding: 0 30px; display: flex; flex-direction: column; }
+.block { display: flex; align-items: center; gap: 13px; padding: 9px 0; border-top: 1px solid {{ hairline }}; }
+.hs { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; object-position: center 18%; border: 1px solid rgba(28,23,20,0.18); background: {{ paper_panel }}; flex-shrink: 0; }
+.bmid { flex: 1; min-width: 0; }
+.bname { font-weight: 700; font-size: 16px; color: {{ ink }}; }
+.bnote { font-size: 11.5px; color: {{ text_muted }}; margin-bottom: 6px; }
+.bar { height: 7px; background: rgba(28,23,20,0.08); border-radius: 4px; position: relative; }
+.barfill { height: 100%; border-radius: 4px; }
+.bardot { position: absolute; top: 50%; width: 11px; height: 11px; border-radius: 50%; transform: translate(-50%, -50%); border: 1.5px solid {{ paper }}; }
+.bright { text-align: right; flex-shrink: 0; width: 60px; }
+.bval { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 28px; line-height: 0.9; font-variant-numeric: tabular-nums; }
+.bmetric { font-size: 9px; color: {{ text_muted }}; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 1px; }
+
+.narrative { padding: 10px 30px 4px; font-size: 13.5px; line-height: 1.35; color: {{ ink_soft }}; flex-shrink: 0; }
+
+.footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 30px 16px; border-top: 1px solid {{ hairline }}; flex-shrink: 0; margin-top: 6px; }
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.12em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+{% set tone = {"good": gold, "bad": slate, "neutral": brown_dim} %}
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">{{ kicker }}</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  {% if hero %}
+  <div class="hero">
+    <span class="hero-value">{{ hero.value }}</span>
+    <div>
+      <div class="hero-label">{{ hero.label }}</div>
+      {% if hero.context %}<div class="hero-context">{{ hero.context }}</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="blocks">
+    {% for b in blocks %}
+    {% set c = tone[b.tone] %}
+    <div class="block">
+      {% if b.photo %}<img class="hs" src="file://{{ b.photo }}" alt="">{% else %}<div class="hs"></div>{% endif %}
+      <div class="bmid">
+        <div class="bname">{{ b.label }}</div>
+        {% if b.note %}<div class="bnote">{{ b.note }}</div>{% endif %}
+        {% if b.percentile is not none %}
+        <div class="bar">
+          <div class="barfill" style="width: {{ b.percentile }}%; background: {{ c }};"></div>
+          <div class="bardot" style="left: {{ b.percentile }}%; background: {{ c }};"></div>
+        </div>
+        {% endif %}
+      </div>
+      <div class="bright">
+        <div class="bval" style="color: {{ c }};">{{ b.value }}</div>
+        <div class="bmetric">{{ b.metric }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if narrative %}<div class="narrative">{{ narrative }}</div>{% endif %}
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+  </div>
+</div>
+</body>
+</html>

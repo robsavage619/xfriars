@@ -44,6 +44,10 @@ def verify_path_b(
     A draft flagged single_source=True because there is no second independent
     source to cross-check against (Path A requires two sources — Phase 2+).
 
+    Dataset-kind candidates (payload_kind == "dataset") emit structural provenance
+    (table + metric_id + lens) rather than raw SQL strings, so ``sql`` is not
+    required for those entries.
+
     Args:
         conn: A read-only connection to padres.db with hist attached.
         candidate_id: For logging.
@@ -61,14 +65,28 @@ def verify_path_b(
     # Sanity-range assertions — format-level checks that don't require re-query
     _sanity_check_facts(facts_json, checks)
 
-    # Provenance completeness: every entry must have required fields
+    # Dataset and spatial payloads carry structural provenance (source_table +
+    # metric), not raw SQL strings; only legacy TablePayload provenance needs sql.
+    is_structural = facts_json.get("kind") in ("dataset", "spatial")
+
+    # Provenance completeness: every entry must have source_table and as_of.
+    required_always = ("source_table", "as_of")
+    required_legacy = ("sql",)
+
     for i, prov in enumerate(provenance_json):
-        for required_key in ("source_table", "sql", "as_of"):
-            if required_key not in prov:
+        for key in required_always:
+            if key not in prov:
                 raise VerificationError(
-                    f"Provenance entry {i} missing required key '{required_key}' "
+                    f"Provenance entry {i} missing required key '{key}' "
                     f"for candidate {candidate_id}"
                 )
+        if not is_structural:
+            for key in required_legacy:
+                if key not in prov:
+                    raise VerificationError(
+                        f"Provenance entry {i} missing required key '{key}' "
+                        f"for candidate {candidate_id}"
+                    )
         checks.append(
             f"provenance[{i}]: source_table={prov['source_table']}, as_of={prov['as_of']}"
         )
@@ -83,16 +101,28 @@ def verify_path_b(
     return result
 
 
+_MAX_DATASET_ROWS = 2000  # distribution backdrops carry the whole population
+
+
 def _sanity_check_facts(facts: dict, checks: list[str]) -> None:
     """Run sanity-range assertions on known fact keys.
 
+    Dispatches on ``facts["kind"]``: a ChartDataset dump is validated structurally
+    (row/column alignment, per-column domain ranges) and its nested ``facts``
+    scalars are range-checked; legacy TablePayload dumps keep their original checks.
+
     Args:
-        facts: The facts_json payload dict (may be a TablePayload dump).
+        facts: The facts_json payload dict (TablePayload or ChartDataset dump).
         checks: Mutable list to append check descriptions to.
 
     Raises:
         VerificationError: If any value is outside its expected range.
     """
+    if facts.get("kind") == "dataset":
+        _sanity_check_dataset(facts, checks)
+        _range_checks(facts.get("facts", {}) or {}, checks)
+        return
+
     # TablePayload sanity checks
     if "rows" in facts:
         rows = facts["rows"]
@@ -117,6 +147,68 @@ def _sanity_check_facts(facts: dict, checks: list[str]) -> None:
             raise VerificationError(f"wins ({wins}) + losses ({losses}) > total_games ({total})")
         checks.append(f"W-L sanity OK ({wins}-{losses} in {total})")
 
+    _range_checks(facts, checks)
+
+
+def _sanity_check_dataset(facts: dict, checks: list[str]) -> None:
+    """Validate ChartDataset structure: row/column alignment and per-column domains.
+
+    Args:
+        facts: A ChartDataset dump (``kind == "dataset"``).
+        checks: Mutable list to append check descriptions to.
+
+    Raises:
+        VerificationError: On shape mismatch or out-of-domain values.
+    """
+    columns = facts.get("columns")
+    rows = facts.get("rows")
+    if not isinstance(columns, list) or not columns:
+        raise VerificationError("dataset facts_json.columns must be a non-empty list")
+    if not isinstance(rows, list):
+        raise VerificationError(f"dataset facts_json.rows must be a list, got {type(rows)}")
+    if len(rows) > _MAX_DATASET_ROWS:
+        raise VerificationError(
+            f"dataset facts_json.rows has {len(rows)} entries; max is {_MAX_DATASET_ROWS}"
+        )
+
+    n_cols = len(columns)
+    for i, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != n_cols:
+            raise VerificationError(
+                f"dataset row {i} has {len(row) if isinstance(row, list) else '?'} cells; "
+                f"expected {n_cols} to match columns"
+            )
+
+    # Per-column domain bounds, when declared
+    for col_idx, col in enumerate(columns):
+        domain = col.get("domain")
+        if not domain:
+            continue
+        lo, hi = float(domain[0]), float(domain[1])
+        for row in rows:
+            cell = row[col_idx]
+            if cell is None or isinstance(cell, str):
+                continue
+            val = float(cell)
+            if not (lo <= val <= hi):
+                raise VerificationError(
+                    f"dataset column {col.get('key', col_idx)!r} value {val} "
+                    f"outside declared domain [{lo}, {hi}]"
+                )
+    checks.append(f"dataset shape OK ({len(rows)} rows x {n_cols} cols)")
+
+
+def _range_checks(facts: dict, checks: list[str]) -> None:
+    """Range-check known scalar stat keys in a flat dict.
+
+    Args:
+        facts: A flat dict of scalar facts (top-level table dump, or a dataset's
+            nested ``facts``).
+        checks: Mutable list to append check descriptions to.
+
+    Raises:
+        VerificationError: If any value is outside its expected range.
+    """
     # Batting average range
     for key in ("batting_avg", "avg", "ba"):
         if key in facts:
@@ -167,10 +259,12 @@ def verify_path_a(
     Raises:
         VerificationError: On value mismatch exceeding tolerance.
     """
-    stat_type = facts_json.get("stat_type")
-    season = facts_json.get("season")
-    padre_rank = facts_json.get("padre_rank")
-    padre_value_raw = facts_json.get("padre_value_raw")
+    # Dataset payloads nest the cross-check keys under "facts"; tables keep them flat.
+    src = facts_json.get("facts", facts_json) if facts_json.get("kind") == "dataset" else facts_json
+    stat_type = src.get("stat_type")
+    season = src.get("season")
+    padre_rank = src.get("padre_rank")
+    padre_value_raw = src.get("padre_value_raw")
 
     if not (stat_type and season and padre_rank is not None and padre_value_raw is not None):
         # Not a leaderboard candidate — fall back to Path B
@@ -230,6 +324,64 @@ def verify_path_a(
         "single_source": False,
         "detail": detail,
     }
+
+
+def check_scope_upgrade(framing: str, caption: str) -> list[str]:
+    """Detect scope upgrades: caption claiming broader scope than engine-selected framing.
+
+    The engine selects the strongest *provably true* scope tier and writes it into
+    ChartDataset.framing. The caption-writer (LLM) may use it verbatim but must never
+    promote the claim to a broader scope — e.g. turning "Statcast era" into "ever" or
+    "franchise history" into "MLB history."
+
+    Args:
+        framing: Engine-selected framing string from ChartDataset.framing.
+        caption: LLM-written tweet caption.
+
+    Returns:
+        List of violation descriptions. Empty list means no scope upgrade detected.
+    """
+    framing_lower = framing.lower()
+    caption_lower = caption.lower()
+
+    # Pairs: (framing indicator, forbidden caption phrases)
+    scope_rules: list[tuple[list[str], list[str]]] = [
+        # If framing is scoped to a single season, caption must not claim franchise or wider
+        (
+            ["this season", "current season", "season_best"],
+            [
+                "franchise",
+                "all-time",
+                "all time",
+                "ever",
+                "in history",
+                "statcast era",
+                "since 2015",
+            ],
+        ),
+        # If framing is Statcast-era scoped, caption must not claim all-time / franchise history
+        (
+            ["statcast era", "since 2015", "since_2015"],
+            ["all-time", "all time", "ever", "in history", "in franchise history"],
+        ),
+        # If framing is franchise scoped, caption must not claim MLB-wide all-time
+        (
+            ["franchise record", "franchise history", "best padre"],
+            ["all-time in mlb", "mlb history", "ever in major league", "ever in baseball history"],
+        ),
+    ]
+
+    violations: list[str] = []
+    for scope_markers, forbidden_phrases in scope_rules:
+        if not any(m in framing_lower for m in scope_markers):
+            continue
+        for phrase in forbidden_phrases:
+            if phrase in caption_lower:
+                marker_hit = next(m for m in scope_markers if m in framing_lower)
+                violations.append(
+                    f"Scope upgrade: caption uses '{phrase}' but framing scope is '{marker_hit}'"
+                )
+    return violations
 
 
 def digit_audit(text: str, facts_json: dict | str) -> list[str]:

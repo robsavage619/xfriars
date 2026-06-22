@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face { font-family: "Space Grotesk"; src: url("file://{{ space_grotesk_ttf }}") format("truetype"); font-weight: 100 900; }
+@font-face { font-family: "Big Shoulders Display"; src: url("file://{{ big_shoulders_ttf }}") format("truetype"); font-weight: 400 900; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1040px; height: 560px; overflow: hidden; background: {{ paper }}; font-family: "Space Grotesk", sans-serif; }
+#fig { width: 1040px; height: 560px; }
+.bar-label { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="fig"></div>
+<div id="chart-ready" style="display:none"></div>
+<script>
+(function () {
+  const S = {{ spec | safe }};
+  const W = 1040, H = 560;
+  const m = { t: 28, r: 36, b: 78, l: 78 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+  const labels = S.x.map(String);
+  const vals = S.y.map(Number);
+  const svg = d3.select("#fig").append("svg").attr("width", W).attr("height", H);
+  const g = svg.append("g").attr("transform", `translate(${m.l},${m.t})`);
+
+  const x = d3.scaleBand().domain(labels).range([0, iw]).padding(0.32);
+  const ymax = d3.max(vals);
+  const ymin = Math.min(0, d3.min(vals));
+  const y = d3.scaleLinear().domain([ymin, ymax * 1.12]).nice().range([ih, 0]);
+
+  // y gridlines + ticks
+  y.ticks(5).forEach(t => {
+    g.append("line").attr("x1", 0).attr("x2", iw).attr("y1", y(t)).attr("y2", y(t))
+      .attr("stroke", "{{ hairline }}").attr("stroke-width", 1);
+    g.append("text").attr("x", -12).attr("y", y(t) + 4).attr("text-anchor", "end")
+      .attr("font-size", 14).attr("fill", "{{ text_muted }}").attr("font-variant-numeric", "tabular-nums")
+      .text(d3.format("~g")(t));
+  });
+
+  // baseline at y=0
+  g.append("line").attr("x1", 0).attr("x2", iw).attr("y1", y(0)).attr("y2", y(0))
+    .attr("stroke", "{{ ink_soft }}").attr("stroke-width", 1.2);
+
+  // bars
+  g.selectAll(".bar").data(labels).enter().append("rect")
+    .attr("x", d => x(d)).attr("width", x.bandwidth())
+    .attr("y", (d, i) => Math.min(y(vals[i]), y(0)))
+    .attr("height", (d, i) => Math.abs(y(vals[i]) - y(0)))
+    .attr("rx", 5)
+    .attr("fill", d => d === S.highlight ? "{{ hot }}" : "{{ brown }}");
+
+  // value labels
+  g.selectAll(".vlab").data(labels).enter().append("text")
+    .attr("class", "bar-label")
+    .attr("x", d => x(d) + x.bandwidth() / 2)
+    .attr("y", (d, i) => (vals[i] >= 0 ? y(vals[i]) - 10 : y(vals[i]) + 22))
+    .attr("text-anchor", "middle").attr("font-size", 22)
+    .attr("fill", d => d === S.highlight ? "{{ hot }}" : "{{ ink }}")
+    .text((d, i) => d3.format("~g")(vals[i]));
+
+  // x labels
+  const rotate = labels.length > 6;
+  g.selectAll(".xlab").data(labels).enter().append("text")
+    .attr("transform", d => rotate
+      ? `translate(${x(d) + x.bandwidth() / 2}, ${ih + 18}) rotate(28)`
+      : `translate(${x(d) + x.bandwidth() / 2}, ${ih + 26})`)
+    .attr("text-anchor", rotate ? "start" : "middle")
+    .attr("font-size", 16).attr("font-weight", 600)
+    .attr("fill", d => d === S.highlight ? "{{ ink }}" : "{{ ink_soft }}")
+    .text(d => d);
+
+  if (S.y_label) {
+    svg.append("text").attr("transform", `translate(20, ${m.t + ih / 2}) rotate(-90)`)
+      .attr("text-anchor", "middle").attr("font-size", 14).attr("letter-spacing", "0.12em")
+      .attr("text-transform", "uppercase").attr("fill", "{{ brown_dim }}").text(S.y_label.toUpperCase());
+  }
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>
