@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from padres_analytics.config import CARDS_DIR, DUCKDB_PATH
-from padres_analytics.detect.candidates import TablePayload
+from padres_analytics.detect.candidates import ChartDataset, SpatialDataset, TablePayload
 from padres_analytics.render.cards import RenderError, render
 from padres_analytics.render.mlb_assets import (
     BREF_TO_MLBAM,
@@ -172,10 +172,15 @@ def list_candidates(status: str = "new") -> list[dict[str, Any]]:
 
 
 @app.post("/api/candidates/{candidate_id}/render")
-async def render_candidate_card(candidate_id: str, visual: str = "table") -> dict[str, str]:
+async def render_candidate_card(
+    candidate_id: str, visual: str = "table", card: str | None = None
+) -> dict[str, str]:
     """Render a card PNG for a candidate (idempotent — overwrites existing).
 
-    Query param ``visual``: "table" (default) or "bars".
+    Query params:
+        visual: legacy TablePayload card type — "table" (default) or "bars".
+        card: ChartDataset card-type override; defaults to the data-shape selector.
+
     Playwright runs in a thread pool to avoid greenlet conflicts.
     """
     import asyncio
@@ -195,15 +200,77 @@ async def render_candidate_card(candidate_id: str, visual: str = "table") -> dic
     facts_raw, payload_kind = row
     facts: dict[str, Any] = json.loads(facts_raw) if isinstance(facts_raw, str) else facts_raw
 
-    if payload_kind != "table":
-        raise HTTPException(status_code=422, detail=f"Cannot render payload_kind={payload_kind!r}")
-
     try:
-        payload = TablePayload.model_validate(facts)
-        card_path = await asyncio.to_thread(render, payload, CARDS_DIR, candidate_id, visual)
-        return {"card_path": str(card_path), "visual": visual}
+        if payload_kind == "dataset":
+            dataset = ChartDataset.model_validate(facts)
+            card_path = await asyncio.to_thread(
+                render, dataset, CARDS_DIR, candidate_id, "table", card
+            )
+            return {"card_path": str(card_path), "visual": card or "auto"}
+        if payload_kind == "table":
+            payload = TablePayload.model_validate(facts)
+            card_path = await asyncio.to_thread(render, payload, CARDS_DIR, candidate_id, visual)
+            return {"card_path": str(card_path), "visual": visual}
+        if payload_kind == "spatial":
+            spatial = SpatialDataset.model_validate(facts)
+            card_path = await asyncio.to_thread(render, spatial, CARDS_DIR, candidate_id)
+            return {"card_path": str(card_path), "visual": spatial.card}
+        raise HTTPException(status_code=422, detail=f"Cannot render payload_kind={payload_kind!r}")
     except RenderError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ── Spatial card picker ──────────────────────────────────────────────────────
+
+
+@app.get("/api/spatial/cards")
+def list_spatial_cards() -> list[str]:
+    """List the spatial card types the picker can render."""
+    from padres_analytics.detect.spatial import SPATIAL_BUILDERS
+
+    return sorted(SPATIAL_BUILDERS)
+
+
+@app.post("/api/spatial/render")
+async def render_spatial_preview(card: str, player: int, season: int) -> dict[str, Any]:
+    """Build and render a spatial card for a player/season (idempotent preview)."""
+    import asyncio
+
+    from padres_analytics.detect.spatial import SPATIAL_BUILDERS, build_spatial
+
+    if card not in SPATIAL_BUILDERS:
+        raise HTTPException(status_code=422, detail=f"Unknown card {card!r}")
+
+    conn = _ro()
+    try:
+        dataset = build_spatial(conn, card, player, season)
+    finally:
+        conn.close()
+
+    if dataset is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No data to build a {card!r} card for player {player}, season {season}. "
+                f"Ingest the source events first."
+            ),
+        )
+
+    card_id = f"spatial_{card}_{player}_{season}"
+    try:
+        await asyncio.to_thread(render, dataset, CARDS_DIR, card_id)
+    except RenderError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"card": card, "player": player, "season": season, "n": dataset.n, "id": card_id}
+
+
+@app.get("/api/spatial/{card}/{player}/{season}/card.png", response_class=FileResponse)
+def get_spatial_preview(card: str, player: int, season: int) -> FileResponse:
+    """Serve a rendered spatial preview PNG."""
+    card_path = CARDS_DIR / f"spatial_{card}_{player}_{season}.png"
+    if not card_path.exists():
+        raise HTTPException(status_code=404, detail="Not rendered yet. POST /api/spatial/render.")
+    return FileResponse(str(card_path), media_type="image/png")
 
 
 @app.get("/api/candidates/{candidate_id}/card.png", response_class=FileResponse)
@@ -516,6 +583,179 @@ def explorer_view(view_name: str) -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+# ── The Board ──────────────────────────────────────────────────────────────────
+#
+# The surface where Claude-generated cards land. The app only reads the board and
+# flips statuses; the Sync/Scout actions kick the engine. No analysis lives here.
+
+
+@app.get("/api/board")
+def get_board() -> dict[str, Any]:
+    """The whole board — cards (newest first) and leads (strongest first)."""
+    from padres_analytics.board import list_cards, list_leads
+
+    conn = _ro()
+    try:
+        cards = [_board_card(c) for c in list_cards(conn)]
+        leads = [_board_lead(land) for land in list_leads(conn)]
+    finally:
+        conn.close()
+    return {"cards": cards, "leads": leads}
+
+
+def _board_card(c: dict[str, Any]) -> dict[str, Any]:
+    """Shape a board_cards row for the frontend (image presence, ISO timestamp)."""
+    image_path = c.get("image_path")
+    return {
+        "card_id": c["card_id"],
+        "kind": c["kind"],
+        "subject": c["subject"],
+        "title": c["title"],
+        "headline": c["headline"],
+        "rank_note": c["rank_note"],
+        "confidence": c["confidence"],
+        "reconciled": bool(c["reconciled"]),
+        "source": c["source"],
+        "caption": c["caption"],
+        "status": c["status"],
+        "created_at": str(c["created_at"]),
+        "has_image": bool(image_path and Path(image_path).exists()),
+    }
+
+
+def _board_lead(land: dict[str, Any]) -> dict[str, Any]:
+    """Shape a board_leads row for the frontend."""
+    return {
+        "lead_id": land["lead_id"],
+        "subject": land["subject"],
+        "kind": land["kind"],
+        "headline": land["headline"],
+        "explore": land["explore"],
+        "interest": round(land["interest"], 3),
+        "status": land["status"],
+        "created_at": str(land["created_at"]),
+    }
+
+
+@app.get("/api/board/cards/{card_id}/image.png", response_class=FileResponse)
+def get_board_card_image(card_id: str) -> FileResponse:
+    """Serve a board card's rendered PNG."""
+    conn = _ro()
+    try:
+        row = conn.execute(
+            "SELECT image_path FROM board_cards WHERE card_id = ?", [card_id]
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+    path = Path(row[0])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Card image missing on disk")
+    return FileResponse(str(path), media_type="image/png")
+
+
+class StatusUpdate(BaseModel):
+    """Request body for flipping a board card/lead status."""
+
+    status: str
+
+
+@app.post("/api/board/cards/{card_id}/status")
+def update_board_card_status(card_id: str, body: StatusUpdate) -> dict[str, str]:
+    """Flip a card's status (new/queued/dismissed)."""
+    from padres_analytics.board import set_card_status
+
+    conn = _rw()
+    try:
+        if not set_card_status(conn, card_id, body.status):
+            raise HTTPException(status_code=422, detail=f"Unknown status {body.status!r}")
+    finally:
+        conn.close()
+    return {"card_id": card_id, "status": body.status}
+
+
+@app.post("/api/board/leads/{lead_id}/status")
+def update_board_lead_status(lead_id: str, body: StatusUpdate) -> dict[str, str]:
+    """Flip a lead's status (new/exploring/dismissed)."""
+    from padres_analytics.board import set_lead_status
+
+    conn = _rw()
+    try:
+        if not set_lead_status(conn, lead_id, body.status):
+            raise HTTPException(status_code=422, detail=f"Unknown status {body.status!r}")
+    finally:
+        conn.close()
+    return {"lead_id": lead_id, "status": body.status}
+
+
+# ── Actions — kick the engine from the app ──────────────────────────────────────
+#
+# Sync is a network-bound team pull; it runs on a background thread with a small
+# in-memory status the frontend can poll. Scout is DB-only and fast, so it runs
+# inline and returns the refreshed leads.
+
+_SYNC_STATE: dict[str, Any] = {"running": False, "season": None, "steps": [], "finished_at": None}
+
+
+def _run_sync_job(season: int) -> None:
+    """Background worker: refresh the DB and record per-step results in _SYNC_STATE."""
+    from padres_analytics.ingest.sync import run_sync
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    try:
+        with connect() as conn:
+            initialize(conn)
+            results = run_sync(conn, season)
+        _SYNC_STATE["steps"] = [{"name": r.name, "ok": r.ok, "detail": r.detail} for r in results]
+    except Exception as exc:
+        logger.exception("sync job failed")
+        _SYNC_STATE["steps"] = [{"name": "sync", "ok": False, "detail": str(exc)}]
+    finally:
+        _SYNC_STATE["running"] = False
+
+
+@app.post("/api/actions/sync")
+def action_sync(season: int = 0) -> dict[str, Any]:
+    """Start a DB refresh on a background thread. Poll /api/actions/sync for status."""
+    import datetime as _dt
+    import threading
+
+    if _SYNC_STATE["running"]:
+        return {"started": False, "running": True}
+    yr = season or _dt.datetime.now(_dt.UTC).astimezone().year
+    _SYNC_STATE.update(running=True, season=yr, steps=[], finished_at=None)
+    threading.Thread(target=_run_sync_job, args=(yr,), daemon=True).start()
+    return {"started": True, "running": True, "season": yr}
+
+
+@app.get("/api/actions/sync")
+def action_sync_status() -> dict[str, Any]:
+    """Current/last sync status for the Sync button's progress."""
+    return dict(_SYNC_STATE)
+
+
+@app.post("/api/actions/scout")
+def action_scout(season: int = 0) -> dict[str, Any]:
+    """Run the scout, refresh the board's Leads lane, and return the new leads."""
+    import datetime as _dt
+
+    from padres_analytics.board import add_leads, list_leads
+    from padres_analytics.detect.leads import scout
+
+    today = _dt.datetime.now(_dt.UTC).astimezone().date()
+    yr = season or today.year
+    conn = _rw()
+    try:
+        leads = scout(conn, yr, as_of=today)
+        n = add_leads(conn, leads)
+        refreshed = [_board_lead(land) for land in list_leads(conn)]
+    finally:
+        conn.close()
+    return {"written": n, "leads": refreshed}
 
 
 # ── Static files (built React app) ────────────────────────────────────────────

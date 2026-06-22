@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 540px;
+  height: 675px;
+  overflow: hidden;
+  background: {{ paper }};
+}
+
+.card {
+  width: 540px;
+  height: 675px;
+  display: flex;
+  flex-direction: column;
+  background: {{ paper }};
+  font-family: "Space Grotesk", sans-serif;
+  color: {{ ink }};
+}
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.header {
+  padding: 26px 34px 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.kicker {
+  font-weight: 600;
+  font-size: 13px;
+  color: {{ brown_dim }};
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+}
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.logo-img { height: 24px; width: auto; }
+.as-of {
+  font-size: 11px;
+  color: {{ text_muted }};
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Body ───────────────────────────────────────────────────────────── */
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+  text-align: center;
+}
+.headshot {
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(28, 23, 20, 0.18);
+  margin-bottom: 20px;
+  background: {{ paper_panel }};
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 800;
+  font-size: 42px;
+  line-height: 0.96;
+  color: {{ ink }};
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+.subtitle {
+  font-size: 13px;
+  color: {{ text_muted }};
+  margin-top: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.hero-value {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 900;
+  font-size: 176px;
+  line-height: 0.84;
+  color: {{ ink }};
+  letter-spacing: -0.01em;
+  margin: 22px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.accent-rule { width: 44px; height: 4px; background: {{ gold }}; margin: 16px 0 14px; }
+.hero-label {
+  font-weight: 600;
+  font-size: 15px;
+  color: {{ ink_soft }};
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.hero-context {
+  font-size: 15px;
+  color: {{ text_muted }};
+  margin-top: 6px;
+  letter-spacing: 0.02em;
+}
+.framing {
+  margin-top: 24px;
+  padding: 9px 20px;
+  border: 1px solid rgba(28, 23, 20, 0.18);
+  font-weight: 600;
+  font-size: 14px;
+  color: {{ ink_soft }};
+  letter-spacing: 0.03em;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 34px 24px;
+  border-top: 1px solid {{ hairline }};
+  flex-shrink: 0;
+}
+.source {
+  font-size: 11px;
+  color: {{ text_muted }};
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.handle {
+  font-size: 16px;
+  font-weight: 700;
+  color: {{ brown }};
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.tagline {
+  font-size: 10px;
+  color: {{ text_muted }};
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="kicker">San Diego Padres</div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="body">
+    {% if hero and hero.photo %}<img class="headshot" src="file://{{ hero.photo }}" alt="">{% endif %}
+    <div class="title">{{ title }}</div>
+    {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    {% if hero %}
+      <div class="hero-value">{{ hero.value }}</div>
+      <div class="accent-rule"></div>
+      {% if hero.label %}<div class="hero-label">{{ hero.label }}</div>{% endif %}
+      {% if hero.context %}<div class="hero-context">{{ hero.context }}</div>{% endif %}
+    {% endif %}
+    {% if framing %}<div class="framing">{{ framing }}</div>{% endif %}
+  </div>
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+  </div>
+
+</div>
+</body>
+</html>

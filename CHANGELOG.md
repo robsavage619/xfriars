@@ -2,6 +2,88 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — Live path, story infographics, spatial cards, scout → deep dive → Board
+
+### Added — In-game (live) path
+- **`live.py` + `pad live now`** — GUMBO feed client: pulls the current Padres game from the MLB live feed and emits pitch-level reads (unofficial, read-only).
+- **`ingest/live_poll.py` + `ingest/live_serve.py`** — live poller and `pad live serve` daemon; `pad live watch` streams updates as they land.
+- **`live_ask.py` + `pad live ask`** — plain-language question intent over the in-game feed (matchup / RISP / count-state reads).
+- **`live_moments.py`** — gated, ranked in-game moment detector (not a fixed template): only moments that clear the significance gate surface a card.
+- **`live_card.py` + `pad live card`** — analytical live pitcher card: CSW% hero, whiff-colored pitch mix, velo trend, player headshot; team-correct and legible to casual fans.
+- `storage/schemas.py` — `live_pitches` table; schema bumped through v10.
+
+### Added — Story infographics (multi-module narrative cards)
+- **`detect/story.py`** + **`render/story_infographic.py`** + **`render/templates/card_story.html.j2`** — composed `StoryCard` image type: hero hook + player percentile panels + narrative, separating skill from luck across several lenses with every claim significance-gated.
+- **`pad story` / `pad discover`** — story-discovery engine: ranked, gated, audited infographics. Copy aligned to `VOICE.md` (FanGraphs-adjacent, fan lean).
+- **Number reconciliation** — rendered numbers are verified against source, not just displayed.
+
+### Added — Spatial visual library
+- Panel-spec'd geometry kit driving spatial cards: `pad spray` (HR spray), `pad arsenal`, `pad zone`, `pad release` (release-point / arm-slot deception), rolling-xwOBA, swing/take run-value, and bat-speed (bat-tracking) distribution cards.
+- Studio spatial-card picker (full-stack) + detector → spatial-card auto-mapping; spatial cards wired into the draft/render/verify pipeline.
+
+### Added — Scout → deep dive → Board
+- **`pad scout`** — shallow leads scout: surfaces flags (starting points for a deep dive), never stories. The lead is never posted on its own.
+- **`board.py`** — the Board: store + API where Claude-generated cards and scout leads land; Studio is the editorial-light gallery over it.
+- **Surprise + novelty ranking** — candidates rank by what is unusual *for the subject*, not by raw magnitude.
+
+### Added — Data-coverage preflight
+- **`storage/coverage.py` + `pad coverage`** — the engine knows its own stat coverage (season span, granularity, freshness, player coverage) before it detects, scouts, or tells a story; `can_support()` gates analysis on verified completeness.
+
+### Changed
+- **Player availability gate** — only available players are featured; injured / out-for-season bats are filtered on roster status.
+- CI: `gitleaks` runs on pre-push as well as pre-commit; `.github` CI / CODEOWNERS / dependabot config removed.
+
+---
+
+## [Unreleased] — P3: Conjunction + scope framing + milestone proximity
+
+### Added
+- **`detect/conjunction.py`** — conjunction layer with three capabilities:
+  - `evaluate_franchise_scope()` — queries Statcast history joined to bWAR to select the strongest provable franchise-scope framing tier: `franchise_record` > `first_since` > `statcast_era_best` > `season_best`.
+  - Named-anchor resolver — embedded inside scope evaluator; finds the most recent prior SDP player who held the feat, so framing renders "first Padre since [Name] ([Year])."
+  - `find_conjunctions()` — groups `_Hit` objects by player; players with 2+ distinct metrics firing yield a `ConjunctionGroup` whose `combined_rarity` is the geometric mean of individual rarities.
+- **`detect/lenses.py`** — `milestone_proximity_lens`: fires when a player is within 10% below a threshold milestone (e.g. barrel rate approaching 20% or 25%); rarity 0.80–0.95 scaled linearly by distance remaining.
+- **`detect/registry.py`** — `milestones: list[float]` field on `MetricSpec`; `milestone_proximity` lens dispatches over it.
+- **`detect/scanner.py`** — three additions after BH correction: milestone_proximity dispatch in `_run_metric`; scope-strengthening loop (franchise_record / first_since hits get +0.05 rarity boost); conjunction logging for multi-metric players.
+- **`tweets/verify.py`** — `check_scope_upgrade(framing, caption) -> list[str]`: detects scope upgrade by comparing engine-chosen framing tier keywords against forbidden caption phrases. Prevents "Statcast era" → "ever," "franchise record" → "MLB history," etc.
+- **`tweets/draft.py`** — step 3b in `ingest_draft`: calls `check_scope_upgrade` after digit audit; raises `DraftIngestError` on any violation.
+- **`examples/anchors.example.toml`** — milestone thresholds, Padres legend baselines (Gwynn, Hoffman, Gonzalez), and "more X than Y" anchor bank.
+- **`examples/metrics.example.toml`** — `milestone_proximity` lens + `milestones` added for `barrel_rate` ([20.0, 25.0]), `sprint_speed` ([30.0, 29.0]), `xwoba_gap` ([0.050]).
+- 15 new tests in `tests/test_conjunction.py` covering scope tiers, graceful fallback, conjunction grouping, milestone proximity, and scope-upgrade detection; 118 total passing.
+
+### Changed
+- **`tweets/verify.py`** `verify_path_b` — `sql` key is no longer required for `payload_kind == "dataset"` provenance entries. Dataset candidates emit structural provenance (table + metric_id + lens + as_of); only legacy `TablePayload` candidates still require raw SQL.
+
+---
+
+## [Unreleased] — P2: Generic scan engine
+
+### Added
+- **`detect/sql.py`** — shared DuckDB helpers extracted from `statcast.py`: `fmt_name`, `ordinal`, `resolve_table`, `max_year`, `padre_ids`, `padre_ids_latest`.
+- **`detect/registry.py`** — TOML metric registry loader: `MetricSpec`, `PopulationSpec`, `ScanConfig`; private override falls back to `examples/metrics.example.toml`.
+- **`detect/lenses.py`** — four statistical lenses: `extremeness_lens` (ECDF + empirical-Bayes shrinkage), `rank_lens` (top-quartile cap), `pace_lens` (milestone countdown from games played), `bh_surviving_indices` (Benjamini-Hochberg FDR correction).
+- **`detect/scanner.py`** — `GenericScanner` (`name="scan"`): iterates registry metrics, dispatches lenses, applies BH correction, builds `ChartDataset` candidates ranked by `novelty_score`.
+- **`examples/metrics.example.toml`** — three example metrics: `barrel_rate`, `sprint_speed`, `xwoba_gap`.
+- **`pad scan run`** CLI command — runs `GenericScanner` against live DuckDB; emits top-K candidates to `stat_candidates`.
+- Tests: `tests/test_lenses.py` (12 tests), `tests/test_registry.py` (7 tests); 103 total passing post-P2.
+
+### Changed
+- `detect/statcast.py` — local `_fmt_name`, `_ordinal`, `_tbl`, `_max_year`, `_padre_ids` removed; imports from `detect/sql.py` instead.
+
+---
+
+## [Unreleased] — P0+P1: ChartDataset + hero card + percentile slider
+
+### Added
+- **`detect/candidates.py`** — `Column`, `Mark`, `ChartDataset` (role-typed dataset payload), `SemanticRole`, `audit_corpus()`. `TablePayload` / `SeriesPayload` unchanged.
+- **`detect/scoring.py`** — `select_card(dataset)` data-shape selector: rank lens → bar/table, extremeness → hero card.
+- **`render/templates/hero_card.html.j2`** — hero / lower-third card: huge number + framing line + provenance chip. Portrait canvas 540×675 CSS px (1080×1350 @2×).
+- **`render/templates/slider_card.html.j2`** — Savant-style percentile slider (red→neutral→blue) for one-player multi-metric profiles.
+- `render/tokens.py` — portrait canvas dimensions (`CANVAS_W=540`, `CANVAS_H=675`).
+- `tests/test_chart_dataset.py` — digit-audit parity tests for `ChartDataset` vs `TablePayload`.
+
+---
+
 ## [Unreleased] — Phase 3: Statcast + brand polish
 
 ### Added

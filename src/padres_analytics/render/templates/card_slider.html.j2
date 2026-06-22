@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 540px;
+  height: 675px;
+  overflow: hidden;
+  background: {{ paper }};
+}
+
+.card {
+  width: 540px;
+  height: 675px;
+  display: flex;
+  flex-direction: column;
+  background: {{ paper }};
+  font-family: "Space Grotesk", sans-serif;
+  color: {{ ink }};
+}
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header {
+  padding: 24px 30px 16px;
+  border-bottom: 1px solid {{ hairline }};
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.header-left { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.headshot {
+  width: 76px; height: 76px; border-radius: 50%; object-fit: cover;
+  object-position: center 20%;
+  border: 1px solid rgba(28, 23, 20, 0.18);
+  background: {{ paper_panel }}; flex-shrink: 0;
+}
+.kicker {
+  font-weight: 600; font-size: 12px; color: {{ brown_dim }};
+  letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px;
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }};
+  letter-spacing: 0.01em; text-transform: uppercase;
+}
+.subtitle {
+  font-size: 12px; color: {{ text_muted }}; margin-top: 6px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 24px; width: auto; }
+.as-of {
+  font-size: 11px; color: {{ text_muted }};
+  letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums;
+}
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+.footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0;
+}
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      {% if photo %}<img class="headshot" src="file://{{ photo }}" alt="">{% endif %}
+      <div>
+        <div class="kicker">San Diego Padres · Statcast</div>
+        <div class="title">{{ title }}</div>
+        {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+      </div>
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  <div class="footer">
+    <span class="source">Source: {{ source }} · percentile vs MLB</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const DS    = {{ dataset | safe }};
+  const INK   = "{{ ink }}";
+  const TEXTS = "{{ text_muted }}";
+
+  // Resolve role columns: one dimension (metric label) + one measure (0-100 percentile)
+  const dimIdx = DS.columns.findIndex(c => c.role === "dimension");
+  const valIdx = DS.columns.findIndex(c => c.role === "measure");
+  const data = DS.rows.map(r => ({ label: String(r[dimIdx]), pct: +r[valIdx] }));
+
+  const ordinal = n => {
+    const i = Math.round(n);
+    if (i % 100 >= 11 && i % 100 <= 13) return i + "th";
+    return i + (["th","st","nd","rd","th","th","th","th","th","th"][i % 10]);
+  };
+
+  // Baseball Savant percentile ramp: cold blue (low) → neutral gray → hot red (elite).
+  // Percentiles already encode good-direction, so high percentile = red regardless of stat.
+  const savant = d3.scaleLinear()
+    .domain([0, 50, 100])
+    .range(["#3b6bb5", "#9a9a9a", "#d22d49"])
+    .clamp(true);
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth  || 540;
+  const H = container.offsetHeight || 480;
+
+  const padL = 30, padR = 30, labelW = 150, valueW = 58;
+  const trackX = padL + labelW;
+  const trackW = W - trackX - valueW - padR;
+
+  const n = data.length;
+  const rowH = Math.floor(H / n);
+  const dotR = Math.min(11, Math.floor(rowH * 0.30));
+
+  const x = d3.scaleLinear().domain([0, 100]).range([trackX, trackX + trackW]);
+
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+
+  const rows = svg.selectAll(".row").data(data).join("g")
+    .attr("transform", (d, i) => `translate(0, ${i * rowH})`);
+
+  const cy = rowH / 2;
+
+  // Metric label
+  rows.append("text")
+    .attr("x", padL).attr("y", cy).attr("dy", "0.35em")
+    .attr("font-family", "Space Grotesk, sans-serif")
+    .attr("font-size", 13).attr("font-weight", 600)
+    .attr("fill", INK)
+    .attr("letter-spacing", "0.04em")
+    .text(d => d.label);
+
+  // Track background
+  rows.append("rect")
+    .attr("x", trackX).attr("y", cy - 4).attr("width", trackW).attr("height", 8)
+    .attr("rx", 4).attr("fill", "rgba(28,23,20,0.08)");
+
+  // 50th-percentile (league average) tick
+  rows.append("line")
+    .attr("x1", x(50)).attr("x2", x(50)).attr("y1", cy - 10).attr("y2", cy + 10)
+    .attr("stroke", "rgba(28,23,20,0.22)").attr("stroke-width", 1).attr("stroke-dasharray", "2 2");
+
+  // Filled portion — colored by Savant percentile ramp
+  rows.append("rect")
+    .attr("x", trackX).attr("y", cy - 4)
+    .attr("width", d => Math.max(x(d.pct) - trackX, 2)).attr("height", 8)
+    .attr("rx", 4).attr("fill", d => savant(d.pct)).attr("fill-opacity", 0.85);
+
+  // Thumb dot
+  rows.append("circle")
+    .attr("cx", d => x(d.pct)).attr("cy", cy).attr("r", dotR)
+    .attr("fill", d => savant(d.pct)).attr("stroke", "{{ paper }}").attr("stroke-width", 1.5);
+
+  // Percentile value
+  rows.append("text")
+    .attr("x", W - padR).attr("y", cy).attr("dy", "0.35em").attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk, sans-serif")
+    .attr("font-size", 15).attr("font-weight", 700).attr("fill", d => savant(d.pct))
+    .attr("font-variant-numeric", "tabular-nums")
+    .text(d => ordinal(d.pct));
+
+  // Hairline separators
+  rows.filter((d, i) => i < n - 1).append("line")
+    .attr("x1", padL).attr("x2", W - padR).attr("y1", rowH).attr("y2", rowH)
+    .attr("stroke", "rgba(28,23,20,0.08)").attr("stroke-width", 1);
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

@@ -1,8 +1,9 @@
-"""Card renderer — Jinja2 → Playwright for tables; matplotlib for series."""
+"""Card renderer — Jinja2 → Playwright for tables and role-typed datasets."""
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import tempfile
 from contextlib import contextmanager
@@ -11,31 +12,57 @@ from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from padres_analytics.detect.candidates import SeriesPayload, TablePayload
+from padres_analytics.detect.candidates import (
+    ChartDataset,
+    SeriesPayload,
+    SpatialDataset,
+    StoryCard,
+    TablePayload,
+)
+from padres_analytics.render.select import IMPLEMENTED_CARDS, select_card
 from padres_analytics.render.tokens import (
     BARLOW_BOLD_TTF,
     BARLOW_REGULAR_TTF,
     BARLOW_SEMIBOLD_TTF,
+    BASEBALL_JS,
     BEBAS_NEUE_TTF,
     BG_DEEP,
     BG_PANEL,
     BIG_SHOULDERS_TTF,
+    BROWN,
+    BROWN_DIM,
+    CARD_VIEWPORT_H,
+    CARD_VIEWPORT_W,
     D3_JS,
+    DENSITY_RAMP,
     DEVICE_SCALE,
     DM_SANS_TTF,
     GOLD,
     GOLD_DIM,
+    HAIRLINE,
     HIGHLIGHT_BG,
     HIGHLIGHT_EDGE,
+    HIT_FILL,
+    HOT,
+    HR_FILL,
+    INK,
+    INK_SOFT,
     INTER_TTF,
     NEGATIVE,
+    OUT_FILL,
+    PAPER,
+    PAPER_PANEL,
+    PLOT_JS,
     POSITIVE,
     ROW_ALT,
+    SLATE,
     SPACE_GROTESK_TTF,
+    TEXT_MUTED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     VIEWPORT_H,
     VIEWPORT_W,
+    XBH_FILL,
     XFRIARS_LOGO_PNG,
 )
 
@@ -139,10 +166,26 @@ def _bar_rows(payload: TablePayload) -> list[dict[str, str | float]]:
     return rows
 
 
-def _token_kwargs() -> dict[str, str]:
+def _token_kwargs() -> dict[str, object]:
     return {
         "bg_deep": BG_DEEP,
         "bg_panel": BG_PANEL,
+        "paper": PAPER,
+        "paper_panel": PAPER_PANEL,
+        "ink": INK,
+        "ink_soft": INK_SOFT,
+        "brown": BROWN,
+        "brown_dim": BROWN_DIM,
+        "hairline": HAIRLINE,
+        "hot": HOT,
+        "slate": SLATE,
+        "out_fill": OUT_FILL,
+        "hit_fill": HIT_FILL,
+        "xbh_fill": XBH_FILL,
+        "hr_fill": HR_FILL,
+        "density_ramp": list(DENSITY_RAMP),
+        "baseball_js": str(BASEBALL_JS),
+        "text_muted": TEXT_MUTED,
         "gold": GOLD,
         "gold_dim": GOLD_DIM,
         "text_primary": TEXT_PRIMARY,
@@ -158,6 +201,7 @@ def _token_kwargs() -> dict[str, str]:
         "barlow_bold_ttf": str(BARLOW_BOLD_TTF),
         "xfriars_logo": str(XFRIARS_LOGO_PNG),
         "d3_js": str(D3_JS),
+        "plot_js": str(PLOT_JS),
         "bebas_neue_ttf": str(BEBAS_NEUE_TTF),
         "dm_sans_ttf": str(DM_SANS_TTF),
         "big_shoulders_ttf": str(BIG_SHOULDERS_TTF),
@@ -204,6 +248,30 @@ def _render_table(
         **_token_kwargs(),
     )
 
+    _html_to_png(html, out_path, VIEWPORT_W, VIEWPORT_H)
+
+
+def html_to_png(html: str, out_path: Path, viewport_w: int, viewport_h: int) -> None:
+    """Public alias of :func:`_html_to_png` for reuse by other renderers."""
+    _html_to_png(html, out_path, viewport_w, viewport_h)
+
+
+def _html_to_png(html: str, out_path: Path, viewport_w: int, viewport_h: int) -> None:
+    """Screenshot a rendered HTML string to a PNG via headless Chromium.
+
+    The HTML is written to a temp file and loaded over ``file://`` so vendored
+    fonts/JS resolve. Templates using D3/Plot signal completion via the
+    ``#chart-ready`` sentinel; CSS-only cards simply have no sentinel.
+
+    Args:
+        html: Fully rendered HTML.
+        out_path: Destination PNG path.
+        viewport_w: CSS-pixel viewport width (PNG width = this x DEVICE_SCALE).
+        viewport_h: CSS-pixel viewport height.
+
+    Raises:
+        RenderError: On any Playwright failure.
+    """
     with tempfile.NamedTemporaryFile(
         suffix=".html", delete=False, mode="w", encoding="utf-8"
     ) as tmp:
@@ -213,11 +281,11 @@ def _render_table(
     try:
         with _get_browser() as browser:
             page = browser.new_page(
-                viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
+                viewport={"width": viewport_w, "height": viewport_h},
                 device_scale_factor=DEVICE_SCALE,
             )
             page.goto(f"file://{tmp_path}", wait_until="domcontentloaded")
-            # D3-rendered templates signal completion via #chart-ready sentinel
+            # D3/Plot-rendered templates signal completion via #chart-ready sentinel
             with contextlib.suppress(Exception):
                 page.wait_for_selector("#chart-ready", timeout=3000)
             page.screenshot(path=str(out_path), full_page=False)
@@ -230,21 +298,201 @@ def _render_table(
         Path(tmp_path).unlink(missing_ok=True)
 
 
+_CARD_TEMPLATES: dict[str, str] = {
+    "hero": "card_hero.html.j2",
+    "slider": "card_slider.html.j2",
+    "scatter": "card_scatter.html.j2",
+    "bar": "card_bar.html.j2",
+}
+
+# Spatial (event-level) cards — each carries the rigor harness. Grows per phase.
+_SPATIAL_TEMPLATES: dict[str, str] = {
+    "spray": "card_spray.html.j2",
+    "hr": "card_hr.html.j2",
+    "launch": "card_launch.html.j2",
+    "movement": "card_movement.html.j2",
+    "zone": "card_zone.html.j2",
+    "hotcold": "card_hotcold.html.j2",
+    "release": "card_release.html.j2",
+    "rolling": "card_rolling.html.j2",
+    "swingtake": "card_swingtake.html.j2",
+    "batspeed": "card_batspeed.html.j2",
+}
+
+
+_PLAYER_ID_KEYS = ("padre_player_id", "player_id", "subject_id")
+
+
+def _resolve_headshot(dataset: ChartDataset) -> str | None:
+    """Resolve an absolute headshot path from the dataset's audited player id.
+
+    Looks through the dataset's flat ``facts`` for a known player-id key and
+    downloads/caches the MLB headshot. Returns None when no id is present or the
+    fetch fails — the templates degrade gracefully to no photo.
+
+    Args:
+        dataset: The dataset being rendered.
+
+    Returns:
+        Absolute filesystem path to the headshot PNG, or None.
+    """
+    from padres_analytics.render.mlb_assets import player_photo_path
+
+    facts = dataset.facts or {}
+    for key in _PLAYER_ID_KEYS:
+        raw = facts.get(key)
+        if raw is None:
+            continue
+        try:
+            path = player_photo_path(int(raw))
+        except (ValueError, TypeError):
+            return None
+        return str(path) if path else None
+    return None
+
+
+def _render_dataset(
+    dataset: ChartDataset,
+    out_path: Path,
+    card: str | None = None,
+) -> str:
+    """Render a ChartDataset to a portrait PNG, picking the card from data shape.
+
+    Args:
+        dataset: The validated, role-typed dataset.
+        out_path: Destination PNG path.
+        card: Explicit card-type override; defaults to the selector's choice.
+
+    Returns:
+        The card type that was rendered.
+
+    Raises:
+        RenderError: If the chosen card has no template yet, or rendering fails.
+    """
+    chosen = card or select_card(dataset)
+    if chosen not in IMPLEMENTED_CARDS or chosen not in _CARD_TEMPLATES:
+        raise RenderError(
+            f"Card type {chosen!r} not renderable yet. "
+            f"Implemented: {', '.join(sorted(_CARD_TEMPLATES))}"
+        )
+
+    # Resolve the protagonist's headshot from the audited player id, if any.
+    photo = _resolve_headshot(dataset)
+    hero = dict(dataset.hero) if dataset.hero else None
+    if hero is not None and photo and not hero.get("photo"):
+        hero["photo"] = photo
+
+    template = _JINJA_ENV.get_template(_CARD_TEMPLATES[chosen])
+    html = template.render(
+        title=dataset.title,
+        subtitle=dataset.subtitle,
+        as_of=str(dataset.as_of),
+        source=dataset.source,
+        hero=hero,
+        photo=photo,
+        framing=dataset.framing,
+        population_label=dataset.population_label,
+        n=dataset.n,
+        dataset=json.dumps(dataset.model_dump(mode="json"), default=str),
+        **_token_kwargs(),
+    )
+
+    _html_to_png(html, out_path, CARD_VIEWPORT_W, CARD_VIEWPORT_H)
+    return chosen
+
+
+def _render_spatial(dataset: SpatialDataset, out_path: Path) -> str:
+    """Render a SpatialDataset (event-level card) to a portrait PNG.
+
+    The rigor harness (n/coverage/handedness/park) is required on the model, so a
+    card that cannot state its denominators never reaches this function.
+
+    Args:
+        dataset: The validated spatial dataset.
+        out_path: Destination PNG path.
+
+    Returns:
+        The card type rendered.
+
+    Raises:
+        RenderError: If the card type has no template yet, or rendering fails.
+    """
+    if dataset.card not in _SPATIAL_TEMPLATES:
+        raise RenderError(
+            f"Spatial card {dataset.card!r} not renderable yet. "
+            f"Implemented: {', '.join(sorted(_SPATIAL_TEMPLATES))}"
+        )
+
+    template = _JINJA_ENV.get_template(_SPATIAL_TEMPLATES[dataset.card])
+    points = json.dumps([p.model_dump(mode="json") for p in dataset.points], default=str)
+    html = template.render(
+        title=dataset.title,
+        subtitle=dataset.subtitle,
+        as_of=str(dataset.as_of),
+        hero=dataset.hero,
+        n=dataset.n,
+        coverage=dataset.coverage,
+        handedness=dataset.handedness,
+        park=dataset.park,
+        pov=dataset.pov,
+        note=dataset.note,
+        source=dataset.source,
+        points=points,
+        **_token_kwargs(),
+    )
+    _html_to_png(html, out_path, CARD_VIEWPORT_W, CARD_VIEWPORT_H)
+    return dataset.card
+
+
+def _render_story(card: StoryCard, out_path: Path) -> None:
+    """Render a StoryCard infographic to a portrait PNG, resolving block headshots."""
+    from padres_analytics.render.mlb_assets import player_photo_path
+
+    blocks: list[dict[str, object]] = []
+    for block in card.blocks:
+        data = block.model_dump()
+        photo = None
+        if block.player_id is not None:
+            try:
+                resolved = player_photo_path(block.player_id)
+            except (ValueError, TypeError):
+                resolved = None
+            photo = str(resolved) if resolved else None
+        data["photo"] = photo
+        blocks.append(data)
+
+    template = _JINJA_ENV.get_template("card_story.html.j2")
+    html = template.render(
+        title=card.title,
+        kicker=card.kicker,
+        subtitle=card.subtitle,
+        as_of=str(card.as_of),
+        hero=card.hero,
+        blocks=blocks,
+        narrative=card.narrative,
+        source=card.source,
+        **_token_kwargs(),
+    )
+    _html_to_png(html, out_path, CARD_VIEWPORT_W, CARD_VIEWPORT_H)
+
+
 def render(
-    facts: TablePayload | SeriesPayload,
+    facts: TablePayload | SeriesPayload | ChartDataset | SpatialDataset | StoryCard,
     out_dir: Path,
     candidate_id: str,
     visual: str = "table",
+    card: str | None = None,
 ) -> Path:
     """Render a facts payload to ``out_dir/<candidate_id>.png``.
 
-    Same payload → same pixels (deterministic within a Chromium/matplotlib version).
+    Same payload → same pixels (deterministic within a Chromium version).
 
     Args:
         facts: Validated payload object.
         out_dir: Output directory. Created if absent.
         candidate_id: Used as the output filename stem.
-        visual: Card template type — "table" or "bar".
+        visual: Legacy TablePayload card type — "table" or "bars".
+        card: ChartDataset card-type override; defaults to the data-shape selector.
 
     Returns:
         Path to the rendered PNG.
@@ -255,7 +503,13 @@ def render(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{candidate_id}.png"
 
-    if isinstance(facts, TablePayload):
+    if isinstance(facts, StoryCard):
+        _render_story(facts, out_path)
+    elif isinstance(facts, SpatialDataset):
+        _render_spatial(facts, out_path)
+    elif isinstance(facts, ChartDataset):
+        _render_dataset(facts, out_path, card=card)
+    elif isinstance(facts, TablePayload):
         _render_table(facts, out_path, visual=visual)
     elif isinstance(facts, SeriesPayload):
         raise RenderError("SeriesPayload rendering not yet implemented (Phase 4)")

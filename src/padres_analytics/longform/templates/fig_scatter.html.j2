@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face { font-family: "Space Grotesk"; src: url("file://{{ space_grotesk_ttf }}") format("truetype"); font-weight: 100 900; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1040px; height: 560px; overflow: hidden; background: {{ paper }}; font-family: "Space Grotesk", sans-serif; }
+#fig { width: 1040px; height: 560px; }
+</style>
+</head>
+<body>
+<div id="fig"></div>
+<div id="chart-ready" style="display:none"></div>
+<script>
+(function () {
+  const S = {{ spec | safe }};
+  const W = 1040, H = 560;
+  const m = { t: 28, r: 40, b: 64, l: 78 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const P = S.points.map(p => ({ label: p.label, x: +p.x, y: +p.y }));
+
+  const svg = d3.select("#fig").append("svg").attr("width", W).attr("height", H);
+  const g = svg.append("g").attr("transform", `translate(${m.l},${m.t})`);
+
+  const xs = P.map(p => p.x), ys = P.map(p => p.y);
+  const xpad = (d3.max(xs) - d3.min(xs)) * 0.08 || 1;
+  const ypad = (d3.max(ys) - d3.min(ys)) * 0.08 || 1;
+  const X = d3.scaleLinear().domain([d3.min(xs) - xpad, d3.max(xs) + xpad]).nice().range([0, iw]);
+  const Y = d3.scaleLinear().domain([d3.min(ys) - ypad, d3.max(ys) + ypad]).nice().range([ih, 0]);
+
+  // gridlines
+  Y.ticks(5).forEach(t => {
+    g.append("line").attr("x1", 0).attr("x2", iw).attr("y1", Y(t)).attr("y2", Y(t))
+      .attr("stroke", "{{ hairline }}").attr("stroke-width", 1);
+    g.append("text").attr("x", -12).attr("y", Y(t) + 4).attr("text-anchor", "end")
+      .attr("font-size", 14).attr("fill", "{{ text_muted }}").attr("font-variant-numeric", "tabular-nums")
+      .text(d3.format("~g")(t));
+  });
+  X.ticks(6).forEach(t => {
+    g.append("line").attr("x1", X(t)).attr("x2", X(t)).attr("y1", 0).attr("y2", ih)
+      .attr("stroke", "{{ hairline }}").attr("stroke-width", 1);
+    g.append("text").attr("x", X(t)).attr("y", ih + 28).attr("text-anchor", "middle")
+      .attr("font-size", 14).attr("fill", "{{ text_muted }}").attr("font-variant-numeric", "tabular-nums")
+      .text(d3.format("~g")(t));
+  });
+
+  // points
+  P.forEach(p => {
+    const hot = p.label === S.highlight;
+    g.append("circle").attr("cx", X(p.x)).attr("cy", Y(p.y))
+      .attr("r", hot ? 11 : 7)
+      .attr("fill", hot ? "{{ hot }}" : "{{ slate }}")
+      .attr("fill-opacity", hot ? 1 : 0.72)
+      .attr("stroke", hot ? "{{ ink }}" : "none").attr("stroke-width", 1.5);
+    if (hot) {
+      g.append("text").attr("x", X(p.x) + 14).attr("y", Y(p.y) + 5)
+        .attr("font-size", 17).attr("font-weight", 700).attr("fill", "{{ ink }}").text(p.label);
+    }
+  });
+
+  if (S.y_label) {
+    svg.append("text").attr("transform", `translate(20, ${m.t + ih / 2}) rotate(-90)`)
+      .attr("text-anchor", "middle").attr("font-size", 14).attr("letter-spacing", "0.12em")
+      .attr("fill", "{{ brown_dim }}").text(S.y_label.toUpperCase());
+  }
+  if (S.x_label) {
+    svg.append("text").attr("x", m.l + iw / 2).attr("y", H - 14).attr("text-anchor", "middle")
+      .attr("font-size", 14).attr("letter-spacing", "0.12em").attr("fill", "{{ brown_dim }}")
+      .text(S.x_label.toUpperCase());
+  }
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Padres Offense Isn&#39;t As Bad As It Looks — Six regulars hitting below their contact quality. The numbers say better days are coming.</title>
+<meta name="description" content="Nearly every bat in the Padres lineup is outrunning its luck in the wrong direction. xwOBA says the results will catch up — eventually.">
+<meta name="author" content="Rob Savage">
+<link rel="canonical" href="https://robsavage619.github.io/xfriars/articles/padres-xwoba-luck-2026/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="The Padres Offense Isn&#39;t As Bad As It Looks">
+<meta property="og:description" content="Nearly every bat in the Padres lineup is outrunning its luck in the wrong direction. xwOBA says the results will catch up — eventually.">
+<meta property="og:url" content="https://robsavage619.github.io/xfriars/articles/padres-xwoba-luck-2026/">
+<meta property="og:image" content="https://robsavage619.github.io/xfriars/articles/padres-xwoba-luck-2026/figures/luck_gaps.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta property="article:published_time" content="2026-06-21">
+<meta property="article:tag" content="Padres"><meta property="article:tag" content="Offense"><meta property="article:tag" content="xwOBA"><meta property="article:tag" content="Cronenworth"><meta property="article:tag" content="Machado"><meta property="article:tag" content="Tatis">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;800;900&family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F4F1EA; --paper-panel: #ECE6DB; --ink: #1C1714; --ink-soft: #5A4636;
+    --brown: #4A3526; --brown-dim: #8A6A4A; --gold: #C99A2E; --hot: #C0392B;
+    --slate: #2C6E7F; --muted: #9A8E80; --hairline: rgba(28,23,20,0.12);
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Newsreader", Georgia, serif;
+    font-size: 20px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 24px 96px; }
+  .topbar { max-width: 720px; margin: 0 auto; padding: 28px 24px 0; display: flex; justify-content: space-between; align-items: center; }
+  .brand { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 14px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--brown); }
+  .brand .friars { color: var(--gold); }
+
+  header.article-head { padding-top: 40px; }
+  .kicker { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--brown-dim); margin-bottom: 18px; }
+  h1.title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 60px; line-height: 0.96; letter-spacing: 0.005em; margin: 0 0 16px; text-transform: uppercase; }
+  .subtitle { font-family: "Space Grotesk", sans-serif; font-weight: 500; font-size: 22px; line-height: 1.3; color: var(--ink-soft); margin: 0 0 24px; }
+  .dek { font-size: 22px; line-height: 1.5; color: var(--ink-soft); font-style: italic; border-left: 3px solid var(--gold); padding-left: 20px; margin: 0 0 28px; }
+  .byline { font-family: "Space Grotesk", sans-serif; font-size: 14px; letter-spacing: 0.04em; color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); padding: 14px 0; margin-bottom: 8px; }
+  .byline b { color: var(--ink); font-weight: 600; }
+  .byline .dot { color: var(--hairline); }
+
+  .hero { margin: 32px 0 8px; }
+  .hero img { width: 100%; height: auto; border-radius: 8px; display: block; }
+
+  .content { margin-top: 36px; }
+  .content p { margin: 0 0 24px; }
+  .content a { color: var(--hot); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  .content h2 { font-family: "Big Shoulders Display", sans-serif; font-weight: 700; font-size: 34px; line-height: 1.04; text-transform: uppercase; letter-spacing: 0.01em; margin: 52px 0 16px; }
+  .content h3 { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 22px; margin: 40px 0 12px; }
+  .content blockquote { margin: 32px 0; padding: 4px 0 4px 24px; border-left: 3px solid var(--brown-dim); font-style: italic; color: var(--ink-soft); font-size: 24px; line-height: 1.45; }
+  .content ul, .content ol { margin: 0 0 24px; padding-left: 28px; }
+  .content li { margin-bottom: 8px; }
+  .content strong { font-weight: 600; }
+  .content hr { border: none; border-top: 1px solid var(--hairline); margin: 48px 0; }
+  .content code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--paper-panel); padding: 2px 6px; border-radius: 4px; }
+
+  /* Figures break out wider than the reading column */
+  figure.fig { margin: 44px -80px; }
+  figure.fig img { width: 100%; height: auto; display: block; border-radius: 8px; }
+  figure.fig figcaption { font-family: "Space Grotesk", sans-serif; font-size: 14px; line-height: 1.45; color: var(--muted); margin-top: 12px; padding: 0 4px; }
+  figure.fig .fig-title { color: var(--ink); font-weight: 600; }
+  figure.fig .fig-source { color: var(--brown-dim); }
+
+  figure.fig-table { overflow-x: auto; }
+  figure.fig-table table { width: 100%; border-collapse: collapse; font-family: "Space Grotesk", sans-serif; font-size: 16px; font-variant-numeric: tabular-nums; }
+  figure.fig-table th { text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--brown-dim); padding: 10px 14px; border-bottom: 2px solid var(--ink-soft); }
+  figure.fig-table td { padding: 10px 14px; border-bottom: 1px solid var(--hairline); }
+  figure.fig-table tr.hl { background: #F3E7CB; }
+  figure.fig-table tr.hl td { font-weight: 600; }
+
+  footer.article-foot { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--hairline); font-family: "Space Grotesk", sans-serif; font-size: 13px; letter-spacing: 0.06em; color: var(--muted); }
+  footer .tag { text-transform: uppercase; letter-spacing: 0.16em; }
+  footer .tag .friars { color: var(--gold); font-weight: 600; }
+  .tags { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .tags span { background: var(--paper-panel); border-radius: 999px; padding: 4px 12px; font-size: 12px; color: var(--ink-soft); }
+
+  @media (max-width: 820px) {
+    h1.title { font-size: 44px; }
+    figure.fig { margin: 36px 0; }
+    body { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand">San Diego <span class="friars">·</span> Baseball Intelligence</span>
+    <span class="brand friars">@xFriars</span>
+  </div>
+
+  <div class="wrap">
+    <header class="article-head">
+      <div class="kicker">San Diego Padres · Deep Dive</div>
+      <h1 class="title">The Padres Offense Isn&#39;t As Bad As It Looks</h1>
+      <p class="subtitle">Six regulars hitting below their contact quality. The numbers say better days are coming.</p>
+      <p class="dek">Nearly every bat in the Padres lineup is outrunning its luck in the wrong direction. xwOBA says the results will catch up — eventually.</p>
+      <div class="byline">
+        <span>By <b>Rob Savage</b></span>
+        <span class="dot">•</span><span>2026-06-21</span>
+        <span class="dot">•</span><span>3 min read</span>
+      </div>
+    </header>
+
+
+
+    <div class="content">
+      <p>Jake Cronenworth is hitting .198. You probably know this. You&rsquo;ve maybe used words like &ldquo;washed&rdquo; or &ldquo;lineup black hole.&rdquo; The hits aren&rsquo;t coming, the line looks ugly, and it&rsquo;s been going on long enough that patience is running thin.</p>
+<p>The problem is that Cronenworth&rsquo;s contact doesn&rsquo;t agree.</p>
+<p>Strip out where the fielders happened to be, strip out the balls that caught a bad hop or died on the warning track, and look only at the quality of what he&rsquo;s actually hitting — the exit velocity, the launch angle, the physics of the batted ball — and you get a number that says he&rsquo;s been hitting like a .304 hitter. Not great. But not .198.</p>
+<p>That gap is the story of the 2026 Padres offense.</p>
+<h2>What xwOBA is and why it matters</h2>
+<p>Before going further: xwOBA (pronounced &ldquo;expected woba&rdquo;) measures what a hitter&rsquo;s results <em>should</em> look like based purely on contact quality. Every batted ball gets a probability attached to it — a 105 mph line drive to left-center has a high expected value; a 72 mph weak grounder to short has a low one. Add those up across a season and you have a baseline stripped of fielding luck, park effects, and random sequencing.</p>
+<p>A player&rsquo;s wOBA and his xwOBA don&rsquo;t have to match. In any given stretch, a ball can find a gap or find a glove regardless of how hard it was hit. But over enough plate appearances, they tend to converge. Large gaps are more likely to close than to persist.</p>
+<p>Cronenworth&rsquo;s gap right now — <strong>+.072</strong> — is enormous. The league average gap in 2026 is essentially zero (.319 xwOBA, .317 wOBA). He&rsquo;s not just unlucky; he&rsquo;s in the tail of the distribution.</p>
+<h2>The whole lineup is running this way</h2>
+<p>What makes this worth writing about: it&rsquo;s not just Cronenworth. Six of the ten Padres regulars with 80 or more plate appearances are running positive gaps — meaning their contact quality is outpacing their results.</p>
+<figure class="fig"><img src="figures/luck_gaps.png" alt="xwOBA minus wOBA, 2026 Padres regulars (min 80 PA)" /><figcaption><span class="fig-title">xwOBA minus wOBA, 2026 Padres regulars (min 80 PA)</span> <span>Positive = contact quality better than results. Cronenworth&#39;s +.072 is well outside the normal range.</span> <span class="fig-source">Baseball Savant via xFriars</span></figcaption></figure>
+
+<p>Tatis, Machado, and Merrill are all sitting at +.037. That&rsquo;s not a rounding error; it&rsquo;s a real, systematic drain on the offense. Machado&rsquo;s line reads .270. His contact says .307. The Padres version of Manny Machado has been quietly walking into the box and hitting the ball well; the scoreboard just hasn&rsquo;t been cooperating at the rate the contact deserves.</p>
+<p>Bogaerts (+.024) and Laureano (+.019) are running similar quiet deficits. Put it together and you have a lineup where nearly every bat has been a little snakebitten, a little overdue.</p>
+<figure class="fig fig-table"><table><thead><tr><th>Player</th><th>PA</th><th>wOBA</th><th>xwOBA</th><th>Gap</th></tr></thead><tbody><tr class="hl"><td>Cronenworth</td><td>114.0</td><td>.232</td><td>.304</td><td>+.072</td></tr><tr><td>Tatis Jr.</td><td>314.0</td><td>.314</td><td>.351</td><td>+.037</td></tr><tr><td>Machado</td><td>296.0</td><td>.270</td><td>.307</td><td>+.037</td></tr><tr><td>Merrill</td><td>294.0</td><td>.280</td><td>.317</td><td>+.037</td></tr><tr><td>Fermin</td><td>142.0</td><td>.234</td><td>.266</td><td>+.032</td></tr><tr><td>Bogaerts</td><td>274.0</td><td>.293</td><td>.317</td><td>+.024</td></tr><tr><td>Laureano</td><td>206.0</td><td>.293</td><td>.312</td><td>+.019</td></tr><tr><td>France</td><td>154.0</td><td>.315</td><td>.308</td><td>−.007</td></tr><tr><td>Sheets</td><td>241.0</td><td>.333</td><td>.324</td><td>−.009</td></tr><tr><td>Andujar</td><td>198.0</td><td>.304</td><td>.285</td><td>−.019</td></tr></tbody></table><figcaption><span class="fig-title">2026 Padres hitters — contact quality vs. results (min 80 PA)</span> <span class="fig-source">Baseball Savant, through June 21, 2026</span></figcaption></figure>
+
+<h2>The counterpoint: Sheets is on the other side</h2>
+<p>Gavin Sheets is hitting .290-something and you feel good about it. His xwOBA says pump the brakes: at −.009, his results have been slightly <em>better</em> than his contact warrants. The gap is small enough that you shouldn&rsquo;t panic, but it&rsquo;s a flag. What Sheets has done this year is real — his contact quality is genuinely above-average — but the exact line he&rsquo;s posted has had some favorable sequencing baked in.</p>
+<p>Andujar (−.019) is the cleaner case of outrunning contact. The results look serviceable. The underlying contact is shakier.</p>
+<h2>What to do with this</h2>
+<p>None of this guarantees the offense turns a corner. Large positive luck gaps can close in two directions: results come up to meet the contact quality, or the contact quality falls to meet the results. Cronenworth&rsquo;s track record suggests the former is more likely — he hasn&rsquo;t forgotten how to make contact — but individual streaks are not regressions, and the schedule doesn&rsquo;t care about sample sizes.</p>
+<p>What the xwOBA picture does tell you is that this offense has been worse than the contact deserves. When six regulars are underperforming their batted-ball quality simultaneously, some of it is going to revert. The question is whether it happens in time to matter.</p>
+<p>The math says this team hits better than .270. The calendar will eventually catch up with the math.</p>
+<hr>
+<p><em>Data: Baseball Savant, through June 21, 2026. Minimum 80 plate appearances. xwOBA uses Statcast&rsquo;s estimated wOBA from launch speed and angle, independent of fielder positioning.</em></p>
+    </div>
+
+    <footer class="article-foot">
+      <div class="tags"><span>Padres</span><span>Offense</span><span>xwOBA</span><span>Cronenworth</span><span>Machado</span><span>Tatis</span></div>
+      <p class="tag" style="margin-top:18px"><span class="friars">@xFriars</span> · San Diego Baseball Intelligence</p>
+    </footer>
+  </div>
+</body>
+</html>

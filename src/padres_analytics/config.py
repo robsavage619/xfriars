@@ -28,6 +28,20 @@ MLB_STATS_API_BASE = "https://statsapi.mlb.com/api/v1"
 INBOX_DIR = PROJECT_ROOT / "inbox"
 CARDS_DIR = DATA_DIR / "cards"
 
+# Long-form articles (Medium deep dives). Sources are authored under
+# articles/<slug>/; rendered output lands in docs/articles/<slug>/ which is the
+# GitHub Pages root, so each article gets a public URL for Medium's
+# "Import a story" flow (sets the canonical link back to us).
+ARTICLES_SRC_DIR = PROJECT_ROOT / "articles"
+DOCS_DIR = PROJECT_ROOT / "docs"
+ARTICLES_OUT_DIR = DOCS_DIR / "articles"
+
+# Public base URL for rendered articles. Override with PADRES_PAGES_BASE_URL if a
+# custom domain is configured. Trailing slash is normalized off.
+PAGES_BASE_URL = os.environ.get(
+    "PADRES_PAGES_BASE_URL", "https://robsavage619.github.io/xfriars"
+).rstrip("/")
+
 
 def configure_logging(level: int = logging.INFO) -> None:
     """Configure root logger for CLI and library entrypoints.

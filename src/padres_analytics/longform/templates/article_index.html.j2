@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xFriars — San Diego Baseball Intelligence</title>
+<meta name="description" content="Long-form Padres deep dives from @xFriars.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;800;900&family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#F4F1EA; --ink:#1C1714; --ink-soft:#5A4636; --brown:#4A3526; --brown-dim:#8A6A4A; --gold:#C99A2E; --muted:#9A8E80; --hairline:rgba(28,23,20,0.12); }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font-family:"Newsreader",Georgia,serif; }
+  .wrap { max-width:760px; margin:0 auto; padding:64px 24px 96px; }
+  .brand { font-family:"Space Grotesk",sans-serif; font-weight:700; font-size:14px; letter-spacing:0.18em; text-transform:uppercase; color:var(--brown); }
+  .brand .friars { color:var(--gold); }
+  h1 { font-family:"Big Shoulders Display",sans-serif; font-weight:800; font-size:56px; line-height:0.96; text-transform:uppercase; margin:18px 0 8px; }
+  .tagline { font-family:"Space Grotesk",sans-serif; color:var(--muted); letter-spacing:0.04em; margin-bottom:48px; }
+  .entry { display:block; text-decoration:none; color:inherit; padding:28px 0; border-top:1px solid var(--hairline); }
+  .entry:last-child { border-bottom:1px solid var(--hairline); }
+  .entry .date { font-family:"Space Grotesk",sans-serif; font-size:13px; letter-spacing:0.08em; color:var(--brown-dim); text-transform:uppercase; }
+  .entry h2 { font-family:"Big Shoulders Display",sans-serif; font-weight:700; font-size:32px; line-height:1.02; text-transform:uppercase; margin:8px 0 8px; }
+  .entry:hover h2 { color:var(--gold); }
+  .entry p { color:var(--ink-soft); margin:0; font-size:19px; line-height:1.5; }
+  .empty { color:var(--muted); font-style:italic; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">San Diego <span class="friars">·</span> Baseball Intelligence</div>
+    <h1>The Friars Deep Dive</h1>
+    <div class="tagline">Long-form Padres analysis from <span style="color:var(--gold)">@xFriars</span>.</div>
+    {% for e in entries %}
+    <a class="entry" href="articles/{{ e.slug }}/">
+      {% if e.date %}<div class="date">{{ e.date }}</div>{% endif %}
+      <h2>{{ e.title }}</h2>
+      {% if e.dek %}<p>{{ e.dek }}</p>{% endif %}
+    </a>
+    {% else %}
+    <p class="empty">No articles published yet.</p>
+    {% endfor %}
+  </div>
+</body>
+</html>

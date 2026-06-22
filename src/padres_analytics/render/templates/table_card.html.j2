@@ -26,7 +26,7 @@ html, body {
   width: 800px;
   height: 450px;
   overflow: hidden;
-  background: {{ bg_deep }};
+  background: {{ paper }};
 }
 
 /* ── Card shell ─────────────────────────────────────────────────────── */
@@ -35,16 +35,17 @@ html, body {
   height: 450px;
   display: flex;
   flex-direction: column;
-  background: {{ bg_deep }};
+  background: {{ paper }};
+  border-top: 4px solid {{ brown }};
   font-family: "Space Grotesk", sans-serif;
-  color: {{ text_primary }};
+  color: {{ ink }};
 }
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 .header {
   position: relative;
-  padding: 12px 24px 9px;
-  border-bottom: 1px solid rgba(255, 196, 37, 0.35);
+  padding: 14px 24px 10px;
+  border-bottom: 1px solid {{ hairline }};
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -57,7 +58,7 @@ html, body {
   font-family: "Space Grotesk", sans-serif;
   font-weight: 600;
   font-size: 10px;
-  color: {{ gold }};
+  color: {{ brown_dim }};
   letter-spacing: 0.26em;
   text-transform: uppercase;
   margin-bottom: 4px;
@@ -66,11 +67,11 @@ html, body {
 
 .title {
   font-family: "Big Shoulders Display", sans-serif;
-  font-weight: 900;
+  font-weight: 800;
   font-size: 44px;
   line-height: 0.95;
-  color: #FFFFFF;
-  letter-spacing: 0.08em;
+  color: {{ ink }};
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -99,16 +100,14 @@ html, body {
 }
 
 .logo-img {
-  height: 28px;
+  height: 22px;
   width: auto;
   display: block;
-  opacity: 0.92;
 }
 
 .as-of {
   font-size: 10px;
-  color: {{ text_secondary }};
-  opacity: 0.65;
+  color: {{ text_muted }};
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   white-space: nowrap;
@@ -136,7 +135,7 @@ col.c-team   { width: 84px; }
 col.c-stat   { width: 76px; }
 
 thead tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid {{ hairline }};
 }
 
 th {
@@ -145,8 +144,7 @@ th {
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: {{ text_secondary }};
-  opacity: 0.85;
+  color: {{ text_muted }};
   padding: 9px 6px 6px;
 }
 
@@ -157,7 +155,7 @@ th.c-stat   { text-align: right;   padding-right: 12px; }
 
 /* ── Data rows ─────────────────────────────────────────────────────── */
 tbody tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid {{ hairline }};
 }
 
 tbody tr:last-child {
@@ -167,17 +165,16 @@ tbody tr:last-child {
 td {
   font-size: 15px;
   padding: 0 6px;
-  color: #FFFFFF;
+  color: {{ ink }};
   line-height: 1;
-  height: 29px;
+  height: 34px;
   vertical-align: middle;
 }
 
 td.c-rank {
   text-align: center;
   padding-left: 10px;
-  color: {{ text_secondary }};
-  opacity: 0.7;
+  color: {{ text_muted }};
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -186,7 +183,7 @@ td.c-player { text-align: left; }
 
 td.c-team {
   text-align: center;
-  color: {{ text_secondary }};
+  color: {{ text_muted }};
   font-size: 12px;
   letter-spacing: 0.05em;
   white-space: nowrap;
@@ -203,17 +200,17 @@ td.c-stat {
 tbody tr.highlight {
   background: linear-gradient(
     to right,
-    rgba(255, 196, 37, 0.12) 0%,
-    rgba(255, 196, 37, 0.045) 60%,
+    rgba(201, 154, 46, 0.18) 0%,
+    rgba(201, 154, 46, 0.07) 55%,
     transparent 100%
   ) !important;
 }
 
 /* gold left border via inset shadow — survives border-collapse */
 tbody tr.highlight td.c-rank {
-  box-shadow: inset 3px 0 0 0 {{ gold }};
-  color: #FFFFFF;
-  font-weight: 600;
+  box-shadow: inset 4px 0 0 0 {{ gold }};
+  color: {{ ink }};
+  font-weight: 700;
   font-size: 14px;
 }
 
@@ -222,15 +219,15 @@ tbody tr.highlight td {
 }
 
 tbody tr.highlight td.c-team {
-  color: #FFFFFF;
+  color: {{ ink }};
   font-size: 14px;
   letter-spacing: 0.06em;
 }
 
-/* hero number: gold + larger */
+/* hero number: ink + larger (no glow; gold is the row edge) */
 tbody tr.highlight td.c-stat {
-  color: {{ gold }};
-  font-size: 20px;
+  color: {{ ink }};
+  font-size: 26px;
   font-weight: 700;
 }
 
@@ -240,7 +237,7 @@ tbody tr.highlight td.c-stat {
   justify-content: space-between;
   align-items: center;
   padding: 7px 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid {{ hairline }};
   flex-shrink: 0;
 }
 
@@ -248,17 +245,16 @@ tbody tr.highlight td.c-stat {
   font-family: "Space Grotesk", sans-serif;
   font-weight: 400;
   font-size: 10px;
-  color: {{ text_secondary }};
-  opacity: 0.55;
+  color: {{ text_muted }};
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .handle {
   font-family: "Space Grotesk", sans-serif;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
-  color: {{ gold }};
+  color: {{ brown }};
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -267,8 +263,7 @@ tbody tr.highlight td.c-stat {
   font-family: "Space Grotesk", sans-serif;
   font-size: 10px;
   font-weight: 400;
-  color: {{ text_secondary }};
-  opacity: 0.45;
+  color: {{ text_muted }};
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -276,8 +271,8 @@ tbody tr.highlight td.c-stat {
 {% if is_projection %}
 .projection-badge {
   display: inline-block;
-  border: 1px solid {{ gold }};
-  color: {{ gold }};
+  border: 1px solid {{ brown_dim }};
+  color: {{ brown_dim }};
   font-family: "Space Grotesk", sans-serif;
   font-size: 10px;
   font-weight: 600;
@@ -296,7 +291,7 @@ tbody tr.highlight td.c-stat {
 
   <div class="header">
     <div class="header-left">
-      <div class="kicker">San Diego Padres Analytics</div>
+      <div class="kicker">xFriars</div>
       <div class="title">{{ title }}{% if is_projection %}<span class="projection-badge">Projection</span>{% endif %}</div>
       {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}</div>
     <div class="header-right">
@@ -337,10 +332,7 @@ tbody tr.highlight td.c-stat {
 
   <div class="footer">
     <span class="source">Source: {{ source }} · through {{ as_of }}</span>
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
-      <span class="handle">@xFriars</span>
-      <span class="tagline">San Diego Baseball Intelligence</span>
-    </div>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
   </div>
 
 </div>

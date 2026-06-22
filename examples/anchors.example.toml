@@ -1,0 +1,93 @@
+# Anchor bank — public example.
+# Copy to private/anchors.toml and populate with verified historical values.
+# Used by conjunction.py for milestone proximity and legend-comparison framing.
+#
+# [[milestone]] — notable thresholds that trigger the milestone_proximity lens.
+# [[legend]]    — franchise icons for "through N games vs [Name]" comparisons.
+# [[more_x_than_y]] — curated juxtaposition pairs (P3+ narrative lenses).
+
+# ── Milestones ─────────────────────────────────────────────────────────────────
+# Thresholds are verified against the public record. Add private entries in
+# private/anchors.toml for game-level or intra-season milestones.
+
+[[milestone]]
+metric_id   = "barrel_rate"
+threshold   = 20.0
+label       = "20% barrel rate"
+note        = "elite power threshold; fewer than 12 qualifiers per season historically"
+
+[[milestone]]
+metric_id   = "barrel_rate"
+threshold   = 25.0
+label       = "25% barrel rate"
+note        = "transcendent power; 3-5 qualifiers per season"
+
+[[milestone]]
+metric_id   = "sprint_speed"
+threshold   = 30.0
+label       = "30 ft/s sprint speed"
+note        = "elite speed; top ~10% of MLB"
+
+[[milestone]]
+metric_id   = "sprint_speed"
+threshold   = 29.0
+label       = "29 ft/s sprint speed"
+note        = "above-average speed threshold"
+
+[[milestone]]
+metric_id   = "xwoba_gap"
+threshold   = 0.050
+label       = "+.050 xwOBA gap"
+note        = "significant 'unlucky' threshold — career BABIP luck claim eligible"
+
+# ── Franchise legends ─────────────────────────────────────────────────────────
+# player_id is the MLBAM ID used in Statcast / bwar tables.
+# Baselines are career per-162-game rates for the stated era.
+# Source: Baseball Reference (public record).
+
+[[legend]]
+id          = "gwynn"
+name        = "Tony Gwynn"
+player_id   = 110576
+era_start   = 1982
+era_end     = 2001
+summary     = "Hall of Fame outfielder, franchise icon, 8x NL batting champion"
+# Per-162-game baselines for legend-comparison narrative lens (P3+)
+baseline_hits_162    = 196
+baseline_avg         = 0.338
+baseline_obp         = 0.388
+baseline_slg         = 0.459
+
+[[legend]]
+id          = "hoffman"
+name        = "Trevor Hoffman"
+player_id   = 121634
+era_start   = 1993
+era_end     = 2008
+summary     = "Hall of Fame closer, franchise saves leader, 601 career saves"
+baseline_saves_162   = 37
+baseline_era         = 2.87
+baseline_k_per_9     = 9.4
+
+[[legend]]
+id          = "gonzalez"
+name        = "Adrian Gonzalez"
+player_id   = 150394
+era_start   = 2006
+era_end     = 2010
+summary     = "All-Star first baseman, franchise power era anchor"
+baseline_hr_162      = 36
+baseline_rbi_162     = 112
+baseline_ops         = 0.905
+
+# ── More-X-than-Y juxtapositions (P3+ narrative lens) ─────────────────────────
+# Pairs are surfaced when a player's focal metric exceeds the anchor_value.
+# The LLM writes the voice; the numbers stay verified.
+# anchor_note is a pre-verified fact about the comparison object.
+
+[[more_x_than_y]]
+metric_id    = "sprint_speed"
+anchor_name  = "the average MLB outfielder"
+anchor_value = 27.9
+anchor_note  = "average MLB outfielder sprint speed in 2024 (Baseball Savant)"
+framing_template = "{player} runs faster ({value} ft/s) than the average MLB outfielder ({anchor_value} ft/s)"
