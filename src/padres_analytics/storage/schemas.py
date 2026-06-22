@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 11
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -271,6 +271,132 @@ DDL_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS statcast_batted_balls (
+        player_id        INTEGER NOT NULL,
+        player_name      VARCHAR,
+        season           INTEGER NOT NULL,
+        game_type        VARCHAR,
+        game_date        DATE,
+        game_pk          INTEGER NOT NULL,
+        at_bat_number    INTEGER NOT NULL,
+        pitch_number     INTEGER NOT NULL,
+        events           VARCHAR,
+        bb_type          VARCHAR,
+        description      VARCHAR,
+        stand            VARCHAR,
+        p_throws         VARCHAR,
+        hc_x             DOUBLE,
+        hc_y             DOUBLE,
+        plate_x          DOUBLE,
+        plate_z          DOUBLE,
+        launch_speed     DOUBLE,
+        launch_angle     DOUBLE,
+        launch_speed_angle INTEGER,
+        hit_distance_sc  DOUBLE,
+        estimated_woba   DOUBLE,
+        ingested_at      TIMESTAMP,
+        PRIMARY KEY (player_id, game_pk, at_bat_number, pitch_number)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_battedballs_player_season
+        ON statcast_batted_balls(player_id, season)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS statcast_pitches (
+        pitcher_id       INTEGER NOT NULL,
+        pitcher_name     VARCHAR,
+        season           INTEGER NOT NULL,
+        game_type        VARCHAR,
+        game_date        DATE,
+        game_pk          INTEGER NOT NULL,
+        at_bat_number    INTEGER NOT NULL,
+        pitch_number     INTEGER NOT NULL,
+        pitch_type       VARCHAR,
+        release_speed    DOUBLE,
+        pfx_x            DOUBLE,
+        pfx_z            DOUBLE,
+        plate_x          DOUBLE,
+        plate_z          DOUBLE,
+        sz_top           DOUBLE,
+        sz_bot           DOUBLE,
+        release_pos_x    DOUBLE,
+        release_pos_z    DOUBLE,
+        description      VARCHAR,
+        stand            VARCHAR,
+        p_throws         VARCHAR,
+        ingested_at      TIMESTAMP,
+        PRIMARY KEY (pitcher_id, game_pk, at_bat_number, pitch_number)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_pitches_pitcher_season
+        ON statcast_pitches(pitcher_id, season)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS statcast_batter_pitches (
+        batter_id        INTEGER NOT NULL,
+        batter_name      VARCHAR,
+        season           INTEGER NOT NULL,
+        game_type        VARCHAR,
+        game_date        DATE,
+        game_pk          INTEGER NOT NULL,
+        at_bat_number    INTEGER NOT NULL,
+        pitch_number     INTEGER NOT NULL,
+        pitch_type       VARCHAR,
+        plate_x          DOUBLE,
+        plate_z          DOUBLE,
+        sz_top           DOUBLE,
+        sz_bot           DOUBLE,
+        zone             INTEGER,
+        description      VARCHAR,
+        type             VARCHAR,
+        delta_run_exp    DOUBLE,
+        bat_speed        DOUBLE,
+        swing_length     DOUBLE,
+        estimated_woba   DOUBLE,
+        stand            VARCHAR,
+        p_throws         VARCHAR,
+        ingested_at      TIMESTAMP,
+        PRIMARY KEY (batter_id, game_pk, at_bat_number, pitch_number)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sc_batterpitches_batter_season
+        ON statcast_batter_pitches(batter_id, season)
+    """,
+    # Live (in-game) pitches from the GUMBO feed. UNOFFICIAL + preliminary:
+    # pitch types are auto-classified and velo is revised after the game. Keyed
+    # per game_pk; never aggregate this into the season/skill tables.
+    """
+    CREATE TABLE IF NOT EXISTS live_pitches (
+        game_pk        INTEGER NOT NULL,
+        at_bat_index   INTEGER NOT NULL,
+        pitch_number   INTEGER NOT NULL,
+        inning         INTEGER,
+        half           VARCHAR,
+        pitcher_id     INTEGER,
+        pitcher        VARCHAR,
+        batter_id      INTEGER,
+        batter         VARCHAR,
+        pitch_type     VARCHAR,
+        pitch_code     VARCHAR,
+        velo           DOUBLE,
+        result         VARCHAR,
+        is_swing       BOOLEAN,
+        is_whiff       BOOLEAN,
+        in_play        BOOLEAN,
+        balls          INTEGER,
+        strikes        INTEGER,
+        updated_at     TIMESTAMP,
+        PRIMARY KEY (game_pk, at_bat_index, pitch_number)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_live_pitches_game_pitcher
+        ON live_pitches(game_pk, pitcher_id)
+    """,
+    """
     CREATE INDEX IF NOT EXISTS idx_sc_percentile_year
         ON statcast_batter_percentile_ranks(year)
     """,
@@ -285,6 +411,37 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_sc_barrels_year
         ON statcast_batter_exitvelo_barrels(year)
+    """,
+    # The Board — where Claude-generated cards and scout leads land for review.
+    """
+    CREATE TABLE IF NOT EXISTS board_cards (
+        card_id      VARCHAR PRIMARY KEY,
+        kind         VARCHAR NOT NULL,
+        angle_key    VARCHAR,
+        subject      VARCHAR,
+        title        VARCHAR,
+        headline     VARCHAR,
+        rank_note    VARCHAR,
+        confidence   VARCHAR,
+        reconciled   BOOLEAN,
+        source       VARCHAR,
+        image_path   VARCHAR NOT NULL,
+        caption      VARCHAR,
+        status       VARCHAR DEFAULT 'new',
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS board_leads (
+        lead_id      VARCHAR PRIMARY KEY,
+        subject      VARCHAR,
+        kind         VARCHAR,
+        headline     VARCHAR NOT NULL,
+        explore      VARCHAR,
+        interest     DOUBLE,
+        status       VARCHAR DEFAULT 'new',
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
     """,
 )
 

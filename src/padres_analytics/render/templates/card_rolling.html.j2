@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
+
+.card { width: 540px; height: 675px; display: flex; flex-direction: column; background: {{ paper }}; font-family: "Space Grotesk", sans-serif; color: {{ ink }}; }
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header { padding: 24px 30px 14px; display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0; }
+.kicker { font-weight: 600; font-size: 12px; color: {{ brown_dim }}; letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px; }
+.title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }}; letter-spacing: 0.01em; text-transform: uppercase; }
+.subtitle { font-size: 12px; color: {{ text_muted }}; margin-top: 6px; letter-spacing: 0.14em; text-transform: uppercase; }
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 24px; width: auto; }
+.as-of { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+.hero-line { display: flex; align-items: baseline; justify-content: center; gap: 12px; padding: 0 30px; flex-shrink: 0; }
+.hero-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 900; font-size: 52px; line-height: 0.9; color: {{ ink }}; font-variant-numeric: tabular-nums; }
+.hero-label { font-weight: 600; font-size: 13px; color: {{ ink_soft }}; letter-spacing: 0.2em; text-transform: uppercase; }
+.hero-context { font-size: 13px; color: {{ text_muted }}; letter-spacing: 0.04em; }
+
+.harness { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 30px 4px; flex-shrink: 0; }
+.chip { font-size: 11px; color: {{ ink_soft }}; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.chip b { color: {{ ink }}; font-weight: 700; }
+.note { padding: 2px 30px 0; text-align: center; font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.02em; flex-shrink: 0; }
+
+.footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0; margin-top: 8px; }
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres · Statcast</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  {% if hero %}
+  <div class="hero-line">
+    <span class="hero-value">{{ hero.value }}</span>
+    <div style="display:flex;flex-direction:column">
+      <span class="hero-label">{{ hero.label }}</span>
+      {% if hero.context %}<span class="hero-context">{{ hero.context }}</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="harness">
+    <span class="chip"><b>{{ n }}</b> BBE</span>
+    <span class="chip">{{ coverage }}</span>
+    <span class="chip">{{ handedness }}</span>
+  </div>
+  {% if note %}<div class="note">{{ note }}</div>{% endif %}
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const PTS = {{ points | safe }};
+  const LEAGUE = 0.370;  // MLB xwOBACON reference
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth || 540, H = container.offsetHeight || 380;
+  const m = { t: 18, r: 24, b: 34, l: 50 };
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+
+  const xs = PTS.map(d => d.x), ys = PTS.map(d => d.y);
+  const xd = [d3.min(xs), d3.max(xs)];
+  // y-domain padded around the line and the league reference.
+  let lo = Math.min(d3.min(ys), LEAGUE) - 0.02, hi = Math.max(d3.max(ys), LEAGUE) + 0.02;
+  const X = v => m.l + (v - xd[0]) / (xd[1] - xd[0]) * (W - m.r - m.l);
+  const Y = v => (H - m.b) - (v - lo) / (hi - lo) * (H - m.b - m.t);
+
+  // Axes
+  svg.append("line").attr("x1", m.l).attr("x2", W - m.r).attr("y1", H - m.b).attr("y2", H - m.b)
+    .attr("stroke", "rgba(28,23,20,0.25)").attr("stroke-width", 1);
+  svg.append("line").attr("x1", m.l).attr("x2", m.l).attr("y1", m.t).attr("y2", H - m.b)
+    .attr("stroke", "rgba(28,23,20,0.25)").attr("stroke-width", 1);
+  d3.ticks(lo, hi, 4).forEach(t => {
+    svg.append("text").attr("x", m.l - 6).attr("y", Y(t) + 3).attr("text-anchor", "end")
+      .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+      .attr("font-variant-numeric", "tabular-nums").text(t.toFixed(3).replace(/^0/, ""));
+  });
+
+  // League reference line.
+  svg.append("line").attr("x1", m.l).attr("x2", W - m.r).attr("y1", Y(LEAGUE)).attr("y2", Y(LEAGUE))
+    .attr("stroke", "{{ brown_dim }}").attr("stroke-width", 1).attr("stroke-dasharray", "4 4").attr("stroke-opacity", 0.6);
+  svg.append("text").attr("x", W - m.r).attr("y", Y(LEAGUE) - 5).attr("text-anchor", "end")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ brown_dim }}")
+    .text("MLB avg .370");
+
+  // The rolling line.
+  const line = d3.line().x(d => X(d.x)).y(d => Y(d.y)).curve(d3.curveMonotoneX);
+  svg.append("path").datum(PTS).attr("d", line)
+    .attr("fill", "none").attr("stroke", "{{ ink }}").attr("stroke-width", 2.5);
+
+  // Gold "now" dot at the latest value.
+  const last = PTS[PTS.length - 1];
+  svg.append("circle").attr("cx", X(last.x)).attr("cy", Y(last.y)).attr("r", 5)
+    .attr("fill", "{{ gold }}").attr("stroke", "{{ paper }}").attr("stroke-width", 1.5);
+
+  svg.append("text").attr("x", (m.l + W - m.r) / 2).attr("y", H - 8).attr("text-anchor", "middle")
+    .attr("font-family", "Space Grotesk").attr("font-size", 10).attr("fill", "{{ text_muted }}")
+    .attr("letter-spacing", "0.12em").text("SEASON PROGRESSION (BATTED BALLS) →");
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

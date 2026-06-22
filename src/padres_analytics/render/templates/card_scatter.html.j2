@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="file://{{ d3_js }}"></script>
+<style>
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("file://{{ big_shoulders_ttf }}") format("truetype");
+  font-weight: 400 900;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("file://{{ space_grotesk_ttf }}") format("truetype");
+  font-weight: 100 900;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper }}; }
+
+.card {
+  width: 540px; height: 675px; display: flex; flex-direction: column;
+  background: {{ paper }};
+  font-family: "Space Grotesk", sans-serif; color: {{ ink }};
+}
+.top-rule { height: 4px; background: {{ brown }}; flex-shrink: 0; }
+
+.header {
+  padding: 24px 30px 16px; border-bottom: 1px solid {{ hairline }};
+  display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0;
+}
+.kicker {
+  font-weight: 600; font-size: 12px; color: {{ brown_dim }};
+  letter-spacing: 0.26em; text-transform: uppercase; margin-bottom: 6px;
+}
+.title {
+  font-family: "Big Shoulders Display", sans-serif;
+  font-weight: 800; font-size: 40px; line-height: 0.94; color: {{ ink }};
+  letter-spacing: 0.01em; text-transform: uppercase;
+}
+.subtitle {
+  font-size: 12px; color: {{ text_muted }}; margin-top: 6px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; margin-left: 16px; }
+.logo-img { height: 24px; width: auto; }
+.as-of { font-size: 11px; color: {{ text_muted }}; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.chart-area { flex: 1; overflow: hidden; position: relative; }
+
+.footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0;
+}
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
+.handle { font-size: 16px; font-weight: 700; color: {{ brown }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rule"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="kicker">San Diego Padres · Statcast</div>
+      <div class="title">{{ title }}</div>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+    <div class="header-right">
+      <img class="logo-img" src="file://{{ xfriars_logo }}" alt="xFriars">
+      <div class="as-of">{{ as_of }}</div>
+    </div>
+  </div>
+
+  <div class="chart-area" id="chart-area"></div>
+
+  <div class="footer">
+    <span class="source">Source: {{ source }}{% if n %} · n={{ n }}{% endif %}</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+  </div>
+</div>
+
+<div id="chart-ready" style="display:none"></div>
+
+<script>
+(function() {
+  const DS    = {{ dataset | safe }};
+  const INK   = "{{ ink }}";
+  const TEXTS = "{{ text_muted }}";
+  const PAPER = "{{ paper }}";
+  const HOT   = "{{ hot }}";  // editorial red for the protagonist
+
+  // Resolve roles: spatial_x, spatial_y, optional label dimension.
+  const xi = DS.columns.findIndex(c => c.role === "spatial_x");
+  const yi = DS.columns.findIndex(c => c.role === "spatial_y");
+  const li = DS.columns.findIndex(c => c.role === "label" || c.role === "dimension");
+  const xCol = DS.columns[xi], yCol = DS.columns[yi];
+
+  // Highlight rows (the protagonists) come from dataset.highlight[].row_index.
+  const hl = new Map((DS.highlight || []).map(m => [m.row_index, m]));
+
+  const data = DS.rows.map((r, idx) => ({
+    x: +r[xi], y: +r[yi],
+    label: li >= 0 ? String(r[li]) : "",
+    hot: hl.has(idx), note: hl.get(idx)?.label || (li >= 0 ? String(r[li]) : ""),
+  })).filter(d => Number.isFinite(d.x) && Number.isFinite(d.y));
+
+  const container = document.getElementById("chart-area");
+  const W = container.offsetWidth || 540;
+  const H = container.offsetHeight || 460;
+  const m = { t: 26, r: 26, b: 52, l: 56 };
+
+  // Fixed domains from declared column.domain when present, else data extent + pad.
+  const ext = (vals, dom) => {
+    if (dom && dom.length === 2) return dom;
+    const lo = d3.min(vals), hi = d3.max(vals), pad = (hi - lo) * 0.08 || 1;
+    return [lo - pad, hi + pad];
+  };
+  const x = d3.scaleLinear().domain(ext(data.map(d => d.x), xCol.domain)).range([m.l, W - m.r]);
+  const y = d3.scaleLinear().domain(ext(data.map(d => d.y), yCol.domain)).range([H - m.b, m.t]);
+
+  const svg = d3.select("#chart-area").append("svg").attr("width", W).attr("height", H);
+
+  // Median quadrant guides
+  const mx = d3.median(data, d => d.x), my = d3.median(data, d => d.y);
+  [["x", mx], ["y", my]].forEach(([ax, v]) => {
+    svg.append("line")
+      .attr("x1", ax === "x" ? x(v) : m.l).attr("x2", ax === "x" ? x(v) : W - m.r)
+      .attr("y1", ax === "y" ? y(v) : m.t).attr("y2", ax === "y" ? y(v) : H - m.b)
+      .attr("stroke", "rgba(28,23,20,0.14)").attr("stroke-width", 1).attr("stroke-dasharray", "3 4");
+  });
+
+  // Axes
+  const xAxis = d3.axisBottom(x).ticks(5).tickSize(0).tickPadding(8);
+  const yAxis = d3.axisLeft(y).ticks(5).tickSize(0).tickPadding(8);
+  const gx = svg.append("g").attr("transform", `translate(0,${H - m.b})`).call(xAxis);
+  const gy = svg.append("g").attr("transform", `translate(${m.l},0)`).call(yAxis);
+  [gx, gy].forEach(g => {
+    g.select(".domain").attr("stroke", "rgba(28,23,20,0.25)");
+    g.selectAll("text").attr("fill", TEXTS).attr("font-family", "Space Grotesk, sans-serif").attr("font-size", 11);
+  });
+
+  // Axis titles
+  svg.append("text").attr("x", (m.l + W - m.r) / 2).attr("y", H - 14)
+    .attr("text-anchor", "middle").attr("fill", TEXTS).attr("font-size", 12)
+    .attr("font-weight", 600).attr("letter-spacing", "0.12em").attr("text-transform", "uppercase")
+    .text((xCol.label || "").toUpperCase() + (xCol.unit ? " (" + xCol.unit + ")" : ""));
+  svg.append("text").attr("transform", "rotate(-90)").attr("x", -(m.t + H - m.b) / 2).attr("y", 16)
+    .attr("text-anchor", "middle").attr("fill", TEXTS).attr("font-size", 12)
+    .attr("font-weight", 600).attr("letter-spacing", "0.12em")
+    .text((yCol.label || "").toUpperCase() + (yCol.unit ? " (" + yCol.unit + ")" : ""));
+
+  // League dots (background cluster)
+  svg.append("g").selectAll("circle.bg").data(data.filter(d => !d.hot)).join("circle")
+    .attr("cx", d => x(d.x)).attr("cy", d => y(d.y)).attr("r", 3.4)
+    .attr("fill", "rgba(28,23,20,0.20)");
+
+  // Protagonist dots (Padres) — hot red, labeled, no glow
+  const hot = svg.append("g").selectAll("g.hot").data(data.filter(d => d.hot)).join("g");
+  hot.append("circle")
+    .attr("cx", d => x(d.x)).attr("cy", d => y(d.y)).attr("r", 7)
+    .attr("fill", HOT).attr("stroke", PAPER).attr("stroke-width", 1.5);
+  hot.append("text")
+    .attr("x", d => x(d.x) + 11).attr("y", d => y(d.y) + 4)
+    .attr("fill", INK).attr("font-family", "Space Grotesk, sans-serif")
+    .attr("font-size", 12).attr("font-weight", 700)
+    .attr("paint-order", "stroke").attr("stroke", PAPER).attr("stroke-width", 3)
+    .text(d => d.note);
+
+  document.getElementById("chart-ready").style.display = "block";
+})();
+</script>
+</body>
+</html>

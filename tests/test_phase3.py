@@ -139,10 +139,12 @@ def test_dollar_per_war_emits_sdp(hist_conn: duckdb.DuckDBPyConnection) -> None:
     assert len(candidates) == 1
     c = candidates[0]
     assert c.detector == "dollar_per_war"
-    assert c.facts_json["season"] == 2025
-    assert c.facts_json["sd_eff_rank"] >= 1
-    assert c.facts_json["sd_payroll_m"] == pytest.approx(200.0, abs=1.0)
-    assert c.facts_json["sd_war"] == pytest.approx(47.1, abs=0.5)
+    assert c.payload_kind == "dataset"
+    f = c.facts_json["facts"]
+    assert f["season"] == 2025
+    assert f["sd_eff_rank"] >= 1
+    assert f["sd_payroll_m"] == pytest.approx(200.0, abs=1.0)
+    assert f["sd_war"] == pytest.approx(47.1, abs=0.5)
     assert c.subject is not None and "SDP" in c.subject
     assert c.novelty_score > 0.5
 
@@ -183,11 +185,13 @@ def test_trade_war_emits_gm_era(hist_conn: duckdb.DuckDBPyConnection) -> None:
     c = candidates[0]
     assert c.detector == "trade_war_balance"
     assert c.subject == "SDP|trade_war_balance"
-    eras = c.facts_json["eras"]
-    assert len(eras) >= 1
-    assert eras[0]["gm"] == "A.J. Preller"
-    # net_5yr is a float
-    assert isinstance(eras[0]["net_5yr"], float)
+    assert c.payload_kind == "dataset"
+    # GM eras are the bar rows: [label, net_war]; current GM is highlighted.
+    rows = c.facts_json["rows"]
+    assert len(rows) >= 1
+    assert any("A.J. Preller" in str(r[0]) for r in rows)
+    assert isinstance(rows[0][1], float)
+    assert c.facts_json["facts"]["current_gm"] == "A.J. Preller"
 
 
 def test_trade_war_candidate_id_stable(hist_conn: duckdb.DuckDBPyConnection) -> None:
@@ -208,22 +212,24 @@ def test_franchise_war_emits_active_padres(hist_conn: duckdb.DuckDBPyConnection)
     det = FranchiseWarRankDetector()
     candidates = det.run(hist_conn, date(2026, 6, 9))
 
-    # Both Machado and Tatis are active in 2026 and in franchise top 10
-    assert len(candidates) >= 1
-    subjects = [c.subject or "" for c in candidates]
-    assert any("592518" in s for s in subjects)  # Machado
-    assert any("665487" in s for s in subjects)  # Tatis
+    # One collapsed leaderboard card; both active Padres highlighted on it
+    assert len(candidates) == 1
+    active = candidates[0].facts_json["facts"]["active_leaders"]
+    assert "Manny Machado" in active  # active 2026, franchise top N
+    assert "Fernando Tatis Jr." in active
 
 
 def test_franchise_war_does_not_emit_inactive(hist_conn: duckdb.DuckDBPyConnection) -> None:
     from padres_analytics.detect.milestones import FranchiseWarRankDetector
 
     det = FranchiseWarRankDetector()
-    candidates = det.run(hist_conn, date(2026, 6, 9))
+    c = det.run(hist_conn, date(2026, 6, 9))[0]
 
-    # Gwynn has no 2026 row → not active → should not be emitted
-    subjects = [c.subject or "" for c in candidates]
-    assert not any("100001" in s for s in subjects)
+    # Gwynn is the all-time leader (appears in the leaderboard rows) but is NOT
+    # active in 2026, so he is not highlighted as a current-Padre leader.
+    players = [r[0] for r in c.facts_json["rows"]]
+    assert "Tony Gwynn" in players
+    assert "Tony Gwynn" not in c.facts_json["facts"]["active_leaders"]
 
 
 def test_franchise_war_re_emit_gate(hist_conn: duckdb.DuckDBPyConnection) -> None:
