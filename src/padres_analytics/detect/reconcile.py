@@ -189,6 +189,98 @@ def _reconcile_pitcher(
     return out
 
 
+def _reconcile_manager(
+    conn: duckdb.DuckDBPyConnection, season: int, sm: dict[str, float]
+) -> list[str]:
+    """Re-derive the manager-case numbers from source on an independent code path.
+
+    Record and Pythagorean are re-walked from ``game_box``; team wOBA/xwOBA are
+    recomputed in pure Python from the per-player Savant rows (Path B).
+    """
+    from padres_analytics.config import PADRES_TEAM_ID
+    from padres_analytics.detect.angles import _pythagorean
+
+    rows = conn.execute(
+        "SELECT home_team_id, away_team_id, home_score, away_score FROM game_box "
+        "WHERE home_score IS NOT NULL AND away_score IS NOT NULL"
+    ).fetchall()
+    wins = losses = rf = ra = 0
+    for home, away, hs, as_ in rows:
+        if PADRES_TEAM_ID not in (home, away):
+            continue
+        pf, pa_runs = (hs, as_) if home == PADRES_TEAM_ID else (as_, hs)
+        rf += pf
+        ra += pa_runs
+        if pf > pa_runs:
+            wins += 1
+        else:
+            losses += 1
+    games = wins + losses
+    if games == 0:
+        return ["manager_case: no completed games to reconcile against"]
+
+    out: list[str] = []
+    checks: list[tuple[str, float, float]] = [
+        ("mgr_wins", wins, 0),
+        ("mgr_losses", losses, 0),
+        ("mgr_pyth", round(_pythagorean(rf, ra) * games, 1), 0.1),
+        ("mgr_ra", round(ra / games, 2), _TOL_RUNS),
+    ]
+    for key, calc, tol in checks:
+        if key in sm and not _close(calc, sm[key], tol):
+            out.append(f"manager_case {key}: card={sm[key]} recomputed={calc}")
+    out += _reconcile_team(conn, season, sm)  # team_woba / team_xwoba via Path B
+    return out
+
+
+def _reconcile_manager_history(
+    conn: duckdb.DuckDBPyConnection, angle: StoryAngle, sm: dict[str, float]
+) -> list[str]:
+    """Reconcile the Padres' live line vs game_box; verify the cohort hasn't drifted.
+
+    The cohort is cited static data (no DB source), so its integrity check is that
+    the rendered rows still match the module constant — a tamper/drift guard, with
+    the citation itself standing in for source re-derivation. Only the Padres' own
+    record is re-derived from ``game_box`` (Path B).
+    """
+    from padres_analytics.config import PADRES_TEAM_ID
+    from padres_analytics.detect.manager_history import COHORT
+
+    rows = conn.execute(
+        "SELECT home_team_id, away_team_id, home_score, away_score FROM game_box "
+        "WHERE home_score IS NOT NULL AND away_score IS NOT NULL"
+    ).fetchall()
+    wins = losses = 0
+    for home, away, hs, as_ in rows:
+        if PADRES_TEAM_ID not in (home, away):
+            continue
+        pf, pa_runs = (hs, as_) if home == PADRES_TEAM_ID else (as_, hs)
+        if pf > pa_runs:
+            wins += 1
+        else:
+            losses += 1
+    games = wins + losses
+    if games == 0:
+        return ["manager_history: no completed games to reconcile against"]
+
+    out: list[str] = []
+    for key, calc, tol in (
+        ("mgr_wins", wins, 0),
+        ("mgr_losses", losses, 0),
+        ("mgr_winpct", round(wins / games, 3), _TOL_WOBA),
+    ):
+        if key in sm and not _close(calc, sm[key], tol):
+            out.append(f"manager_history {key}: card={sm[key]} recomputed={calc}")
+
+    data: dict = dict(angle.panels[0].data) if angle.panels else {}
+    panel_rows = data.get("rows", [])
+    cited = {(c.manager, c.wins, c.losses) for c in COHORT}
+    drawn = {(r["manager"], r["wins"], r["losses"]) for r in panel_rows if not r["subject"]}
+    if drawn != cited:
+        out.append("manager_history: cohort rows drifted from the cited Baseball-Reference dataset")
+    return out
+
+
 def _reconcile_windowed(
     conn: duckdb.DuckDBPyConnection, angle: StoryAngle, sm: dict[str, float]
 ) -> list[str]:
@@ -271,6 +363,10 @@ def reconcile(conn: duckdb.DuckDBPyConnection, angle: StoryAngle) -> list[str]:
     sm = {s.key: s.value for s in angle.stats}
     if angle.key == "team_luck":
         return _reconcile_team(conn, season, sm)
+    if angle.key == "manager_case":
+        return _reconcile_manager(conn, season, sm)
+    if angle.key == "manager_history":
+        return _reconcile_manager_history(conn, angle, sm)
     if angle.key in ("player_luck", "approach_outlier", "power_outlier"):
         if angle.subject_id is None:
             return [f"{angle.key}: no subject_id to reconcile against"]

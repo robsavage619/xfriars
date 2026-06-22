@@ -32,6 +32,8 @@ predictions_app = typer.Typer(help="Self-grading predictions — log, grade, sco
 app.add_typer(predictions_app, name="predictions")
 metrics_app = typer.Typer(help="Engagement metrics — record what posts actually land.")
 app.add_typer(metrics_app, name="metrics")
+article_app = typer.Typer(help="Long-form deep dives — scaffold, render, list, publish to Medium.")
+app.add_typer(article_app, name="article")
 
 logger = logging.getLogger(__name__)
 
@@ -461,6 +463,37 @@ def ingest_leaders_cmd(
             raise typer.Exit(ERR) from exc
 
     typer.echo(f"Done. {n} rows written to mlb_leaders.")
+
+
+# ── pad ingest gamebox ────────────────────────────────────────────────────────
+
+
+@ingest_app.command("gamebox")
+def ingest_gamebox_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current year."),
+) -> None:
+    """Fetch the team's final-game scores and upsert them into game_box.
+
+    Persists run differential per game (R/RA, innings, pitcher decisions) — the
+    layer Pythagorean/expected-record cards run on.
+    """
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_gamebox
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    typer.echo(f"Ingesting game box scores for season {ref_season} …")
+
+    with connect() as conn:
+        initialize(conn)
+        try:
+            n = ingest_gamebox(conn, ref_season)
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    typer.echo(f"Done. {n} games written to game_box.")
 
 
 # ── pad ingest statcast ───────────────────────────────────────────────────────
@@ -1870,6 +1903,119 @@ def coverage(
         f"\n{len(reports)} domains · {bad} not OK — "
         "verify the capability you need is backed before promising a card."
     )
+
+
+# ── pad article ──────────────────────────────────────────────────────────────
+
+
+@article_app.command("new")
+def article_new(
+    title: str = typer.Argument(..., help="Working title for the deep dive."),
+    slug: str = typer.Option("", "--slug", help="Override the auto-generated slug."),
+    subtitle: str = typer.Option("", "--subtitle", help="Deck / subtitle."),
+    dek: str = typer.Option("", "--dek", help="Standfirst summary paragraph."),
+) -> None:
+    """Scaffold a new article source under articles/<slug>/."""
+    configure_logging()
+    from padres_analytics.config import ARTICLES_SRC_DIR
+    from padres_analytics.longform.scaffold import ScaffoldError, new_article, slugify
+
+    final_slug = slug or slugify(title)
+    if not final_slug:
+        typer.echo("Could not derive a slug from the title; pass --slug.", err=True)
+        raise typer.Exit(ERR)
+    try:
+        md_path = new_article(
+            ARTICLES_SRC_DIR, final_slug, title, _la_today().isoformat(), subtitle, dek
+        )
+    except ScaffoldError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+    typer.echo(f"Scaffolded → {md_path}")
+    typer.echo(f"Edit it, then: pad article render {final_slug}")
+
+
+@article_app.command("render")
+def article_render(
+    slug: str = typer.Argument(..., help="Article slug (folder under articles/)."),
+) -> None:
+    """Render one article to docs/articles/<slug>/ (Pages-ready, Medium-importable)."""
+    configure_logging()
+    from padres_analytics.config import ARTICLES_OUT_DIR, ARTICLES_SRC_DIR, PAGES_BASE_URL
+    from padres_analytics.longform.figures import FigureRenderError
+    from padres_analytics.longform.models import ArticleError
+    from padres_analytics.longform.render import render_from_dir
+
+    src_dir = ARTICLES_SRC_DIR / slug
+    if not src_dir.is_dir():
+        typer.echo(f"No article {slug!r} under {ARTICLES_SRC_DIR}", err=True)
+        raise typer.Exit(ERR)
+    try:
+        result = render_from_dir(src_dir, ARTICLES_OUT_DIR, PAGES_BASE_URL)
+    except (ArticleError, FigureRenderError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+    typer.echo(f"Rendered → {result.index_html}")
+    typer.echo(f"Public URL (after push): {result.public_url}")
+    typer.echo("Publish: commit + push, then Medium → Import a story → paste the URL.")
+
+
+@article_app.command("render-all")
+def article_render_all() -> None:
+    """Render every article under articles/."""
+    configure_logging()
+    from padres_analytics.config import (
+        ARTICLES_OUT_DIR,
+        ARTICLES_SRC_DIR,
+        DOCS_DIR,
+        PAGES_BASE_URL,
+    )
+    from padres_analytics.longform.figures import FigureRenderError
+    from padres_analytics.longform.models import ArticleError, load_article
+    from padres_analytics.longform.render import render_article, write_pages_index
+
+    if not ARTICLES_SRC_DIR.is_dir():
+        typer.echo(f"No articles/ directory at {ARTICLES_SRC_DIR}", err=True)
+        raise typer.Exit(ERR)
+    dirs = sorted(p for p in ARTICLES_SRC_DIR.iterdir() if (p / "article.md").is_file())
+    if not dirs:
+        typer.echo("No articles to render.", err=True)
+        raise typer.Exit(ERR)
+    failed = 0
+    rendered = []
+    for src_dir in dirs:
+        try:
+            article = load_article(src_dir)
+            result = render_article(article, src_dir, ARTICLES_OUT_DIR, PAGES_BASE_URL)
+            rendered.append(article)
+            typer.echo(f"✓ {result.slug} → {result.index_html}")
+        except (ArticleError, FigureRenderError) as exc:
+            typer.echo(f"✗ {src_dir.name}: {exc}", err=True)
+            failed += 1
+    if rendered:
+        write_pages_index(DOCS_DIR, rendered)
+    if failed:
+        typer.echo(f"\n{failed} of {len(dirs)} article(s) failed.", err=True)
+        raise typer.Exit(ERR)
+
+
+@article_app.command("list")
+def article_list() -> None:
+    """List article sources and whether each has been rendered."""
+    configure_logging()
+    from padres_analytics.config import ARTICLES_OUT_DIR, ARTICLES_SRC_DIR
+
+    if not ARTICLES_SRC_DIR.is_dir():
+        typer.echo('No articles yet. Create one: pad article new "Title"')
+        return
+    dirs = sorted(p for p in ARTICLES_SRC_DIR.iterdir() if (p / "article.md").is_file())
+    if not dirs:
+        typer.echo('No articles yet. Create one: pad article new "Title"')
+        return
+    for src_dir in dirs:
+        rendered = (ARTICLES_OUT_DIR / src_dir.name / "index.html").is_file()
+        mark = "rendered" if rendered else "draft"
+        typer.echo(f"[{mark:8s}] {src_dir.name}")
 
 
 def main() -> None:

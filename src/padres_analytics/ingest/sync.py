@@ -25,7 +25,7 @@ class StepResult(NamedTuple):
 
 
 def run_sync(conn: duckdb.DuckDBPyConnection, season: int) -> list[StepResult]:
-    """Refresh roster, standings, Statcast, player seasons, and game logs.
+    """Refresh roster, standings, game box, Statcast, player seasons, and game logs.
 
     Order matters: seasons are pulled before game logs (logs read the season
     hitter list). The roster pull carries IL status, which keeps the availability
@@ -40,6 +40,7 @@ def run_sync(conn: duckdb.DuckDBPyConnection, season: int) -> list[StepResult]:
     """
     from padres_analytics.ingest.mlb_api import (
         ingest_game_logs,
+        ingest_gamebox,
         ingest_player_seasons,
         ingest_roster,
         ingest_standings,
@@ -49,6 +50,7 @@ def run_sync(conn: duckdb.DuckDBPyConnection, season: int) -> list[StepResult]:
     steps = [
         ("roster", lambda c: ingest_roster(c, season)),
         ("standings", lambda c: ingest_standings(c, season)),
+        ("gamebox", lambda c: ingest_gamebox(c, season)),
         ("statcast", lambda c: ingest_statcast(c, season)),
         ("player-seasons", lambda c: ingest_player_seasons(c, season - 6, season)),
         ("game-logs", lambda c: ingest_game_logs(c, season)),

@@ -250,6 +250,64 @@ class MlbStatsClient:
         logger.info("schedule: team=%d returned %d games", team_id, len(games))
         return games
 
+    def game_scores(
+        self,
+        team_id: int = PADRES_TEAM_ID,
+        season: int | None = None,
+        game_type: str = "R",
+    ) -> list[dict[str, Any]]:
+        """Fetch final-game box scores for a team's season (linescore-hydrated).
+
+        Only games whose ``status.abstractGameState`` is ``"Final"`` are
+        returned — scheduled and in-progress games carry no settled score.
+
+        Args:
+            team_id: MLB team ID.
+            season: 4-digit year. Defaults to current season.
+            game_type: Comma-separated game types (default regular season).
+
+        Returns:
+            One dict per final game with keys: game_pk, game_date,
+            home_team_id, away_team_id, home_score, away_score, innings,
+            winning_pitcher_id, losing_pitcher_id, save_pitcher_id.
+        """
+        params: dict[str, Any] = {
+            "sportId": 1,
+            "teamId": team_id,
+            "gameTypes": game_type,
+            "hydrate": "linescore,decisions,team",
+        }
+        if season:
+            params["season"] = season
+
+        data = self._get("schedule", **params)
+        games = []
+        for date_entry in data.get("dates", []):
+            for g in date_entry.get("games", []):
+                if (g.get("status") or {}).get("abstractGameState") != "Final":
+                    continue
+                ls = g.get("linescore") or {}
+                ls_teams = ls.get("teams") or {}
+                home = g.get("teams", {}).get("home", {})
+                away = g.get("teams", {}).get("away", {})
+                decisions = g.get("decisions") or {}
+                games.append(
+                    {
+                        "game_pk": g["gamePk"],
+                        "game_date": date_entry["date"],
+                        "home_team_id": home.get("team", {}).get("id"),
+                        "away_team_id": away.get("team", {}).get("id"),
+                        "home_score": (ls_teams.get("home") or {}).get("runs"),
+                        "away_score": (ls_teams.get("away") or {}).get("runs"),
+                        "innings": ls.get("currentInning"),
+                        "winning_pitcher_id": (decisions.get("winner") or {}).get("id"),
+                        "losing_pitcher_id": (decisions.get("loser") or {}).get("id"),
+                        "save_pitcher_id": (decisions.get("save") or {}).get("id"),
+                    }
+                )
+        logger.info("game_scores: team=%d season=%s -> %d finals", team_id, season, len(games))
+        return games
+
     # ── Live (GUMBO) ──────────────────────────────────────────────────────
 
     def live_games(self, date: str, team_id: int = PADRES_TEAM_ID) -> list[dict[str, Any]]:
@@ -1416,6 +1474,68 @@ def ingest_standings(conn: duckdb.DuckDBPyConnection, season: int) -> int:
             )
     logger.info("ingest_standings: season=%d wrote %d teams", season, len(teams))
     return len(teams)
+
+
+def ingest_gamebox(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    team_id: int = PADRES_TEAM_ID,
+) -> int:
+    """Fetch a team's final-game scores and upsert them into game_box.
+
+    Persists the box-score line (runs, innings, pitcher decisions) for every
+    completed game, keyed on ``game_pk``. This is the run-differential layer the
+    engine needs for Pythagorean cards (R/G, RA/G, expected vs actual record);
+    the table previously had a schema but no writer, so it went stale.
+
+    Args:
+        conn: Write-mode padres.db connection (game_box created by initialize).
+        season: Season year.
+        team_id: MLB team id (default Padres).
+
+    Returns:
+        Rows upserted.
+    """
+    source = f"mlb-stats-api/gamebox/{team_id}/{season}"
+    with record_run(conn, source) as run:
+        with MlbStatsClient() as client:
+            games = client.game_scores(team_id, season)
+        for g in games:
+            conn.execute(
+                """
+                INSERT INTO game_box
+                    (game_pk, game_date, home_team_id, away_team_id, home_score,
+                     away_score, innings, winning_pitcher_id, losing_pitcher_id,
+                     save_pitcher_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (game_pk) DO UPDATE SET
+                    game_date = EXCLUDED.game_date,
+                    home_team_id = EXCLUDED.home_team_id,
+                    away_team_id = EXCLUDED.away_team_id,
+                    home_score = EXCLUDED.home_score,
+                    away_score = EXCLUDED.away_score,
+                    innings = EXCLUDED.innings,
+                    winning_pitcher_id = EXCLUDED.winning_pitcher_id,
+                    losing_pitcher_id = EXCLUDED.losing_pitcher_id,
+                    save_pitcher_id = EXCLUDED.save_pitcher_id,
+                    ingested_at = now()
+                """,
+                [
+                    g["game_pk"],
+                    g["game_date"],
+                    g["home_team_id"],
+                    g["away_team_id"],
+                    g["home_score"],
+                    g["away_score"],
+                    g["innings"],
+                    g["winning_pitcher_id"],
+                    g["losing_pitcher_id"],
+                    g["save_pitcher_id"],
+                ],
+            )
+        run["rows_written"] = len(games)
+    logger.info("ingest_gamebox: team=%d season=%d wrote %d games", team_id, season, len(games))
+    return len(games)
 
 
 def ingest_leaders(

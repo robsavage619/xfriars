@@ -251,6 +251,11 @@ def _render_table(
     _html_to_png(html, out_path, VIEWPORT_W, VIEWPORT_H)
 
 
+def html_to_png(html: str, out_path: Path, viewport_w: int, viewport_h: int) -> None:
+    """Public alias of :func:`_html_to_png` for reuse by other renderers."""
+    _html_to_png(html, out_path, viewport_w, viewport_h)
+
+
 def _html_to_png(html: str, out_path: Path, viewport_w: int, viewport_h: int) -> None:
     """Screenshot a rendered HTML string to a PNG via headless Chromium.
 

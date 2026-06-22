@@ -606,6 +606,14 @@ def render_angle(angle: StoryAngle, out_dir: Path, stem: str, *, strict: bool = 
         ValueError: If ``strict`` and the render audit finds a missing number.
         RenderError: On any Playwright/rendering failure.
     """
+    if angle.key == "manager_case":
+        from padres_analytics.render.manager_card import render_manager_card
+
+        return render_manager_card(angle, out_dir, stem, strict=strict)
+    if angle.key == "manager_history":
+        from padres_analytics.render.manager_history_card import render_manager_history_card
+
+        return render_manager_history_card(angle, out_dir, stem, strict=strict)
     svg = compose(angle)
     problems = audit_rendered(angle, svg)
     if problems and strict:

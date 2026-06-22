@@ -37,6 +37,16 @@ _PLAYER_MIN_PA = 150  # min PA before an individual talent claim is allowed
 _APPROACH_EXTREME = 12  # percentile distance from the tails (<=12 or >=88)
 _POWER_EXTREME = 88  # percentile at/above which a power signal is "elite"
 
+# Manager-case gates. This is a *synthesis* angle, not a signal detector: it fires
+# only when the data actively exonerates the manager — the club is at or above the
+# Pythagorean record its run margin implies (in-game results aren't being thrown
+# away) AND the offense is underperforming its own expected wOBA (the drag is the
+# least coachable thing on the field). Needs the game_box run ledger populated.
+_MGR_MIN_GAMES = 20  # below this the Pythagorean is too noisy to lean on
+_MGR_PYTH_FLOOR = -1.0  # club must be within ~1 win of (or above) its Pythagorean
+_MGR_CLOSE_MARGIN = 2  # a "close game" is decided by this many runs or fewer
+_PYTH_EXP = 1.83  # exponent for expected win% (rs^e / (rs^e + ra^e))
+
 
 @dataclass(frozen=True)
 class Stat:
@@ -296,6 +306,297 @@ def detect_team_luck(ctx: _Ctx) -> StoryAngle | None:
         panels=panels,
         stats=stats,
         caveats=[f"{ctx.season} season, {pa:,} PA through {ctx.as_of}"],
+    )
+
+
+def _pythagorean(rs: int, ra: int, exp: float = _PYTH_EXP) -> float:
+    """Expected win% from runs scored/allowed (returns 0.5 when no runs yet)."""
+    if rs <= 0 and ra <= 0:
+        return 0.5
+    return rs**exp / (rs**exp + ra**exp)
+
+
+def _game_ledger(ctx: _Ctx) -> tuple[int, int, int, int, int, int] | None:
+    """Walk game_box for the Padres' run ledger.
+
+    Returns ``(wins, losses, runs_for, runs_against, close_w, close_l)`` over
+    completed games, or ``None`` when fewer than the minimum games have a score.
+    """
+    from padres_analytics.config import PADRES_TEAM_ID
+
+    rows = ctx.conn.execute(
+        "SELECT home_team_id, away_team_id, home_score, away_score FROM game_box "
+        "WHERE home_score IS NOT NULL AND away_score IS NOT NULL"
+    ).fetchall()
+    w = loss = rf = ra = close_w = close_l = 0
+    for home, away, hs, as_ in rows:
+        if PADRES_TEAM_ID not in (home, away):
+            continue
+        pf, pa = (hs, as_) if home == PADRES_TEAM_ID else (as_, hs)
+        rf += pf
+        ra += pa
+        won = pf > pa
+        if won:
+            w += 1
+        else:
+            loss += 1
+        if abs(pf - pa) <= _MGR_CLOSE_MARGIN:
+            close_w, close_l = (close_w + 1, close_l) if won else (close_w, close_l + 1)
+    if w + loss < _MGR_MIN_GAMES:
+        return None
+    return w, loss, rf, ra, close_w, close_l
+
+
+def _staff_line(ctx: _Ctx) -> str:
+    """A short evidence string for the staff the manager runs (real, from source).
+
+    The two highest-inning arms plus the saves leader — last names with ERA, the
+    closer tagged with saves. Empty when no pitching rows exist.
+    """
+    ph = ",".join("?" * len(ctx.ids))
+    rows = ctx.conn.execute(
+        f"""
+        SELECT player_name, era, saves, CAST(ip AS DOUBLE) ip_n
+        FROM player_season_pitching
+        WHERE player_id IN ({ph}) AND season = ? AND era IS NOT NULL
+        ORDER BY ip_n DESC
+        """,
+        [*ctx.ids, ctx.season],
+    ).fetchall()
+    if not rows:
+        return ""
+    picks = list(rows[:2])
+    closer = max(rows, key=lambda r: int(r[2] or 0))
+    if int(closer[2] or 0) > 0 and closer not in picks:
+        picks.append(closer)
+    parts = []
+    for name, era, saves, _ in picks:
+        tag = f"{_short(name)} {float(era):.2f}"
+        if int(saves or 0) > 0:
+            tag += f" ({int(saves)} SV)"
+        parts.append(tag)
+    return ", ".join(parts)
+
+
+def detect_manager_case(ctx: _Ctx) -> StoryAngle | None:
+    """The data-grounded case that the club's record is not the manager's fault.
+
+    Fires only when the evidence exonerates: the team is at or above the
+    Pythagorean record its run margin implies (close games and bullpen leverage —
+    the manager's levers — are not being squandered) *and* the offense is
+    underperforming its own expected wOBA (the drag is variance/regression, the
+    least manager-dependent variable on the field). Returns ``None`` otherwise, so
+    the engine never manufactures an exoneration the numbers don't support.
+    """
+    ledger = _game_ledger(ctx)
+    if ledger is None:
+        return None
+    wins, losses, rf, ra, close_w, close_l = ledger
+    games = wins + losses
+    pyth = _pythagorean(rf, ra)
+    pyth_wins = pyth * games
+    pyth_delta = wins - pyth_wins  # >0 == winning more than the run margin predicts
+    ra_per_g = ra / games
+
+    ph = ",".join("?" * len(ctx.ids))
+    team = ctx.conn.execute(
+        f"""
+        SELECT SUM(woba * pa) / SUM(pa), SUM(est_woba * pa) / SUM(pa), SUM(pa)
+        FROM statcast_batting_expected WHERE player_id IN ({ph}) AND pa >= 50
+        """,
+        ctx.ids,
+    ).fetchone()
+    if team is None or team[0] is None:
+        return None
+    woba, xwoba, pa = float(team[0]), float(team[1]), int(team[2])
+    prows = ctx.conn.execute(
+        f"SELECT pa, est_woba FROM statcast_batting_expected "
+        f"WHERE player_id IN ({ph}) AND pa >= 50",
+        ctx.ids,
+    ).fetchall()
+    true_talent = sum(regress(float(x), int(p), ctx.league_xwoba) * int(p) for p, x in prows) / sum(
+        int(p) for p, _ in prows
+    )
+    owed = _pts(true_talent - woba)
+
+    # Exoneration gate: not throwing games away, and the bats are the drag.
+    if pyth_delta < _MGR_PYTH_FLOOR or owed < _TEAM_GATE_PTS:
+        return None
+
+    r = reliability(pa)
+    staff = _staff_line(ctx)
+    charges = [
+        (
+            "Wins fewer games than the roster earns?",
+            f"{wins}-{losses} — that's {pyth_delta:+.1f} wins "
+            f"vs the {pyth_wins:.1f} its run margin predicts.",
+        ),
+        (
+            "Loses the close ones?",
+            f"{close_w}-{close_l} in games decided by {_MGR_CLOSE_MARGIN} runs or fewer.",
+        ),
+        (
+            "Mismanages the pitching staff?",
+            f"{ra_per_g:.2f} runs allowed per game. {staff}."
+            if staff
+            else f"{ra_per_g:.2f} runs allowed per game.",
+        ),
+    ]
+    stats = [
+        Stat("mgr_wins", wins, "count", "wins", games, "MLB Stats API"),
+        Stat("mgr_losses", losses, "count", "losses", games, "MLB Stats API"),
+        Stat("mgr_pyth", round(pyth_wins, 1), "count", "Pythagorean wins", games),
+        Stat("mgr_pyth_delta", round(pyth_delta, 1), "count", "wins above Pythagorean", games),
+        Stat("mgr_close_w", close_w, "count", "close-game wins", games, shown=False),
+        Stat("mgr_close_l", close_l, "count", "close-game losses", games, shown=False),
+        Stat("mgr_ra", round(ra_per_g, 2), "count", "runs allowed per game", games),
+        Stat("team_woba", round(woba, 3), "woba", "team wOBA", pa, "Baseball Savant"),
+        Stat("team_xwoba", round(xwoba, 3), "woba", "team xwOBA", pa, "Baseball Savant"),
+        Stat("owed", owed, "pts", "points of wOBA owed", pa),
+    ]
+    panels = [
+        PanelSpec(
+            "verdict",
+            {
+                "charges": charges,
+                "gauge": {"actual": wins, "expected": round(pyth_wins, 1)},
+                "problem": (
+                    f"The lineup is hitting .{round(woba * 1000):03d} wOBA against a "
+                    f".{round(xwoba * 1000):03d} expected — {owed} points of bad luck owed back. "
+                    "A manager doesn't make hard contact start falling in."
+                ),
+            },
+        )
+    ]
+    return StoryAngle(
+        key="manager_case",
+        subject="Craig Stammen",
+        title="IT'S NOT ON STAMMEN",
+        headline=(
+            "Every charge a manager answers for comes back not guilty — the bats are the story."
+        ),
+        thesis=(
+            "The club is winning more than its run margin predicts and holding the close "
+            "games; the offense underperforming its own contact is what's left."
+        ),
+        direction="up",
+        effect=float(owed),
+        reliability=r,
+        interest=owed * r * 0.4,  # situational synthesis — forceable, rarely auto-wins
+        confidence=confidence_tier(r),
+        as_of=ctx.as_of,
+        panels=panels,
+        stats=stats,
+        caveats=[
+            f"{games} games through {ctx.as_of}; Pythagorean exponent {_PYTH_EXP}",
+            f"{pa:,} PA of expected-stats coverage; staff lines from season totals",
+        ],
+    )
+
+
+def detect_manager_history(ctx: _Ctx) -> StoryAngle | None:
+    """Where the rookie skipper's first-year pace ranks among comparable rookies.
+
+    Places the Padres' live record (from ``game_box``) inside a cited cohort of
+    rookie managers who inherited a prior-year playoff team. The historical rows
+    are static and citation-backed (see :mod:`manager_history`); only the Padres'
+    own line moves, and it is reconciled against the game ledger. Needs the run
+    ledger populated, like :func:`detect_manager_case`.
+    """
+    from padres_analytics.detect.manager_history import (
+        COHORT,
+        PADRES_PRIOR_LOSSES,
+        PADRES_PRIOR_WINS,
+        SOURCE,
+    )
+
+    ledger = _game_ledger(ctx)
+    if ledger is None:
+        return None
+    wins, losses = ledger[0], ledger[1]
+    games = wins + losses
+    pct = wins / games
+    pace = round(pct * 162)
+    prior_pct = PADRES_PRIOR_WINS / (PADRES_PRIOR_WINS + PADRES_PRIOR_LOSSES)
+
+    def _row(mgr, yr, team, w, lo, pw, pl, note, subject):
+        wp = w / (w + lo)
+        pp = pw / (pw + pl)
+        return {
+            "manager": mgr,
+            "year": yr,
+            "team": team,
+            "wins": w,
+            "losses": lo,
+            "win_pct": round(wp, 3),
+            "prior_pct": round(pp, 3),
+            "delta": _pts(wp - pp),  # points of win% gained/dropped from what he was handed
+            "note": note,
+            "subject": subject,
+        }
+
+    rows = [
+        _row(
+            s.manager, s.year, s.team, s.wins, s.losses, s.prior_wins, s.prior_losses, s.note, False
+        )
+        for s in COHORT
+    ]
+    rows.append(
+        _row(
+            "Craig Stammen",
+            ctx.season,
+            "SD",
+            wins,
+            losses,
+            PADRES_PRIOR_WINS,
+            PADRES_PRIOR_LOSSES,
+            f"through {ctx.as_of:%b} · on pace ~{pace}",
+            True,
+        )
+    )
+    rows.sort(key=lambda r: r["delta"])  # biggest drop first
+    pad_delta = next(r["delta"] for r in rows if r["subject"])
+    fell_further = sum(1 for r in rows if r["delta"] < pad_delta)
+
+    if fell_further == 0:
+        title = "NO ROOKIE FELL FURTHER"
+    elif fell_further == 1:
+        title = "ONLY ONE FELL FURTHER"
+    else:
+        title = "IT'S HAPPENED BEFORE"
+
+    stats = [
+        Stat("mgr_wins", wins, "count", "Padres wins", games, "MLB Stats API"),
+        Stat("mgr_losses", losses, "count", "Padres losses", games, "MLB Stats API"),
+        Stat("mgr_winpct", round(pct, 3), "woba", "Padres winning %", games, "MLB Stats API"),
+        Stat("mgr_drop", abs(pad_delta), "pts", "win% dropped from 2025", games),
+    ]
+    return StoryAngle(
+        key="manager_history",
+        subject="Craig Stammen",
+        title=title,
+        headline=(
+            "Every rookie manager handed a playoff team since 2012 — and what he did "
+            "with it. Stammen's slide has one bigger precedent, and it ended in a ring."
+        ),
+        thesis=(
+            f"Stammen was handed a 90-win team and is {wins}-{losses} "
+            f"(.{round(pct * 1000):03d}) — a {abs(pad_delta)}-point drop. The dots: every "
+            "rookie since 2012 who inherited a winner, what they got and what they did."
+        ),
+        direction="up",
+        effect=float(abs(pad_delta)),
+        reliability=reliability(games, k=40),  # games-based; the cohort itself is fixed
+        interest=8.0 * reliability(games, k=40),  # situational — forceable, rarely auto-wins
+        confidence=confidence_tier(reliability(games, k=40)),
+        as_of=ctx.as_of,
+        source=f"{SOURCE} · MLB Stats API",
+        panels=[PanelSpec("history_ranking", {"rows": rows, "prior_pct": round(prior_pct, 3)})],
+        stats=stats,
+        caveats=[
+            "every rookie manager who inherited a prior-year playoff team, 2012-2026",
+            f"Padres {wins}-{losses} through {ctx.as_of}; handed a 90-72 team in 2025",
+        ],
     )
 
 
@@ -1048,6 +1349,8 @@ def _names(ctx: _Ctx) -> list[str]:
 
 _DETECTORS = (
     detect_team_luck,
+    detect_manager_case,
+    detect_manager_history,
     detect_player_luck,
     detect_approach_outlier,
     detect_power_outlier,
