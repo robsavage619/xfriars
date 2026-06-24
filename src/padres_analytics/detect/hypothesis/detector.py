@@ -22,6 +22,7 @@ from padres_analytics.detect.hypothesis.window import date_column, fetch_window_
 from padres_analytics.detect.registry import ScanConfig
 from padres_analytics.detect.scanner import _build_candidate, _Hit, _run_metric, lenses_over_rows
 from padres_analytics.detect.sql import max_year, padre_ids, padre_ids_roster
+from padres_analytics.storage.coverage import CONTRACT, CoverageReport, audit
 
 if TYPE_CHECKING:
     import duckdb
@@ -63,6 +64,28 @@ def _focal_padres(conn: duckdb.DuckDBPyConnection, roster_year: int) -> set[int]
     return padre_ids(conn, roster_year)
 
 
+def _coverage_block(reports: list[CoverageReport], table: str) -> str | None:
+    """Reason the table's coverage can't back a claim, or None if it can / isn't contracted.
+
+    Gates on the data-coverage contract before scanning: a spec over a STALE,
+    PARTIAL, EMPTY, or MISSING domain is refused up front rather than producing a
+    plausible-but-unsupported candidate. Tables outside the contract (e.g. barrels,
+    sprint speed) carry no coverage claim and pass through.
+
+    Gate is on the domain *status* (is the current-season granular data present and
+    adequately populated), not on :func:`can_support`: a hypothesis makes an
+    honestly-scoped state/window claim, not a cross-season *change* claim, so the
+    prior-season-baseline requirement can_support bakes into change capabilities
+    (CONTACT_TREND, APPROACH_TREND, …) does not apply here.
+    """
+    if table not in {s.table for s in CONTRACT}:
+        return None
+    report = next((r for r in reports if r.table == table), None)
+    if report is None or report.status == "OK":
+        return None
+    return f"{report.domain} {report.status}: {report.reason}"
+
+
 def _retag(candidate: StatCandidate) -> StatCandidate:
     """Re-stamp a scanner candidate as LLM-originated, with a fresh stable id."""
     cid = make_candidate_id("hypothesis", candidate.subject, candidate.facts_json)
@@ -94,10 +117,11 @@ class HypothesisScanDetector:
             logger.info("hypothesis: queue empty")
             return []
 
+        reports = audit(conn)
         out: list[StatCandidate] = []
         for spec in specs:
             try:
-                candidate = self._scan_one(conn, spec, as_of, cfg)
+                candidate = self._scan_one(conn, spec, as_of, cfg, reports)
             except Exception as exc:  # one bad spec must not sink the batch
                 logger.warning("hypothesis: %s raised %s", spec.id, exc)
                 store.log_outcome(conn, spec, as_of, "no_data", reason=f"error: {exc}")
@@ -115,12 +139,18 @@ class HypothesisScanDetector:
         spec: HypothesisSpec,
         as_of: date,
         cfg: ScanConfig,
+        reports: list[CoverageReport],
     ) -> StatCandidate | None:
         result = validate(conn, spec)
         if not result.ok:
             store.log_outcome(
                 conn, spec, as_of, "invalid", reason=f"{result.code}: {result.reason}"
             )
+            return None
+
+        block = _coverage_block(reports, spec.table)
+        if block is not None:
+            store.log_outcome(conn, spec, as_of, "coverage_blocked", reason=block)
             return None
 
         if spec.window is not None:

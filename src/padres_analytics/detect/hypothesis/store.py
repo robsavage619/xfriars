@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # Terminal outcomes recorded for every processed spec — all visible, none silent.
 OUTCOMES = (
     "invalid",
+    "coverage_blocked",
     "no_data",
     "below_gate",
     "emitted",

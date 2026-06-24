@@ -160,8 +160,29 @@ def test_injured_padre_is_filtered_at_detection(
     assert store.explored(padres_db)[0].outcome == "no_data"
 
 
-def _seed_window(conn: duckdb.DuckDBPyConnection) -> None:
-    """Game-grain batted balls: one hot Padre + 30 league bats over the last week."""
+def _pin_season(conn: duckdb.DuckDBPyConnection, year: int = 2026) -> None:
+    """Pin coverage's notion of 'current season' so it doesn't depend on wall clock."""
+    conn.execute(
+        "INSERT INTO statcast_batting_expected (player_id, player_name, year, pa) "
+        "VALUES (1, 'Seed', ?, 100)",
+        [year],
+    )
+
+
+def _seed_roster(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE team_rosters (
+            player_id INTEGER, team_id INTEGER, season INTEGER,
+            roster_type VARCHAR, status VARCHAR
+        )
+        """
+    )
+    conn.execute("INSERT INTO team_rosters VALUES (665487, 135, 2026, '40Man', 'Active')")
+
+
+def _seed_window(conn: duckdb.DuckDBPyConnection, n_league: int = 30) -> None:
+    """Game-grain batted balls: one hot Padre + ``n_league`` league bats over a week."""
     cols = (
         "(player_id, player_name, season, game_pk, at_bat_number, "
         "pitch_number, game_date, estimated_woba)"
@@ -173,20 +194,13 @@ def _seed_window(conn: duckdb.DuckDBPyConnection) -> None:
             f"INSERT INTO statcast_batted_balls {cols} VALUES (?, ?, 2026, ?, 1, 1, ?, 0.620)",
             [665487, "Tatis Jr., F", gp := gp + 1, d],
         )
-        for p in range(30):
+        for p in range(n_league):
             conn.execute(
                 f"INSERT INTO statcast_batted_balls {cols} VALUES (?, ?, 2026, ?, 1, 1, ?, ?)",
                 [9000 + p, f"Player, {p}", gp := gp + 1, d, 0.230 + p * 0.002],
             )
-    conn.execute(
-        """
-        CREATE TABLE team_rosters (
-            player_id INTEGER, team_id INTEGER, season INTEGER,
-            roster_type VARCHAR, status VARCHAR
-        )
-        """
-    )
-    conn.execute("INSERT INTO team_rosters VALUES (665487, 135, 2026, '40Man', 'Active')")
+    _pin_season(conn)
+    _seed_roster(conn)
 
 
 def test_windowed_spec_on_game_grain_emits(padres_db: duckdb.DuckDBPyConnection) -> None:
@@ -208,3 +222,22 @@ def test_windowed_spec_on_game_grain_emits(padres_db: duckdb.DuckDBPyConnection)
     # claim scope is the window, not the season — honesty gate
     assert "last 15 days" in candidates[0].claim_scope
     assert store.explored(padres_db)[0].outcome == "emitted"
+
+
+def test_thin_coverage_blocks_before_scan(padres_db: duckdb.DuckDBPyConnection) -> None:
+    # statcast_batted_balls is contracted (CONTACT_TREND); 4 league bats is PARTIAL.
+    _seed_window(padres_db, n_league=4)
+    spec = _spec(
+        id="xwoba_l15",
+        label="xwOBA (last 15d)",
+        table="statcast_batted_balls",
+        value_col="estimated_woba",
+        filter_sql="",
+        window={"days": 15},
+    )
+    store.enqueue(padres_db, [spec], AS_OF)
+
+    candidates = HypothesisScanDetector().run(padres_db, AS_OF)
+
+    assert candidates == []
+    assert store.explored(padres_db)[0].outcome == "coverage_blocked"
