@@ -34,6 +34,8 @@ metrics_app = typer.Typer(help="Engagement metrics — record what posts actuall
 app.add_typer(metrics_app, name="metrics")
 article_app = typer.Typer(help="Long-form deep dives — scaffold, render, list, publish to Medium.")
 app.add_typer(article_app, name="article")
+hypothesis_app = typer.Typer(help="LLM-driven discovery — context, enqueue, scan, log.")
+app.add_typer(hypothesis_app, name="hypothesize")
 
 logger = logging.getLogger(__name__)
 
@@ -1776,6 +1778,125 @@ def scan_run(
             typer.echo(f"\n{n} new candidate(s) written.")
         else:
             typer.echo("\n[dry-run] no writes.")
+
+
+# ── pad hypothesize ─────────────────────────────────────────────────────────────
+
+
+@hypothesis_app.command("context")
+def hypothesize_context(
+    as_of: str | None = typer.Option(
+        None, "--date", help="Reference date (YYYY-MM-DD). Defaults to today LA time."
+    ),
+    out: str | None = typer.Option(None, "--out", help="Write the pack to this path."),
+) -> None:
+    """Emit the context pack Claude reasons over to propose hypotheses."""
+    configure_logging()
+    import contextlib
+
+    from padres_analytics.detect.hypothesis.context import build_context_pack
+    from padres_analytics.storage.db import TradesDbNotFoundError, attach_trades, connect
+
+    ref_date = date.fromisoformat(as_of) if as_of else _la_today()
+    with connect(read_only=True) as conn:
+        with contextlib.suppress(TradesDbNotFoundError):
+            attach_trades(conn)
+        pack = build_context_pack(conn, ref_date)
+
+    text = json.dumps(pack, indent=2, default=str)
+    if out:
+        Path(out).write_text(text)
+        typer.echo(f"Context pack written to {out}")
+    else:
+        typer.echo(text)
+
+
+@hypothesis_app.command("enqueue")
+def hypothesize_enqueue(
+    specs_file: str = typer.Argument(..., help="Path to a JSON array of HypothesisSpec objects."),
+    as_of: str | None = typer.Option(None, "--date", help="Reference date (YYYY-MM-DD)."),
+) -> None:
+    """Validate-parse proposed specs and add the new ones to the queue."""
+    configure_logging()
+    from pydantic import ValidationError
+
+    from padres_analytics.detect.hypothesis.spec import HypothesisSpec
+    from padres_analytics.detect.hypothesis.store import enqueue
+    from padres_analytics.storage.db import connect
+
+    ref_date = date.fromisoformat(as_of) if as_of else _la_today()
+    raw = json.loads(Path(specs_file).read_text())
+    if not isinstance(raw, list):
+        typer.echo("Error: specs file must be a JSON array.", err=True)
+        raise typer.Exit(ERR)
+
+    try:
+        specs = [HypothesisSpec.model_validate(item) for item in raw]
+    except ValidationError as exc:
+        typer.echo(f"Error: malformed spec — {exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    with connect() as conn:
+        n = enqueue(conn, specs, ref_date)
+    typer.echo(f"Enqueued {n} new hypothesis(es) ({len(specs) - n} already pending).")
+
+
+@hypothesis_app.command("scan")
+def hypothesize_scan(
+    as_of: str | None = typer.Option(None, "--date", help="Reference date (YYYY-MM-DD)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Scan without writing candidates."),
+    output_json: bool = typer.Option(False, "--json", help="Print emitted candidates as JSON."),
+) -> None:
+    """Validate and scan the pending hypothesis queue; emit survivors."""
+    configure_logging()
+    import padres_analytics.detect.hypothesis.detector  # noqa: F401 — registration
+    from padres_analytics.detect.base import emit, get_detector
+    from padres_analytics.storage.db import TradesDbNotFoundError, attach_trades, connect
+
+    ref_date = date.fromisoformat(as_of) if as_of else _la_today()
+    detector = get_detector("hypothesis")
+
+    with connect() as conn:
+        try:
+            attach_trades(conn)
+        except TradesDbNotFoundError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+        candidates = detector.run(conn, ref_date)
+
+        if output_json:
+            typer.echo(json.dumps([c.model_dump(mode="json") for c in candidates], indent=2))
+        else:
+            typer.echo(f"\nhypothesis: {len(candidates)} candidate(s) cleared the floor\n")
+            for c in candidates:
+                typer.echo(f"  {c.candidate_id[:20]}  score={c.novelty_score:.2f}  {c.subject}")
+
+        if dry_run:
+            typer.echo("\n[dry-run] no candidate writes.")
+        else:
+            n = emit(conn, candidates)
+            typer.echo(f"\n{n} new candidate(s) written.")
+
+
+@hypothesis_app.command("log")
+def hypothesize_log(
+    limit: int = typer.Option(20, "--limit", help="Rows to show."),
+) -> None:
+    """Show the explored-space ledger — what's been tried and how it landed."""
+    configure_logging()
+    from padres_analytics.detect.hypothesis.store import explored
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        rows = explored(conn, limit)
+
+    if not rows:
+        typer.echo("hypothesis log is empty.")
+        return
+    for o in rows:
+        rarity = f"{o.max_rarity:.2f}" if o.max_rarity is not None else "  — "
+        typer.echo(f"  {o.as_of}  {o.outcome:18s}  r={rarity}  {o.metric_id}  · {o.reason}")
 
 
 # ── pad ammo ──────────────────────────────────────────────────────────────────

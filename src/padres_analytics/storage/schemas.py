@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -440,6 +440,34 @@ DDL_STATEMENTS: tuple[str, ...] = (
         explore      VARCHAR,
         interest     DOUBLE,
         status       VARCHAR DEFAULT 'new',
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    # LLM-proposed hypotheses awaiting a scan (the "generate" front of discovery).
+    """
+    CREATE TABLE IF NOT EXISTS hypothesis_queue (
+        spec_hash    VARCHAR PRIMARY KEY,
+        spec_json    JSON NOT NULL,
+        rationale    VARCHAR,
+        as_of        DATE NOT NULL,
+        status       VARCHAR DEFAULT 'pending',
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    # Explored-space ledger — every scanned hypothesis records a terminal outcome
+    # (invalid | no_data | below_gate | emitted | unsupported_window). Fed back
+    # into the context pack so the LLM stops returning to the same well.
+    """
+    CREATE TABLE IF NOT EXISTS hypothesis_log (
+        log_id       VARCHAR PRIMARY KEY,
+        spec_hash    VARCHAR NOT NULL,
+        metric_id    VARCHAR,
+        rationale    VARCHAR,
+        as_of        DATE NOT NULL,
+        outcome      VARCHAR NOT NULL,
+        max_rarity   DOUBLE,
+        candidate_id VARCHAR,
+        reason       VARCHAR,
         created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
