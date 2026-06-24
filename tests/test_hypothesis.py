@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import duckdb
 import pytest
@@ -142,3 +142,69 @@ def test_windowed_spec_on_season_table_is_gated(
 
     assert candidates == []
     assert store.explored(padres_db)[0].outcome == "unsupported_window"
+
+
+def test_injured_padre_is_filtered_at_detection(
+    padres_db: duckdb.DuckDBPyConnection,
+) -> None:
+    _seed(padres_db)
+    # The only Padre with a qualifying row is on the IL — must not surface.
+    padres_db.execute(
+        "UPDATE team_rosters SET status = '60-Day Injured List' WHERE player_id = 665487"
+    )
+    store.enqueue(padres_db, [_spec()], AS_OF)
+
+    candidates = HypothesisScanDetector().run(padres_db, AS_OF)
+
+    assert candidates == []
+    assert store.explored(padres_db)[0].outcome == "no_data"
+
+
+def _seed_window(conn: duckdb.DuckDBPyConnection) -> None:
+    """Game-grain batted balls: one hot Padre + 30 league bats over the last week."""
+    cols = (
+        "(player_id, player_name, season, game_pk, at_bat_number, "
+        "pitch_number, game_date, estimated_woba)"
+    )
+    gp = 0
+    for day in range(8):  # 8 days, all inside a 15-day window ending AS_OF
+        d = AS_OF - timedelta(days=day)
+        conn.execute(
+            f"INSERT INTO statcast_batted_balls {cols} VALUES (?, ?, 2026, ?, 1, 1, ?, 0.620)",
+            [665487, "Tatis Jr., F", gp := gp + 1, d],
+        )
+        for p in range(30):
+            conn.execute(
+                f"INSERT INTO statcast_batted_balls {cols} VALUES (?, ?, 2026, ?, 1, 1, ?, ?)",
+                [9000 + p, f"Player, {p}", gp := gp + 1, d, 0.230 + p * 0.002],
+            )
+    conn.execute(
+        """
+        CREATE TABLE team_rosters (
+            player_id INTEGER, team_id INTEGER, season INTEGER,
+            roster_type VARCHAR, status VARCHAR
+        )
+        """
+    )
+    conn.execute("INSERT INTO team_rosters VALUES (665487, 135, 2026, '40Man', 'Active')")
+
+
+def test_windowed_spec_on_game_grain_emits(padres_db: duckdb.DuckDBPyConnection) -> None:
+    _seed_window(padres_db)
+    spec = _spec(
+        id="xwoba_l15",
+        label="xwOBA (last 15d)",
+        table="statcast_batted_balls",
+        value_col="estimated_woba",
+        filter_sql="",
+        window={"days": 15},
+    )
+    store.enqueue(padres_db, [spec], AS_OF)
+
+    candidates = HypothesisScanDetector().run(padres_db, AS_OF)
+
+    assert len(candidates) == 1
+    assert candidates[0].detector == "hypothesis"
+    # claim scope is the window, not the season — honesty gate
+    assert "last 15 days" in candidates[0].claim_scope
+    assert store.explored(padres_db)[0].outcome == "emitted"

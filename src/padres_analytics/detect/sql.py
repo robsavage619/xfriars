@@ -40,9 +40,11 @@ def resolve_table(conn: duckdb.DuckDBPyConnection, name: str) -> str:
     Returns:
         Qualified table reference (plain name for main., 'hist.name' for fallback).
     """
+    # COUNT(*) rather than MAX(year): game-grain tables key on ``season``/``game_date``
+    # and have no ``year`` column, so a year probe wrongly falls through to hist.
     try:
-        row = conn.execute(f"SELECT MAX(year) FROM {name}").fetchone()
-        if row and row[0] is not None:
+        row = conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()
+        if row and row[0]:
             return name
     except Exception:
         pass

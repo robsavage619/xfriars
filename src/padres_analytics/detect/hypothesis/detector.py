@@ -18,26 +18,49 @@ from padres_analytics.detect.candidates import StatCandidate, make_candidate_id
 from padres_analytics.detect.hypothesis import store
 from padres_analytics.detect.hypothesis.spec import HypothesisSpec
 from padres_analytics.detect.hypothesis.validate import validate
+from padres_analytics.detect.hypothesis.window import date_column, fetch_window_rows
 from padres_analytics.detect.registry import ScanConfig
-from padres_analytics.detect.scanner import _build_candidate, _run_metric
-from padres_analytics.detect.sql import max_year, padre_ids, padre_ids_roster, resolve_table
+from padres_analytics.detect.scanner import _build_candidate, _Hit, _run_metric, lenses_over_rows
+from padres_analytics.detect.sql import max_year, padre_ids, padre_ids_roster
 
 if TYPE_CHECKING:
     import duckdb
 
 logger = logging.getLogger(__name__)
 
-_DATE_COLS = ("game_date", "date")
 
+def _available_subset(conn: duckdb.DuckDBPyConnection, ids: set[int]) -> set[int]:
+    """Restrict ``ids`` to players whose roster status is active/unknown.
 
-def _has_date_column(conn: duckdb.DuckDBPyConnection, table: str) -> bool:
-    src = resolve_table(conn, table)
+    Returns the subset still available — including the empty set when everyone is
+    out (the all-injured case must not silently fall back to the full roster).
+    Degrades to the full input only when the status column itself is absent.
+    """
+    placeholders = ",".join("?" * len(ids))
     try:
-        info = conn.execute(f"PRAGMA table_info('{src}')").fetchall()
-    except Exception:
-        return False
-    cols = {str(r[1]).lower() for r in info}
-    return any(c in cols for c in _DATE_COLS)
+        rows = conn.execute(
+            f"SELECT player_id FROM team_rosters "
+            f"WHERE player_id IN ({placeholders}) "
+            f"AND (status IS NULL OR status ILIKE 'Active')",
+            list(ids),
+        ).fetchall()
+    except Exception:  # no status column / no table — can't filter, don't over-drop
+        return ids
+    return {int(r[0]) for r in rows}
+
+
+def _focal_padres(conn: duckdb.DuckDBPyConnection, roster_year: int) -> set[int]:
+    """Padre subjects for scanning — 40-man, filtered to currently-available players.
+
+    Honors the hard availability gate (never feature an out player): when the
+    40-man is sourced from ``team_rosters``, injured/optioned players are dropped
+    at detection, not just at render. The bwar fallback carries no status, so it
+    is used as-is.
+    """
+    roster = padre_ids_roster(conn, roster_year)
+    if roster:
+        return _available_subset(conn, roster)
+    return padre_ids(conn, roster_year)
 
 
 def _retag(candidate: StatCandidate) -> StatCandidate:
@@ -100,32 +123,12 @@ class HypothesisScanDetector:
             )
             return None
 
-        if spec.window is not None and not _has_date_column(conn, spec.table):
-            store.log_outcome(
-                conn,
-                spec,
-                as_of,
-                "unsupported_window",
-                reason=f"{spec.table} is season-grain; no per-game date column",
-            )
-            return None
-
-        year = max_year(conn, spec.table)
-        if year is None:
-            store.log_outcome(conn, spec, as_of, "no_data", reason="table has no rows")
-            return None
-
-        roster_year = year if year <= as_of.year else as_of.year
-        padres = padre_ids_roster(conn, roster_year) or padre_ids(conn, roster_year)
-        if not padres:
-            store.log_outcome(conn, spec, as_of, "no_data", reason=f"no roster for {roster_year}")
-            return None
-
-        metric = spec.to_metric_spec()
-        hits = _run_metric(conn, metric, year, padres, cfg.min_observation_n)
+        if spec.window is not None:
+            hits = self._scan_windowed(conn, spec, as_of, cfg)
+        else:
+            hits = self._scan_seasonal(conn, spec, as_of, cfg)
         if not hits:
-            store.log_outcome(conn, spec, as_of, "no_data", reason="no qualifying Padre rows")
-            return None
+            return None  # the helper already logged the terminal outcome
 
         best = max(hits, key=lambda h: h.lens_result.rarity)
         if best.lens_result.rarity < cfg.min_rarity:
@@ -150,6 +153,66 @@ class HypothesisScanDetector:
             reason=best.lens_result.framing[:80],
         )
         return candidate
+
+    def _scan_seasonal(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        spec: HypothesisSpec,
+        as_of: date,
+        cfg: ScanConfig,
+    ) -> list[_Hit]:
+        """Season-aggregate path: the metric's own table, compared league-wide."""
+        year = max_year(conn, spec.table)
+        if year is None:
+            store.log_outcome(conn, spec, as_of, "no_data", reason="table has no rows")
+            return []
+
+        roster_year = year if year <= as_of.year else as_of.year
+        padres = _focal_padres(conn, roster_year)
+        if not padres:
+            store.log_outcome(conn, spec, as_of, "no_data", reason=f"no roster for {roster_year}")
+            return []
+
+        hits = _run_metric(conn, spec.to_metric_spec(), year, padres, cfg.min_observation_n)
+        if not hits:
+            store.log_outcome(conn, spec, as_of, "no_data", reason="no qualifying Padre rows")
+        return hits
+
+    def _scan_windowed(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        spec: HypothesisSpec,
+        as_of: date,
+        cfg: ScanConfig,
+    ) -> list[_Hit]:
+        """Rolling last-N-day path: requires a game-grain table with a date column."""
+        date_col = date_column(conn, spec.table)
+        if date_col is None:
+            store.log_outcome(
+                conn,
+                spec,
+                as_of,
+                "unsupported_window",
+                reason=f"{spec.table} is season-grain; no per-event date column",
+            )
+            return []
+
+        padres = _focal_padres(conn, as_of.year)
+        if not padres:
+            store.log_outcome(conn, spec, as_of, "no_data", reason=f"no roster for {as_of.year}")
+            return []
+
+        rows, src = fetch_window_rows(conn, spec, as_of, date_col)
+        # Honest claim scope: the candidate is a last-N-day window, not the season.
+        metric = spec.to_metric_spec().model_copy(
+            update={"coverage": f"last {spec.window.days} days (MLB)"}  # type: ignore[union-attr]
+        )
+        hits = lenses_over_rows(metric, rows, src, as_of.year, padres, cfg.min_observation_n)
+        if not hits:
+            store.log_outcome(
+                conn, spec, as_of, "no_data", reason="no qualifying Padre rows in window"
+            )
+        return hits
 
 
 register(HypothesisScanDetector())

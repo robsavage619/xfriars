@@ -122,6 +122,33 @@ def _run_metric(
         List of _Hit objects from all fired lenses.
     """
     rows, src = _fetch_rows(conn, metric, year)
+    return lenses_over_rows(metric, rows, src, year, padres, min_n)
+
+
+def lenses_over_rows(
+    metric: MetricSpec,
+    rows: list[tuple[int, str, float]],
+    src: str,
+    year: int,
+    padres: set[int],
+    min_n: int,
+) -> list[_Hit]:
+    """Apply a metric's declared lenses to a pre-fetched leaderboard.
+
+    Split out of :func:`_run_metric` so alternative fetch paths (e.g. rolling
+    windows) can reuse the exact same lens logic and gates.
+
+    Args:
+        metric: Metric specification.
+        rows: Leaderboard rows (player_id, player_name, value), best-first.
+        src: Resolved source table (for provenance).
+        year: Season year stamped on the resulting hits.
+        padres: Set of MLBAM IDs to treat as focal subjects.
+        min_n: Minimum population size to run lenses.
+
+    Returns:
+        List of _Hit objects from all fired lenses.
+    """
     if not rows:
         return []
 

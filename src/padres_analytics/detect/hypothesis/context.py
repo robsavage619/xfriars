@@ -22,14 +22,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Tables a hypothesis may scan — the queryable surface advertised to Claude.
-_SCANNABLE_TABLES = (
+# Season-grain tables a hypothesis may scan (no window).
+_SEASON_TABLES = (
     "statcast_batter_exitvelo_barrels",
     "statcast_batting_expected",
     "statcast_sprint_speed",
     "statcast_batter_percentile_ranks",
 )
-_SKIP_COLS = frozenset({"player_id", "year", "ingested_at", "team_id"})
+# Game-grain tables — one row per event, usable with a rolling `window`.
+_GAME_TABLES = ("statcast_batted_balls",)
+_SCANNABLE_TABLES = _SEASON_TABLES + _GAME_TABLES
+_SKIP_COLS = frozenset(
+    {
+        "player_id",
+        "year",
+        "season",
+        "ingested_at",
+        "team_id",
+        "game_pk",
+        "at_bat_number",
+        "pitch_number",
+    }
+)
 
 
 def _rows(conn: duckdb.DuckDBPyConnection, sql: str, params: list | None = None) -> list[tuple]:
@@ -61,7 +75,15 @@ def _catalog(conn: duckdb.DuckDBPyConnection) -> list[dict]:
         cols = _numeric_columns(conn, table)
         if not cols:
             continue
-        catalog.append({"table": table, "max_year": max_year(conn, table), "numeric_columns": cols})
+        catalog.append(
+            {
+                "table": table,
+                "grain": "game" if table in _GAME_TABLES else "season",
+                "supports_window": table in _GAME_TABLES,
+                "max_year": max_year(conn, table),
+                "numeric_columns": cols,
+            }
+        )
     return catalog
 
 
@@ -132,7 +154,9 @@ def build_context_pack(conn: duckdb.DuckDBPyConnection, as_of: date) -> dict:
             "tables/columns in metric_catalog. Do NOT re-propose anything in "
             "'explored' that came back 'below_gate' or 'no_data'. filter_sql and "
             "derived_expr must be pure numeric expressions over listed columns — no "
-            "string literals, no subqueries. Favor angles the existing detectors and "
-            "recent_candidates miss."
+            "string literals, no subqueries. Set a rolling 'window' (e.g. "
+            '{"days": 15}) ONLY on a table with supports_window=true; on those, the '
+            "value_col is averaged per player over the last N days. Favor angles the "
+            "existing detectors and recent_candidates miss."
         ),
     }
