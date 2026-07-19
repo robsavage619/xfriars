@@ -214,6 +214,37 @@ teammates, the exact self-comparison the league-control rule exists to prevent �
 the detector reports why it can't run. It activates on its own once league-wide
 season data is ingested.
 
+## Deep dives: how a study is built
+
+**Question:** a card says a hitter has been unlucky. A study asks why, and what
+would have to be true for it to continue.
+
+A study walks a fixed decomposition — anomaly, components, mechanism, context,
+prediction — and freezes every step. Three rules keep it honest:
+
+- **The walk is decided in advance.** The same questions in the same order, every
+  time. Choosing which questions to ask *after* seeing the data is how a
+  narrative gets fitted to a conclusion.
+- **Every step has three possible verdicts, not two.** A step either found
+  something, found nothing, or **could not be answered** — and the third is
+  reported with its reason rather than quietly dropped. A study states the shape
+  of its own ignorance.
+- **The dossier is frozen before anything is written about it.** Its dump is the
+  digit-audit corpus, exactly as a card's facts are, so the prose can be checked
+  number by number against it. Claude explains the investigation; it never
+  performs it.
+
+The flagship tree, for a wOBA-minus-expected-wOBA gap, asks: how far are results
+from contact quality, and is that rare? Is the gap in getting hits or in the
+damage on them? Is the contact itself any good? Has his approach at the plate
+changed? And what happened to hitters who looked like this before?
+
+That last step currently returns *insufficient* on every study, and says so:
+answering it needs expected stats across at least two seasons to find comparable
+hitters and report what they did next. We have one. Rather than substitute a
+weaker comparison and let it read as the regression argument, the study reports
+that it cannot close that loop yet.
+
 ## The referee: a reasoning check before anything posts
 
 Every gate above catches a **wrong number**. None of them catches a **wrong

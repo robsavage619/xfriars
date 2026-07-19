@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -492,6 +492,23 @@ DDL_STATEMENTS: tuple[str, ...] = (
         as_of        DATE NOT NULL,
         observations INTEGER,
         summary_json JSON,
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    # Frozen study dossiers — the decomposition record a deep dive is written
+    # over. dossier_json is the digit-audit corpus for any narrative that cites
+    # it, exactly as facts_json is for a card.
+    """
+    CREATE TABLE IF NOT EXISTS study_dossiers (
+        study_id     VARCHAR PRIMARY KEY,
+        candidate_id VARCHAR,
+        subject_id   INTEGER NOT NULL,
+        subject_name VARCHAR,
+        tree         VARCHAR NOT NULL,
+        as_of        DATE NOT NULL,
+        digest       VARCHAR NOT NULL,
+        dossier_json JSON NOT NULL,
+        status       VARCHAR DEFAULT 'new',
         created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,

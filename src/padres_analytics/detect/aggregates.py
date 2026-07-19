@@ -44,8 +44,14 @@ _OUT_ZONE = "zone > 9"
 class AggMetric:
     """A rate computed over event rows, with its own denominator.
 
+    The numerator must *imply* the denominator: every row it counts has to be a
+    row the denominator counts too. Otherwise the rate is comparing unrelated
+    populations and can exceed 100% — a chase rate of 99.8% is not a hitter with
+    no discipline, it is a broken fraction.
+
     Attributes:
-        numerator: SQL boolean expression counted in the numerator.
+        numerator: SQL boolean expression counted in the numerator. Must be a
+            subset of the denominator's rows.
         denominator: SQL boolean expression defining the opportunity set. Getting
             this right is the whole game — a chase rate over *all* pitches rather
             than out-of-zone pitches is a different, meaningless stat.
@@ -106,7 +112,7 @@ BATTER_AGGS: tuple[AggMetric, ...] = (
         id="chase_rate",
         label="Chase Rate",
         table="statcast_batter_pitches",
-        numerator=_SWING,
+        numerator=f"{_SWING} AND {_OUT_ZONE}",
         denominator=_OUT_ZONE,
         direction="lower",
         stabilization_n=250,
@@ -128,7 +134,7 @@ BATTER_AGGS: tuple[AggMetric, ...] = (
         id="zone_contact",
         label="Zone Contact",
         table="statcast_batter_pitches",
-        numerator=f"NOT ({_WHIFF})",
+        numerator=f"{_SWING} AND {_IN_ZONE} AND NOT ({_WHIFF})",
         denominator=f"{_SWING} AND {_IN_ZONE}",
         direction="higher",
         stabilization_n=200,
@@ -219,11 +225,12 @@ def fetch_agg_rows(
     return out, sizes, src
 
 
-def numerator_is_subset_of_denominator(metric: AggMetric) -> bool:
-    """Sanity flag for metrics whose numerator must imply the denominator.
+def rate_is_bounded(conn: duckdb.DuckDBPyConnection, metric: AggMetric, year: int) -> bool:
+    """True when no player's rate exceeds 100% — i.e. the fraction is well-formed.
 
-    A whiff is a swing; a zone-contact numerator only counts among in-zone
-    swings. Where that containment doesn't hold the rate can exceed 100%, which
-    is a bug rather than a finding.
+    A cheap invariant check on the numerator-implies-denominator rule. Any
+    violation is a construction bug, not a finding, so this is worth asserting
+    in tests rather than trusting by inspection.
     """
-    return metric.denominator != "TRUE"
+    rows, _sizes, _src = fetch_agg_rows(conn, metric, year)
+    return all(value <= metric.scale + 1e-9 for _pid, _name, value in rows)

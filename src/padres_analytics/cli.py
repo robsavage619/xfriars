@@ -40,6 +40,8 @@ review_app = typer.Typer(help="Referee — agentic reasoning review before anyth
 app.add_typer(review_app, name="review")
 learn_app = typer.Typer(help="Self-learning priors — recompute from editorial decisions.")
 app.add_typer(learn_app, name="learn")
+study_app = typer.Typer(help="Deep-dive studies — decompose a finding into a frozen dossier.")
+app.add_typer(study_app, name="study")
 
 logger = logging.getLogger(__name__)
 
@@ -2467,3 +2469,93 @@ def metrics_from_board(
             recorded += 1
 
     typer.echo(f"\nRecorded {recorded} post(s). Run 'pad learn run' to fold them into ranking.")
+
+
+# ── pad study ──────────────────────────────────────────────────────────────────
+
+
+@study_app.command("run")
+def study_run(
+    subject: str = typer.Argument(..., help="Player MLBAM id, or a candidate id to study."),
+    year: int = typer.Option(0, "--year", help="Season under study. Defaults to current."),
+    as_of: str | None = typer.Option(None, "--date", help="Reference date (YYYY-MM-DD)."),
+) -> None:
+    """Walk a decomposition tree and freeze the dossier."""
+    configure_logging()
+    import contextlib
+
+    from padres_analytics.storage.db import TradesDbNotFoundError, attach_trades, connect
+    from padres_analytics.study import store as study_store
+    from padres_analytics.study.trees import build_gap_study
+
+    ref = date.fromisoformat(as_of) if as_of else _la_today()
+    season = year or ref.year
+
+    with connect() as conn:
+        with contextlib.suppress(TradesDbNotFoundError):
+            attach_trades(conn)
+
+        player_id, candidate_id = _resolve_study_subject(conn, subject)
+        if player_id is None:
+            typer.echo(f"Error: could not resolve {subject!r} to a player.", err=True)
+            raise typer.Exit(ERR)
+
+        dossier = build_gap_study(conn, player_id, season, ref, candidate_id)
+        study_store.save(conn, dossier)
+
+    typer.echo(f"\nStudy {dossier.study_id} — {dossier.subject_name} ({season})")
+    typer.echo(f"{dossier.headline}\n")
+    for node in dossier.nodes:
+        mark = {"fired": "+", "quiet": ".", "insufficient": "?"}[node.verdict]
+        typer.echo(f"  [{mark}] {node.question}")
+        if node.finding:
+            typer.echo(f"      {node.finding}")
+        if node.reason:
+            typer.echo(f"      (could not answer: {node.reason})")
+    typer.echo(f"\n{dossier.summary()}")
+
+
+def _resolve_study_subject(conn: object, subject: str) -> tuple[int | None, str | None]:
+    """Resolve a CLI argument to (player_id, candidate_id)."""
+    if subject.isdigit():
+        return int(subject), None
+    row = conn.execute(  # type: ignore[attr-defined]
+        "SELECT facts_json FROM stat_candidates WHERE candidate_id = ?", [subject]
+    ).fetchone()
+    if row is None:
+        return None, None
+    facts = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    inner = facts.get("facts", {}) if isinstance(facts, dict) else {}
+    pid = inner.get("player_id") or inner.get("padre_player_id")
+    return (int(pid) if pid else None), subject
+
+
+@study_app.command("list")
+def study_list(limit: int = typer.Option(20, "--limit")) -> None:
+    """List recent studies."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+    from padres_analytics.study import store as study_store
+
+    with connect(read_only=True) as conn:
+        rows = study_store.recent(conn, limit)
+    if not rows:
+        typer.echo("No studies yet. Run 'pad study run <player_id>'.")
+        return
+    for study_id, name, tree, ref, status in rows:
+        typer.echo(f"  {study_id}  {ref}  {name:22} {tree:12} {status}")
+
+
+@study_app.command("show")
+def study_show(study_id: str = typer.Argument(..., help="Study id.")) -> None:
+    """Print a stored dossier as JSON — the corpus any narrative is audited against."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+    from padres_analytics.study import store as study_store
+
+    with connect(read_only=True) as conn:
+        dossier = study_store.load(conn, study_id)
+    if dossier is None:
+        typer.echo(f"No study {study_id!r}.", err=True)
+        raise typer.Exit(ERR)
+    typer.echo(json.dumps(dossier.audit_corpus(), indent=2, default=str))

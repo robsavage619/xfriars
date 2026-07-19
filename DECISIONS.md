@@ -127,3 +127,20 @@ An ECDF over `n` players cannot resolve finer than `1/n`: a player who beats eve
 **Decision:** The detector is complete and correct, and gated off by `MIN_COHORT = 30`. The cohort supplying the "how much do players normally move" spread currently contains three players. Dividing by a three-observation standard deviation manufactures large z-scores from nothing, and the cohort would consist of the subject's own teammates — the self-comparison the league-control rule exists to prevent. The gate logs the cohort size and what would unlock it, and the detector activates on its own once league-wide season data is ingested. The VARCHAR casts are fixed and the fetch handler now logs at error level, because a failure that presents as "no story today" is the worst available outcome.
 
 **Consequences:** A built, tested detector sits dormant. That is the right trade against shipping a plausible-looking claim built on a three-player spread — and it is the same class of defect the referee's coverage lens blocked in the split work (a convenience sample described as a league).
+
+## ADR-009 — Study dossiers: frozen decomposition with a third verdict
+
+**Date:** 2026-07-18
+**Status:** Decided (Phase 5 core shipped; compose-to-article deferred)
+
+**Context:** Cards state a finding. A deep dive has to decompose one — anomaly, components, mechanism, context, prediction — and the engine had no structure for that. The risk in building it is obvious: a decomposition chosen after seeing the data is how a narrative gets fitted to a conclusion.
+
+**Decision:**
+- **The walk is fixed in code.** Same questions, same order, every study. Thresholds are decided in advance.
+- **Three verdicts, not two.** `fired`, `quiet`, and `insufficient` — the third carrying a required reason. A study that omits a step it couldn't answer is claiming completeness it doesn't have, so the dossier reports the shape of its own ignorance and `coverage_notes` collects it.
+- **The dossier is frozen and is the digit-audit corpus.** `audit_corpus()` plays the role `facts_json` plays for a card, with a `digest()` for change detection. Claude narrates over it and may not add a number.
+- **The comps node stays `insufficient` rather than substituting a weaker answer.** Finding hitters with a similar *luck profile* and reporting what they did next needs expected stats across two or more seasons; we have one. A bWAR production-similarity comp was built, produced 1913 and 1926 seasons matched on partial-season WAR, and was **deleted** — a weak answer sitting beside an honest "cannot answer" muddies the honesty rather than adding to it.
+
+**Consequences:** `pad study run <player_id|candidate_id>` produces a real decomposition today: gap sized and ranked, gap attributed to average versus power, contact quality percentile-ranked, approach change ruled in or out against how the league's hitters moved, and the regression loop explicitly left open. Schema v15 adds `study_dossiers`.
+
+**What building it caught:** the study's approach node reported a chase rate of 99.8%, which is impossible. The Phase 3 aggregate metrics had numerators that did not imply their denominators — chase counted *all* swings over *out-of-zone* pitches, and zone contact counted all non-whiff rows including takes. Fixed, with an empirical `rate_is_bounded` invariant test over data containing every event type (textual containment can't be asserted, since a whiff is semantically a swing without naming every swing type). Post-fix the rates land on published MLB values: chase median 29.6%, whiff 21.3%, zone contact 86.4%, swing 47.1%. No surfaced claim had used the broken metrics — the contrast candidates that fired were all swing rate — but they were one extreme value away from doing so.
