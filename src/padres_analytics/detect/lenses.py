@@ -40,10 +40,11 @@ def extremeness_lens(
     unit: str,
     claim_scope: str,
     stabilization_n: int,
+    focal_n: int | None = None,
 ) -> LensResult | None:
     """ECDF-tail rarity for a rate or differential metric.
 
-    Applies empirical-Bayes shrinkage toward 0.5 when the population is still
+    Applies empirical-Bayes shrinkage toward 0.5 while the sample is still
     accumulating below stabilization_n. Returns None when the result is below the
     top-20% threshold (rarity < 0.80) — those aren't interesting enough to emit.
 
@@ -57,17 +58,27 @@ def extremeness_lens(
         unit: Unit suffix appended to value (e.g. 'ft/s', '%', '').
         claim_scope: Scope tag for the framing (e.g. 'since_2015').
         stabilization_n: Sample size at which the metric is considered reliable.
+        focal_n: The *focal player's own* observation count (pitches, PAs, batted
+            balls). When supplied this drives the shrinkage, which is what
+            empirical Bayes actually calls for — how much we trust this player's
+            number depends on how much of his data we have, not on how many
+            other players are in the league. Falls back to population size for
+            season-grain metrics that carry no per-player count.
 
     Returns:
         LensResult, or None if the result is unreliable or not notable.
     """
-    n = len(population_values)
-    if n < max(10, stabilization_n // 5):
+    pop_n = len(population_values)
+    if pop_n < 10:
+        return None
+
+    sample_n = focal_n if focal_n is not None else pop_n
+    if sample_n < max(10, stabilization_n // 5):
         return None
 
     ecdf_pct = _ecdf_percentile(population_values, focal_value, higher_is_better)
 
-    shrink = min(1.0, n / stabilization_n)
+    shrink = min(1.0, sample_n / stabilization_n)
     rarity = 0.5 + (ecdf_pct - 0.5) * shrink
     rarity = max(0.0, min(1.0, rarity))
 

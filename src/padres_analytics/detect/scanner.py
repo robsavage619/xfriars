@@ -138,11 +138,12 @@ def lenses_over_rows(
     year: int,
     padres: set[int],
     min_n: int,
+    sample_sizes: dict[int, int] | None = None,
 ) -> list[_Hit]:
     """Apply a metric's declared lenses to a pre-fetched leaderboard.
 
     Split out of :func:`_run_metric` so alternative fetch paths (e.g. rolling
-    windows) can reuse the exact same lens logic and gates.
+    windows, pitch-level aggregates) can reuse the exact same lens logic and gates.
 
     Args:
         metric: Metric specification.
@@ -151,6 +152,9 @@ def lenses_over_rows(
         year: Season year stamped on the resulting hits.
         padres: Set of MLBAM IDs to treat as focal subjects.
         min_n: Minimum population size to run lenses.
+        sample_sizes: Optional per-player observation counts. Supplied by
+            event-grain fetches, where the player's own denominator — not the
+            size of the league — is what shrinkage should rest on.
 
     Returns:
         List of _Hit objects from all fired lenses.
@@ -185,6 +189,7 @@ def lenses_over_rows(
                     unit=metric.unit,
                     claim_scope=metric.coverage,
                     stabilization_n=metric.stabilization_n,
+                    focal_n=sample_sizes.get(pid) if sample_sizes else None,
                 )
 
             elif lens_name == "percentile_elite":
@@ -514,6 +519,183 @@ def _build_leaderboard_candidate(
     )
 
 
+def _scan_aggregates(
+    conn: duckdb.DuckDBPyConnection,
+    year: int,
+    padres: set[int],
+    scan_cfg: ScanConfig,
+) -> list[_Hit]:
+    """Run pitch-level rate metrics, both overall and per curated split."""
+    from padres_analytics.detect.aggregates import BATTER_AGGS, fetch_agg_rows
+    from padres_analytics.detect.splits import CONTRAST_PAIRS
+
+    # Overall, plus each side of every contrast pair — a player can be notable
+    # on one side of a split without the gap itself being notable.
+    split_options: list[object] = [None]
+    for pair in CONTRAST_PAIRS.values():
+        split_options.extend(pair)
+
+    hits: list[_Hit] = []
+    for metric in BATTER_AGGS:
+        for split in split_options:
+            if not metric.accepts(split):  # type: ignore[arg-type]
+                continue
+            rows, sizes, src = fetch_agg_rows(conn, metric, year, split)  # type: ignore[arg-type]
+            if len(rows) < scan_cfg.min_observation_n:
+                continue
+            spec = metric.to_metric_spec(split)  # type: ignore[arg-type]
+            if split is not None:
+                spec = spec.model_copy(update={"coverage": f"{year}, {split.display()}"})  # type: ignore[union-attr]
+            else:
+                spec = spec.model_copy(update={"coverage": str(year)})
+            for hit in lenses_over_rows(
+                spec, rows, src, year, padres, scan_cfg.min_observation_n, sample_sizes=sizes
+            ):
+                hits.append(hit)
+    return hits
+
+
+def _scan_contrasts(
+    conn: duckdb.DuckDBPyConnection,
+    year: int,
+    padres: set[int],
+    as_of: date,
+) -> list[StatCandidate]:
+    """Rank each Padre's split gaps against the league distribution of that gap."""
+    from padres_analytics.detect.aggregates import BATTER_AGGS
+    from padres_analytics.detect.contrast import (
+        MIN_SIDE_OPPORTUNITIES,
+        fetch_contrast_rows,
+        split_contrast_lens,
+    )
+    from padres_analytics.detect.splits import CONTRAST_PAIRS
+
+    out: list[StatCandidate] = []
+    for metric in BATTER_AGGS:
+        for pair_name, (split_a, split_b) in CONTRAST_PAIRS.items():
+            if not (metric.accepts(split_a) and metric.accepts(split_b)):
+                continue
+            try:
+                population = fetch_contrast_rows(conn, metric, split_a, split_b, year)
+            except Exception as exc:
+                logger.warning("scan: contrast %s/%s failed: %s", metric.id, pair_name, exc)
+                continue
+
+            scope = (
+                f"{year}, {split_a.display()} against {split_b.display()}, "
+                f"min {MIN_SIDE_OPPORTUNITIES} each side"
+            )
+            for row in population:
+                if row.player_id not in padres:
+                    continue
+                lr = split_contrast_lens(
+                    focal=row,
+                    population=population,
+                    metric=metric,
+                    split_a=split_a,
+                    split_b=split_b,
+                    claim_scope=scope,
+                )
+                if lr is None:
+                    continue
+                out.append(
+                    _build_contrast_candidate(
+                        row, lr, metric, split_a, split_b, len(population), year, as_of
+                    )
+                )
+    return out
+
+
+def _build_contrast_candidate(
+    row,
+    lr: LensResult,
+    metric,
+    split_a,
+    split_b,
+    population_size: int,
+    year: int,
+    as_of: date,
+) -> StatCandidate:
+    """Build a split-contrast candidate: both sides shown, gap as the story."""
+    dataset = ChartDataset(
+        title=row.player_name.upper(),
+        subtitle=f"{year} · {metric.label} · {split_a.display()} against {split_b.display()}",
+        as_of=as_of,
+        columns=[
+            Column(key="split", label="Split", role="dimension"),
+            Column(
+                key="value",
+                label=metric.label,
+                role="measure",
+                unit=metric.unit or None,
+                format=metric.value_format,
+                higher_is_better=(metric.direction == "higher"),
+            ),
+            Column(key="n", label="Pitches", role="measure", format=".0f"),
+        ],
+        rows=[
+            [split_a.display(), round(row.a_value, 1), row.a_n],
+            [split_b.display(), round(row.b_value, 1), row.b_n],
+        ],
+        framing=lr.framing,
+        source="Baseball Savant",
+        headline=lr.framing,
+        claim_scope=lr.claim_scope,
+        population_label=(
+            f"{population_size} MLB hitters with pitch-level data ingested, {year} "
+            f"— not the full league"
+        ),
+        card_hint="contrast",
+        facts={
+            "player_id": row.player_id,
+            "a_value": round(row.a_value, 1),
+            "b_value": round(row.b_value, 1),
+            "a_n": row.a_n,
+            "b_n": row.b_n,
+            "gap": round(abs(row.diff), 1),
+            "population_size": population_size,
+            "metric_year": year,
+        },
+    )
+
+    score, components = novelty_score(
+        {
+            "rarity": lr.rarity,
+            "magnitude": min(lr.rarity, 0.95),
+            "timeliness": 0.80,
+            "rootability": 0.88,
+            "legibility": 0.85,
+        },
+        detector="scan",
+    )
+    subject = f"SDP|contrast|{metric.id}|{split_a.key()}|{row.player_id}|{year}"
+    cid = make_candidate_id("scan", subject, dataset.model_dump(mode="json"))
+    return StatCandidate(
+        candidate_id=cid,
+        detector="scan",
+        subject=subject,
+        as_of=as_of,
+        category="season",
+        payload_kind="dataset",
+        facts_json=dataset.model_dump(mode="json"),
+        provenance_json=[
+            {
+                "source_table": metric.table,
+                "metric_id": metric.id,
+                "lens": "split_contrast",
+                "split_a": split_a.key(),
+                "split_b": split_b.key(),
+                "year": year,
+                "as_of": str(as_of),
+            }
+        ],
+        coverage_window=f"{year}-{year}",
+        claim_scope=lr.claim_scope,
+        novelty_score=score,
+        novelty_components=components,
+    )
+
+
 def _build_conjunction_candidate(
     group: ConjunctionGroup,
     peer_count: tuple[int, int] | None,
@@ -711,13 +893,34 @@ class GenericScanner:
             logger.debug("scan: metric=%s year=%d hits=%d", metric.id, metric_year, len(hits))
             all_hits.extend(hits)
 
-        if not all_hits:
+        # Pitch-level plate-discipline rates, overall and per split. These reach
+        # the event grain the season-summary tables can't express.
+        event_year = max_year(conn, "statcast_batter_pitches")
+        contrast_candidates: list[StatCandidate] = []
+        if event_year is not None:
+            roster_year = event_year if event_year <= as_of.year else as_of.year
+            event_padres = available_padre_ids(conn, roster_year)
+            if event_padres:
+                agg_hits = _scan_aggregates(conn, event_year, event_padres, scan_cfg)
+                logger.info("scan: %d pitch-level aggregate hit(s)", len(agg_hits))
+                all_hits.extend(agg_hits)
+
+                contrast_candidates = _scan_contrasts(conn, event_year, event_padres, as_of)
+                logger.info("scan: %d split-contrast candidate(s)", len(contrast_candidates))
+
+        if not all_hits and not contrast_candidates:
             return []
+
+        # Contrast candidates are built directly rather than as _Hits, so they
+        # would otherwise sit outside the day's multiplicity accounting. The
+        # battery is every comparison the engine ran today, not just the ones
+        # that happen to flow through one code path.
+        battery_size = len(all_hits) + len(contrast_candidates)
 
         # Gate: rarity floor, then dedup to ONE strongest hit per (player, metric).
         # Collapsing across lenses kills the "same player, same metric, 3 cards" spam.
         floored = [h for h in all_hits if h.lens_result.rarity >= scan_cfg.min_rarity]
-        floored = self._apply_fdr(floored, scan_cfg)
+        floored = self._apply_fdr(floored, scan_cfg, battery_size)
         best: dict[tuple[int, str], _Hit] = {}
         for h in floored:
             key = (h.player_id, h.metric.id)
@@ -760,7 +963,7 @@ class GenericScanner:
             except Exception as exc:
                 logger.debug("scan: scope eval failed: %s", exc)
 
-        candidates: list[StatCandidate] = []
+        candidates: list[StatCandidate] = list(contrast_candidates)
 
         # Conjunctions first: a player elite in several things at once is a better
         # story than any of those things alone, and the members are then spent —
@@ -876,12 +1079,17 @@ class GenericScanner:
         return picked
 
     @staticmethod
-    def _apply_fdr(hits: list[_Hit], scan_cfg: ScanConfig) -> list[_Hit]:
+    def _apply_fdr(
+        hits: list[_Hit], scan_cfg: ScanConfig, battery_size: int | None = None
+    ) -> list[_Hit]:
         """Apply Benjamini-Hochberg correction across the day's test battery.
 
         Args:
             hits: Hits that already cleared the rarity floor.
             scan_cfg: Scan configuration (mode + alpha).
+            battery_size: Total comparisons run today, including paths that don't
+                produce _Hits (split contrasts). Logged so the multiplicity the
+                day actually carried is visible even when correction is advisory.
 
         Returns:
             The surviving hits under ``strict``; the input unchanged otherwise.
@@ -892,10 +1100,11 @@ class GenericScanner:
         surviving = bh_surviving_indices([h.lens_result.rarity for h in hits], scan_cfg.fdr_alpha)
         dropped = len(hits) - len(surviving)
         logger.info(
-            "scan: BH fdr_mode=%s alpha=%.3f battery=%d survivors=%d dropped=%d",
+            "scan: BH fdr_mode=%s alpha=%.3f tested=%d battery=%d survivors=%d dropped=%d",
             scan_cfg.fdr_mode,
             scan_cfg.fdr_alpha,
             len(hits),
+            battery_size if battery_size is not None else len(hits),
             len(surviving),
             dropped,
         )

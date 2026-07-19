@@ -64,3 +64,25 @@ trend, not riding it.
 
 *Every stat above comes from Baseball Savant (Statcast) and the MLB Stats API.
 Numbers on our cards are rounded the way a broadcaster would say them.*
+
+
+## Plate discipline (pitch-level)
+
+**Chase rate** — how often a hitter swings at pitches outside the strike zone,
+out of all the out-of-zone pitches he sees. Lower is better: it means he isn't
+being tempted. Around 28% is average.
+
+**Whiff rate** — how often a swing misses the ball entirely, out of all his
+swings. Lower is better. A foul tip counts as contact, not a whiff.
+
+**Zone contact** — how often he makes contact when he swings at a strike. Higher
+is better; this is the "can he handle the pitches he should handle" number.
+
+**Swing rate** — how often he offers at anything at all. This measures
+aggression, not quality — a high swing rate is neither good nor bad on its own.
+
+**Split gap** — the difference in one of these rates between two situations, like
+against lefties versus righties. What matters isn't the gap itself (everyone has
+one) but whether it's unusually large compared to other hitters. When we report a
+gap we show both numbers, because a wide gap can mean great discipline *or* extreme
+aggression, and those are opposite things.

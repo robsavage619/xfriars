@@ -146,6 +146,46 @@ combination, really?
 **Gate:** combined rarity (geometric mean) must itself clear the rarity floor —
 two mediocre marks never add up to one good story.
 
+## Splits and contrasts: the shape most findings take
+
+**Question:** not "how good is he at this" but "how differently does he do it in
+one situation versus another" — against lefties, against breaking balls, in the
+zone versus out of it.
+
+- **Rates come from pitch-level data**, with the denominator stated: chase rate
+  is swings divided by *out-of-zone pitches*, whiff rate is misses divided by
+  *swings*. A rate over the wrong opportunity set is a different stat wearing
+  the same name.
+- **A gap is ranked against the league's distribution of that same gap**, never
+  against zero. Every hitter has some platoon split; day-to-day variance
+  guarantees a nonzero number. What's notable is where a player's gap sits among
+  everyone else's, so that's what we measure — which keeps the same ECDF and
+  shrinkage machinery valid on a differential.
+- **Both sides are printed, always.** A bare differential hides which term drives
+  it: a wide swing-rate gap can come from elite restraint or from sheer
+  aggression at strikes, and those are opposite stories about a hitter.
+- **Both sides must clear a sample floor**, and the *smaller* side drives the
+  reliability shrinkage — a "platoon split" over 30 pitches is noise wearing a
+  narrative. A player who qualifies on only one side is dropped rather than
+  counted as having no gap.
+- **Not every metric crosses with every split.** Chase rate is *defined* on
+  out-of-zone pitches, so slicing it by zone is incoherent and the engine
+  refuses the combination rather than producing a confident empty number.
+- **The gap's size is ranked, not its sign.** A chase-versus-zone split is
+  negative for every hitter, so ranking the signed value would describe the
+  widest gap in baseball as "narrower than 96%" — true of the number, backwards
+  as English.
+
+**Sample gates:** at least 60 pitches on each side, at least 40 players in the
+gap distribution, and shrinkage toward the mean below each metric's
+stabilization point (swing decisions stabilize much faster than contact
+quality).
+
+**One honest limit:** pitch-level data has been ingested for roughly 135 hitters,
+not all of MLB. Every split claim says so — "wider than 95% of the 135 hitters
+with pitch-level data" — because calling that group "qualified MLB hitters"
+would describe a convenience sample as if it were the league.
+
 ## The referee: a reasoning check before anything posts
 
 Every gate above catches a **wrong number**. None of them catches a **wrong

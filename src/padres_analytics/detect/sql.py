@@ -52,21 +52,29 @@ def resolve_table(conn: duckdb.DuckDBPyConnection, name: str) -> str:
 
 
 def max_year(conn: duckdb.DuckDBPyConnection, table: str) -> int | None:
-    """Return the maximum year in a table, checking main. then hist.
+    """Return the maximum season in a table, checking main. then hist.
+
+    Season-summary tables name the column ``year``; the event-grain Statcast
+    tables name it ``season``. Both are tried, so a caller doesn't have to know
+    which grain it's looking at — returning None for a populated table because
+    of a column-name mismatch fails silently and skips real data.
 
     Args:
         conn: Connection with hist attached.
         table: Unqualified table name.
 
     Returns:
-        Maximum year, or None if table is absent in both schemas.
+        Maximum year, or None if the table is absent or has no year column.
     """
     src = resolve_table(conn, table)
-    try:
-        row = conn.execute(f"SELECT MAX(year) FROM {src}").fetchone()
-        return row[0] if row and row[0] is not None else None
-    except Exception:
-        return None
+    for column in ("year", "season"):
+        try:
+            row = conn.execute(f"SELECT MAX({column}) FROM {src}").fetchone()
+        except Exception:
+            continue
+        if row and row[0] is not None:
+            return int(row[0])
+    return None
 
 
 def padre_ids(conn: duckdb.DuckDBPyConnection, year: int) -> set[int]:
