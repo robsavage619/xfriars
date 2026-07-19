@@ -2643,3 +2643,34 @@ def ingest_league_events_cmd(
                 f"[{name}] {tally['fetched']} fetched, {tally['skipped']} skipped, "
                 f"{tally['failed']} failed, {tally['rows']:,} rows written."
             )
+
+
+@ingest_app.command("league-seasons")
+def ingest_league_seasons_cmd(
+    start: int = typer.Option(2015, "--start", help="First season."),
+    end: int = typer.Option(0, "--end", help="Last season. Defaults to current."),
+    delay: float = typer.Option(1.0, "--delay", help="Seconds between teams."),
+) -> None:
+    """Ingest player-season hitting for all 30 teams — the career-baseline cohort.
+
+    Career-baseline detection judges a player's move against how much players in
+    general move year to year. Sourced one team at a time that cohort was a
+    handful of the subject's own teammates, which is why the detector ships
+    gated off. This fills it.
+    """
+    configure_logging()
+    from padres_analytics.ingest.mlb_api import ingest_league_player_seasons
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_end = end or _la_today().year
+    typer.echo(f"League player seasons: {start}-{ref_end}, {delay}s between teams …")
+
+    with connect() as conn:
+        initialize(conn)
+        tally = ingest_league_player_seasons(conn, start, ref_end, delay_seconds=delay)
+
+    typer.echo(
+        f"\nDone. {tally['teams']} team(s) ingested, {tally['failed']} failed, "
+        f"{tally['rows']:,} rows written."
+    )

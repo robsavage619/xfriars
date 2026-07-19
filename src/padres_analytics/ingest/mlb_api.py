@@ -1613,3 +1613,76 @@ def ingest_leaders(
         run["rows_written"] = total
 
     return total
+
+
+def league_team_ids(conn: duckdb.DuckDBPyConnection) -> list[int]:
+    """Every MLB team id, sourced from standings rather than a hardcoded list.
+
+    A literal list of 30 ids is a slow-motion bug: franchises relocate and
+    rebrand, and a stale constant fails silently by quietly omitting a team.
+    """
+    rows = conn.execute("SELECT DISTINCT team_id FROM standings ORDER BY team_id").fetchall()
+    return [int(r[0]) for r in rows]
+
+
+def ingest_league_player_seasons(
+    conn: duckdb.DuckDBPyConnection,
+    start_season: int,
+    end_season: int,
+    *,
+    delay_seconds: float = 1.0,
+    team_ids: list[int] | None = None,
+) -> dict[str, int]:
+    """Ingest player-season hitting for every team — the cohort career baselines need.
+
+    Career-baseline detection asks whether a player's season departs from his own
+    history, and judges that against how much players *in general* move year to
+    year. Sourced one team at a time, that cohort was ~20 Padres, of whom a
+    handful carried enough prior seasons to contribute — a standard deviation
+    from three observations, drawn from the subject's own teammates. Filling the
+    league is what makes the comparison a comparison.
+
+    Args:
+        conn: Write-mode connection.
+        start_season: First season.
+        end_season: Last season, inclusive.
+        delay_seconds: Pause between teams.
+        team_ids: Override the team list (defaults to every team in standings).
+
+    Returns:
+        ``{"teams": n, "failed": n, "rows": n}``.
+    """
+    teams = team_ids if team_ids is not None else league_team_ids(conn)
+    if not teams:
+        logger.error("league player seasons: no teams found in standings; nothing to do")
+        return {"teams": 0, "failed": 0, "rows": 0}
+
+    tally = {"teams": 0, "failed": 0, "rows": 0}
+    logger.info(
+        "league player seasons: %d team(s), %d-%d (delay %.1fs)",
+        len(teams),
+        start_season,
+        end_season,
+        delay_seconds,
+    )
+    for i, team_id in enumerate(teams, start=1):
+        try:
+            n = ingest_player_seasons(conn, start_season, end_season, team_id)
+            tally["rows"] += n
+            tally["teams"] += 1
+        except Exception as exc:
+            # One franchise's outage must not cost the other twenty-nine.
+            logger.error("league player seasons: team=%d failed: %s", team_id, exc)
+            tally["failed"] += 1
+        if i % 5 == 0:
+            logger.info(
+                "league player seasons: %d/%d teams — %d rows, %d failed",
+                i,
+                len(teams),
+                tally["rows"],
+                tally["failed"],
+            )
+        time.sleep(delay_seconds)
+
+    logger.info("league player seasons complete: %s", tally)
+    return tally

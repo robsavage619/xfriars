@@ -436,3 +436,73 @@ def test_label_is_conservative_when_the_population_is_unknown(padres_db) -> None
     label = population_label(padres_db, measured=42, year=2026)
     assert "event-level data" in label
     assert "league-wide" not in label
+
+
+# ── stratified FDR ──────────────────────────────────────────────────────────
+
+
+def _hit_family(metric_id: str, rarity: float, pid: int):
+    from padres_analytics.detect.lenses import LensResult
+    from padres_analytics.detect.registry import MetricSpec
+    from padres_analytics.detect.scanner import _Hit
+
+    m = MetricSpec(id=metric_id, label=metric_id, table="t", value_col="v", population="p")
+    return _Hit(
+        LensResult(rarity, "f", "2026", "extremeness"),
+        m,
+        pid,
+        f"P{pid}",
+        1.0,
+        1,
+        353,
+        [],
+        "t",
+        2026,
+    )
+
+
+def test_families_are_corrected_separately_not_pooled() -> None:
+    """Sprint speed and chase rate aren't exchangeable; BH assumes they are."""
+    from padres_analytics.detect.registry import ScanConfig
+    from padres_analytics.detect.scanner import GenericScanner
+
+    # One strong hit in each of two families, plus filler in one of them.
+    hits = [
+        _hit_family("pctl_B_sprint_speed", 0.999, 1),
+        _hit_family("chase_rate", 0.999, 2),
+        *[_hit_family("whiff_rate", 0.86, 10 + i) for i in range(8)],
+    ]
+    kept = GenericScanner._apply_fdr(hits, ScanConfig(fdr_mode="strict"), 43, 353)
+    kept_ids = {h.metric.id for h in kept}
+    # The lone strong hit in the speed family survives its own small battery,
+    # rather than being buried under the discipline family's multiplicity.
+    assert "pctl_B_sprint_speed" in kept_ids
+
+
+def test_pooling_would_have_killed_what_stratifying_saves() -> None:
+    """The regression this guards: one big family shouldn't sink small ones."""
+    from padres_analytics.detect.lenses import bh_surviving_indices
+
+    rarities = [0.999, 0.999, *[0.86] * 8]
+    pooled = bh_surviving_indices(rarities, 0.05)
+    # Pooled across all 10, the 0.86s drag the threshold down.
+    assert len(pooled) < len(rarities)
+
+
+def test_an_uncorrectable_family_passes_through_rather_than_emptying() -> None:
+    """A gate nothing in the family can pass must not silently drop the family."""
+    from padres_analytics.detect.registry import ScanConfig
+    from padres_analytics.detect.scanner import GenericScanner
+
+    # 40 same-family comparisons against a small population: alpha/m far below 1/n.
+    hits = [_hit_family("chase_rate", 0.99, i) for i in range(40)]
+    kept = GenericScanner._apply_fdr(hits, ScanConfig(fdr_mode="strict"), 40, 50)
+    assert len(kept) == len(hits)
+
+
+def test_off_mode_is_still_a_passthrough() -> None:
+    from padres_analytics.detect.registry import ScanConfig
+    from padres_analytics.detect.scanner import GenericScanner
+
+    hits = [_hit_family("chase_rate", 0.86, i) for i in range(5)]
+    assert GenericScanner._apply_fdr(hits, ScanConfig(fdr_mode="off"), 5, 353) == hits

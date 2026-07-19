@@ -29,6 +29,7 @@ from padres_analytics.detect.conjunction import (
     count_players_meeting_all,
     evaluate_franchise_scope,
     find_conjunctions,
+    metric_family,
 )
 from padres_analytics.detect.discovery import discover_metrics
 from padres_analytics.detect.lenses import (
@@ -1200,7 +1201,21 @@ class GenericScanner:
         battery_size: int | None = None,
         population_size: int = 0,
     ) -> list[_Hit]:
-        """Apply Benjamini-Hochberg correction across the day's test battery.
+        """Apply Benjamini-Hochberg correction *within metric families*.
+
+        Correcting across the whole day's battery pooled tests that have nothing
+        to do with each other — sprint speed, chase rate and defensive range are
+        not exchangeable, which is the assumption BH rests on. Worse, pooling
+        drove the required threshold below what the method can even resolve: an
+        ECDF over n players cannot produce a p-value proxy smaller than 1/n, so
+        with a large battery the best hitter in baseball could not pass.
+
+        Correcting within families fixes both problems at once. Each family is a
+        set of genuinely related tests, and its smaller m keeps the threshold
+        inside the achievable range — without asking fewer questions overall.
+
+        A family whose correction is still unachievable is reported and passed
+        through rather than silently emptied.
 
         Args:
             hits: Hits that already cleared the rarity floor.
@@ -1217,47 +1232,56 @@ class GenericScanner:
         if scan_cfg.fdr_mode == "off" or not hits:
             return hits
 
-        m = battery_size if battery_size is not None else len(hits)
-        expected_noise = expected_false_discoveries(m, scan_cfg.min_rarity)
-        surviving = bh_surviving_indices([h.lens_result.rarity for h in hits], scan_cfg.fdr_alpha)
-        dropped = len(hits) - len(surviving)
+        m_total = battery_size if battery_size is not None else len(hits)
+        expected_noise = expected_false_discoveries(m_total, scan_cfg.min_rarity)
+
+        families: dict[str, list[int]] = {}
+        for i, hit in enumerate(hits):
+            families.setdefault(metric_family(hit.metric.id), []).append(i)
+
+        survivors: set[int] = set()
+        infeasible: list[str] = []
+        for family, idxs in sorted(families.items()):
+            m_family = len(idxs)
+            if population_size > 0 and not bh_is_feasible(
+                population_size, m_family, scan_cfg.fdr_alpha
+            ):
+                # Cannot be corrected at this resolution — keep the family and say
+                # so, rather than dropping everything in it and calling it a gate.
+                infeasible.append(f"{family}(m={m_family})")
+                survivors.update(idxs)
+                continue
+            local = bh_surviving_indices(
+                [hits[i].lens_result.rarity for i in idxs], scan_cfg.fdr_alpha
+            )
+            survivors.update(idxs[j] for j in local)
 
         logger.info(
-            "scan: BH fdr_mode=%s alpha=%.3f tested=%d battery=%d survivors=%d dropped=%d "
-            "| at floor=%.2f expect ~%.1f of %d by chance",
+            "scan: BH fdr_mode=%s alpha=%.3f tested=%d battery=%d families=%d "
+            "survivors=%d dropped=%d | at floor=%.2f expect ~%.1f of %d by chance",
             scan_cfg.fdr_mode,
             scan_cfg.fdr_alpha,
             len(hits),
-            m,
-            len(surviving),
-            dropped,
+            m_total,
+            len(families),
+            len(survivors),
+            len(hits) - len(survivors),
             scan_cfg.min_rarity,
             expected_noise,
             len(hits),
         )
+        if infeasible:
+            logger.warning(
+                "scan: %d famil(y/ies) too large to correct at population=%d and passed "
+                "through uncorrected: %s",
+                len(infeasible),
+                population_size,
+                ", ".join(infeasible),
+            )
 
         if scan_cfg.fdr_mode == "advisory":
             return hits
-
-        # Refuse to enforce a gate nothing can pass. An ECDF over n players can't
-        # resolve below 1/n, so when that exceeds alpha/m even a perfect result is
-        # discarded — silently emptying the feed and looking like a quiet day.
-        # Only veto when infeasibility is *proven*. An unknown population must
-        # not silently disable the gate — that would be the same failure in
-        # reverse, a filter that quietly stops filtering.
-        if population_size > 0 and not bh_is_feasible(population_size, m, scan_cfg.fdr_alpha):
-            logger.warning(
-                "scan: BH strict is unachievable at this resolution (population=%d gives a "
-                "floor of %.4f; battery=%d needs %.5f). Falling back to advisory — widen the "
-                "ingested population or shrink the daily battery rather than lowering alpha.",
-                population_size,
-                1.0 / population_size if population_size else float("inf"),
-                m,
-                scan_cfg.fdr_alpha / m,
-            )
-            return hits
-
-        return [h for i, h in enumerate(hits) if i in surviving]
+        return [h for i, h in enumerate(hits) if i in survivors]
 
 
 register(GenericScanner())
