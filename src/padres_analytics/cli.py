@@ -2577,3 +2577,50 @@ def study_show(study_id: str = typer.Argument(..., help="Study id.")) -> None:
         typer.echo(f"No study {study_id!r}.", err=True)
         raise typer.Exit(ERR)
     typer.echo(json.dumps(dossier.audit_corpus(), indent=2, default=str))
+
+
+@ingest_app.command("league-events")
+def ingest_league_events_cmd(
+    season: int = typer.Option(0, "--season", help="Season year. Defaults to current."),
+    min_pa: int = typer.Option(100, "--min-pa", help="Plate-appearance floor for 'qualified'."),
+    delay: float = typer.Option(1.5, "--delay", help="Seconds between players."),
+    limit: int | None = typer.Option(None, "--limit", help="Stop after N fetched (trial run)."),
+    fresh_through: str | None = typer.Option(
+        None, "--fresh-through", help="Skip players whose data already reaches this date."
+    ),
+    force: bool = typer.Option(False, "--force", help="Refetch everyone, ignoring freshness."),
+) -> None:
+    """Fill faced-pitch data league-wide — the population split claims compare against.
+
+    Throttled and resumable: an interrupted run picks up where it stopped, and
+    re-running skips whatever is already current. Expect roughly a second per
+    player plus the delay, so a few hundred hitters is a slow trickle rather
+    than a burst against a public service.
+    """
+    configure_logging()
+    from padres_analytics.ingest.statcast_events import ingest_league_batter_pitches
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    ref_season = season or _la_today().year
+    cutoff = None if force else (date.fromisoformat(fresh_through) if fresh_through else None)
+
+    typer.echo(f"League backfill: season {ref_season}, min {min_pa} PA, {delay}s between players.")
+    if cutoff:
+        typer.echo(f"Skipping players already current through {cutoff}.")
+
+    with connect() as conn:
+        initialize(conn)
+        tally = ingest_league_batter_pitches(
+            conn,
+            ref_season,
+            min_pa=min_pa,
+            delay_seconds=delay,
+            fresh_through=cutoff,
+            limit=limit,
+        )
+
+    typer.echo(
+        f"\nDone. {tally['fetched']} fetched, {tally['skipped']} skipped, "
+        f"{tally['failed']} failed, {tally['rows']:,} rows written."
+    )

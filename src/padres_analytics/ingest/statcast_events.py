@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import UTC, datetime
+import time
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from padres_analytics.ingest.runs import record_run
@@ -322,6 +323,122 @@ def ingest_batter_pitches(
         "batter_pitches: inserted %d rows for batter=%d season=%d", len(rows), batter_id, season
     )
     return len(rows)
+
+
+def qualified_batter_ids(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    min_pa: int = 100,
+) -> list[tuple[int, str | None]]:
+    """League-wide qualified hitters for a season, from the expected-stats table.
+
+    This is the comparison universe every split and contrast claim is measured
+    against. Sourcing it from a season-summary table rather than the event table
+    is deliberate: the event table is what we are trying to fill, so using it
+    would only ever return the players already ingested.
+    """
+    rows = conn.execute(
+        """
+        SELECT player_id, ANY_VALUE(player_name)
+        FROM statcast_batting_expected
+        WHERE year = ? AND pa >= ?
+        GROUP BY player_id
+        ORDER BY player_id
+        """,
+        [season, min_pa],
+    ).fetchall()
+    return [(int(r[0]), str(r[1]) if r[1] else None) for r in rows]
+
+
+def ingest_league_batter_pitches(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    *,
+    min_pa: int = 100,
+    delay_seconds: float = 1.5,
+    fresh_through: date | None = None,
+    limit: int | None = None,
+    progress_every: int = 25,
+) -> dict[str, int]:
+    """Fill faced-pitch data league-wide, throttled and resumable.
+
+    Every split contrast and plate-discipline percentile compares a Padre against
+    this population. While it holds only the players we happened to ingest, those
+    claims have to carry a caveat naming the sample — filling it league-wide is
+    what removes the caveat.
+
+    Two things make this safe to run against a public service. Requests are
+    spaced by ``delay_seconds``, so a few hundred players is a slow trickle
+    rather than a burst. And players whose data already reaches ``fresh_through``
+    are skipped, so an interrupted run resumes instead of restarting — which
+    also means re-running costs almost nothing.
+
+    Args:
+        conn: Write-mode connection.
+        season: Season to fill.
+        min_pa: Plate-appearance floor defining "qualified".
+        delay_seconds: Pause between players.
+        fresh_through: Skip players whose latest row is on or after this date.
+        limit: Stop after this many *fetched* players (for a bounded trial run).
+        progress_every: Log a progress line this often.
+
+    Returns:
+        ``{"fetched": n, "skipped": n, "failed": n, "rows": n}``.
+    """
+    players = qualified_batter_ids(conn, season, min_pa)
+    already: dict[int, date] = {}
+    if fresh_through is not None:
+        rows = conn.execute(
+            "SELECT batter_id, MAX(game_date) FROM statcast_batter_pitches "
+            "WHERE season = ? GROUP BY batter_id",
+            [season],
+        ).fetchall()
+        already = {int(r[0]): r[1] for r in rows if r[1] is not None}
+
+    tally = {"fetched": 0, "skipped": 0, "failed": 0, "rows": 0}
+    logger.info(
+        "league backfill: %d qualified batter(s) for %d (delay %.1fs)",
+        len(players),
+        season,
+        delay_seconds,
+    )
+
+    for i, (player_id, player_name) in enumerate(players, start=1):
+        if limit is not None and tally["fetched"] >= limit:
+            logger.info("league backfill: reached limit of %d fetched players", limit)
+            break
+
+        if fresh_through is not None:
+            latest = already.get(player_id)
+            if latest is not None and latest >= fresh_through:
+                tally["skipped"] += 1
+                continue
+
+        try:
+            with record_run(conn, f"baseball-savant/league-pitches/{season}/{player_id}") as run:
+                n = ingest_batter_pitches(conn, season, player_id)
+                run["rows_written"] = n
+            tally["fetched"] += 1
+            tally["rows"] += n
+        except Exception as exc:
+            # One unavailable player must not end a multi-hundred-player run.
+            logger.error("league backfill: player=%s (%s) failed: %s", player_id, player_name, exc)
+            tally["failed"] += 1
+
+        if i % progress_every == 0:
+            logger.info(
+                "league backfill: %d/%d processed — %d fetched, %d skipped, %d failed, %d rows",
+                i,
+                len(players),
+                tally["fetched"],
+                tally["skipped"],
+                tally["failed"],
+                tally["rows"],
+            )
+        time.sleep(delay_seconds)
+
+    logger.info("league backfill complete: %s", tally)
+    return tally
 
 
 def ingest_batter_pitches_for(

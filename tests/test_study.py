@@ -299,3 +299,73 @@ def test_rebinding_a_claim_shape_is_refused() -> None:
     )
     with pytest.raises(ValueError, match="already registered"):
         register_gradable("rebind_test", conflicting)
+
+
+# ── league backfill ─────────────────────────────────────────────────────────
+
+
+def test_qualified_population_comes_from_season_stats_not_the_event_table(padres_db) -> None:
+    """Sourcing from the table being filled would only return who's already there."""
+    from padres_analytics.ingest.statcast_events import qualified_batter_ids
+
+    padres_db.execute(
+        "INSERT INTO statcast_batting_expected (player_id, player_name, year, pa) "
+        "VALUES (1, 'Qualified', 2026, 400), (2, 'Thin', 2026, 40)"
+    )
+    ids = qualified_batter_ids(padres_db, 2026, min_pa=100)
+    assert [pid for pid, _ in ids] == [1]
+
+
+def test_backfill_skips_players_already_current(padres_db, monkeypatch) -> None:
+    """Resumability: an interrupted run must pick up, not restart."""
+    from datetime import date as _date
+
+    from padres_analytics.ingest import statcast_events as ev
+
+    padres_db.execute(
+        "INSERT INTO statcast_batting_expected (player_id, player_name, year, pa) "
+        "VALUES (1, 'Fresh', 2026, 400), (2, 'Stale', 2026, 400)"
+    )
+    padres_db.execute(
+        "INSERT INTO statcast_batter_pitches "
+        "(batter_id, batter_name, season, game_date, game_pk, at_bat_number, pitch_number) "
+        "VALUES (1, 'Fresh', 2026, DATE '2026-07-17', 1, 1, 1)"
+    )
+
+    fetched: list[int] = []
+
+    def _fake_ingest(conn, season, batter_id, *a, **kw):
+        fetched.append(batter_id)
+        return 10
+
+    monkeypatch.setattr(ev, "ingest_batter_pitches", _fake_ingest)
+    monkeypatch.setattr(ev.time, "sleep", lambda _s: None)
+
+    tally = ev.ingest_league_batter_pitches(
+        padres_db, 2026, delay_seconds=0, fresh_through=_date(2026, 7, 15)
+    )
+    assert fetched == [2]  # the current player was not refetched
+    assert tally["skipped"] == 1
+
+
+def test_one_failed_player_does_not_end_the_run(padres_db, monkeypatch) -> None:
+    """A few hundred players must not be lost to a single unavailable one."""
+    from padres_analytics.ingest import statcast_events as ev
+
+    padres_db.execute(
+        "INSERT INTO statcast_batting_expected (player_id, player_name, year, pa) "
+        "VALUES (1, 'A', 2026, 400), (2, 'B', 2026, 400), (3, 'C', 2026, 400)"
+    )
+
+    def _flaky(conn, season, batter_id, *a, **kw):
+        if batter_id == 2:
+            raise RuntimeError("savant unavailable")
+        return 5
+
+    monkeypatch.setattr(ev, "ingest_batter_pitches", _flaky)
+    monkeypatch.setattr(ev.time, "sleep", lambda _s: None)
+
+    tally = ev.ingest_league_batter_pitches(padres_db, 2026, delay_seconds=0)
+    assert tally["fetched"] == 2
+    assert tally["failed"] == 1
+    assert tally["rows"] == 10
