@@ -33,7 +33,9 @@ from padres_analytics.detect.conjunction import (
 from padres_analytics.detect.discovery import discover_metrics
 from padres_analytics.detect.lenses import (
     LensResult,
+    bh_is_feasible,
     bh_surviving_indices,
+    expected_false_discoveries,
     extremeness_lens,
     milestone_proximity_lens,
     percentile_elite_lens,
@@ -696,6 +698,111 @@ def _build_contrast_candidate(
     )
 
 
+def _scan_career_shifts(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    padres: set[int],
+    as_of: date,
+) -> list[StatCandidate]:
+    """Career-baseline shifts: is this a different player than he has been?"""
+    from padres_analytics.detect.changepoint import (
+        MIN_PRIOR_SEASONS,
+        MIN_SEASON_PA,
+        detect_career_shifts,
+        rarity_from_z,
+    )
+    from padres_analytics.storage.coverage import CAREER_BASELINE, audit, can_support
+
+    try:
+        supported, reason = can_support(audit(conn), CAREER_BASELINE)
+    except Exception as exc:  # coverage machinery absent (fixtures) — don't block
+        logger.debug("scan: coverage check unavailable for career shifts: %s", exc)
+        supported, reason = True, ""
+    if not supported:
+        logger.info("scan: career-baseline shifts blocked by coverage: %s", reason)
+        return []
+
+    out: list[StatCandidate] = []
+    for shift in detect_career_shifts(conn, season, padres):
+        rarity = rarity_from_z(shift.z)
+        fmt = shift.value_format
+        dataset = ChartDataset(
+            title=shift.player_name.upper(),
+            subtitle=f"{shift.season} vs his own {shift.prior_seasons}-season baseline",
+            as_of=as_of,
+            columns=[
+                Column(key="period", label="Period", role="dimension"),
+                Column(
+                    key="value",
+                    label=shift.metric_label,
+                    role="measure",
+                    format=fmt,
+                    higher_is_better=True,
+                ),
+            ],
+            rows=[
+                [f"Career ({shift.prior_seasons} seasons)", round(shift.baseline, 3)],
+                [str(shift.season), round(shift.current, 3)],
+            ],
+            framing=shift.framing(),
+            source="MLB Stats API / Baseball Reference",
+            headline=shift.framing(),
+            claim_scope=(
+                f"{shift.season} vs prior {shift.prior_seasons} seasons, min {MIN_SEASON_PA} PA"
+            ),
+            population_label=(
+                f"players with {MIN_PRIOR_SEASONS}+ qualified prior seasons, league drift removed"
+            ),
+            card_hint="contrast",
+            facts={
+                "player_id": shift.player_id,
+                "baseline": round(shift.baseline, 3),
+                "current": round(shift.current, 3),
+                "net_delta": round(shift.net_delta, 3),
+                "league_delta": round(shift.league_delta, 3),
+                "prior_seasons": shift.prior_seasons,
+                "z": round(shift.z, 2),
+                "metric_year": shift.season,
+            },
+        )
+        score, components = novelty_score(
+            {
+                "rarity": rarity,
+                "magnitude": min(rarity, 0.92),
+                "timeliness": 0.85,
+                "rootability": 0.90,
+                "legibility": 0.88,
+            },
+            detector="scan",
+        )
+        subject = f"SDP|career_shift|{shift.metric}|{shift.player_id}|{shift.season}"
+        out.append(
+            StatCandidate(
+                candidate_id=make_candidate_id("scan", subject, dataset.model_dump(mode="json")),
+                detector="scan",
+                subject=subject,
+                as_of=as_of,
+                category="season",
+                payload_kind="dataset",
+                facts_json=dataset.model_dump(mode="json"),
+                provenance_json=[
+                    {
+                        "source_table": "player_season_batting",
+                        "metric_id": shift.metric,
+                        "lens": "career_baseline",
+                        "year": shift.season,
+                        "as_of": str(as_of),
+                    }
+                ],
+                coverage_window=f"{shift.season - shift.prior_seasons}-{shift.season}",
+                claim_scope=dataset.claim_scope,
+                novelty_score=score,
+                novelty_components=components,
+            )
+        )
+    return out
+
+
 def _build_conjunction_candidate(
     group: ConjunctionGroup,
     peer_count: tuple[int, int] | None,
@@ -908,6 +1015,13 @@ class GenericScanner:
                 contrast_candidates = _scan_contrasts(conn, event_year, event_padres, as_of)
                 logger.info("scan: %d split-contrast candidate(s)", len(contrast_candidates))
 
+        # Career baselines: the same player against his own past, not the league.
+        season_padres = available_padre_ids(conn, as_of.year)
+        if season_padres:
+            shift_candidates = _scan_career_shifts(conn, as_of.year, season_padres, as_of)
+            logger.info("scan: %d career-shift candidate(s)", len(shift_candidates))
+            contrast_candidates = [*contrast_candidates, *shift_candidates]
+
         if not all_hits and not contrast_candidates:
             return []
 
@@ -920,7 +1034,8 @@ class GenericScanner:
         # Gate: rarity floor, then dedup to ONE strongest hit per (player, metric).
         # Collapsing across lenses kills the "same player, same metric, 3 cards" spam.
         floored = [h for h in all_hits if h.lens_result.rarity >= scan_cfg.min_rarity]
-        floored = self._apply_fdr(floored, scan_cfg, battery_size)
+        largest_population = max((h.population_size for h in all_hits), default=0)
+        floored = self._apply_fdr(floored, scan_cfg, battery_size, largest_population)
         best: dict[tuple[int, str], _Hit] = {}
         for h in floored:
             key = (h.player_id, h.metric.id)
@@ -1080,7 +1195,10 @@ class GenericScanner:
 
     @staticmethod
     def _apply_fdr(
-        hits: list[_Hit], scan_cfg: ScanConfig, battery_size: int | None = None
+        hits: list[_Hit],
+        scan_cfg: ScanConfig,
+        battery_size: int | None = None,
+        population_size: int = 0,
     ) -> list[_Hit]:
         """Apply Benjamini-Hochberg correction across the day's test battery.
 
@@ -1090,6 +1208,8 @@ class GenericScanner:
             battery_size: Total comparisons run today, including paths that don't
                 produce _Hits (split contrasts). Logged so the multiplicity the
                 day actually carried is visible even when correction is advisory.
+            population_size: Largest comparison universe seen today, used to check
+                whether BH can be satisfied at all before enforcing it.
 
         Returns:
             The surviving hits under ``strict``; the input unchanged otherwise.
@@ -1097,19 +1217,46 @@ class GenericScanner:
         if scan_cfg.fdr_mode == "off" or not hits:
             return hits
 
+        m = battery_size if battery_size is not None else len(hits)
+        expected_noise = expected_false_discoveries(m, scan_cfg.min_rarity)
         surviving = bh_surviving_indices([h.lens_result.rarity for h in hits], scan_cfg.fdr_alpha)
         dropped = len(hits) - len(surviving)
+
         logger.info(
-            "scan: BH fdr_mode=%s alpha=%.3f tested=%d battery=%d survivors=%d dropped=%d",
+            "scan: BH fdr_mode=%s alpha=%.3f tested=%d battery=%d survivors=%d dropped=%d "
+            "| at floor=%.2f expect ~%.1f of %d by chance",
             scan_cfg.fdr_mode,
             scan_cfg.fdr_alpha,
             len(hits),
-            battery_size if battery_size is not None else len(hits),
+            m,
             len(surviving),
             dropped,
+            scan_cfg.min_rarity,
+            expected_noise,
+            len(hits),
         )
+
         if scan_cfg.fdr_mode == "advisory":
             return hits
+
+        # Refuse to enforce a gate nothing can pass. An ECDF over n players can't
+        # resolve below 1/n, so when that exceeds alpha/m even a perfect result is
+        # discarded — silently emptying the feed and looking like a quiet day.
+        # Only veto when infeasibility is *proven*. An unknown population must
+        # not silently disable the gate — that would be the same failure in
+        # reverse, a filter that quietly stops filtering.
+        if population_size > 0 and not bh_is_feasible(population_size, m, scan_cfg.fdr_alpha):
+            logger.warning(
+                "scan: BH strict is unachievable at this resolution (population=%d gives a "
+                "floor of %.4f; battery=%d needs %.5f). Falling back to advisory — widen the "
+                "ingested population or shrink the daily battery rather than lowering alpha.",
+                population_size,
+                1.0 / population_size if population_size else float("inf"),
+                m,
+                scan_cfg.fdr_alpha / m,
+            )
+            return hits
+
         return [h for i, h in enumerate(hits) if i in surviving]
 
 

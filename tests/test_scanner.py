@@ -283,7 +283,8 @@ def test_fdr_advisory_reports_but_never_drops() -> None:
 def test_fdr_strict_drops_borderline_hits() -> None:
     hits = _rarity_hits([0.999, 0.90, 0.87, 0.86, 0.86, 0.85])
     cfg = ScanConfig(fdr_mode="strict")
-    kept = GenericScanner._apply_fdr(hits, cfg)
+    # Population large enough that BH is achievable; see the feasibility veto.
+    kept = GenericScanner._apply_fdr(hits, cfg, 6, 5000)
     assert len(kept) < len(hits)
     # The overwhelming signal always survives multiplicity correction.
     assert max(h.lens_result.rarity for h in kept) == 0.999

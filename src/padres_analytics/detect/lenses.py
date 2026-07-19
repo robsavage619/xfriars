@@ -293,6 +293,51 @@ def percentile_elite_lens(
     )
 
 
+def bh_is_feasible(population_size: int, battery_size: int, alpha: float = 0.05) -> bool:
+    """Can *any* result clear BH correction at this resolution?
+
+    An ECDF over ``n`` players cannot resolve finer than ``1/n`` — a player who
+    beats everyone still only reaches ``1 - 1/n``, so the smallest achievable
+    p-value proxy is ``1/n``. Benjamini-Hochberg needs the best result to clear
+    ``alpha / m``. When ``1/n > alpha / m`` the correction is not merely strict,
+    it is *unachievable*: the best hitter in baseball would be discarded, and a
+    gate that rejects everything is indistinguishable from a broken one.
+
+    With a 135-player population and a 46-comparison battery, the floor is
+    0.0074 against a threshold of 0.0011 — nothing can pass. Larger populations
+    (more ingested players) or a smaller daily battery move this; tuning alpha
+    does not, because both sides scale together.
+
+    Args:
+        population_size: Players in the comparison universe.
+        battery_size: Comparisons run in the day's battery.
+        alpha: FDR level.
+
+    Returns:
+        True when at least the strongest possible result could survive.
+    """
+    if population_size <= 0 or battery_size <= 0:
+        return False
+    return (1.0 / population_size) <= (alpha / battery_size)
+
+
+def expected_false_discoveries(battery_size: int, rarity_floor: float) -> float:
+    """How many hits at this floor are expected from chance alone.
+
+    More useful day to day than a binary gate: it says the noise level out loud.
+    A battery of 46 with a 0.85 floor expects about 7 spurious hits, so a day
+    that surfaces 8 has surfaced approximately nothing.
+
+    Args:
+        battery_size: Comparisons run.
+        rarity_floor: The floor applied.
+
+    Returns:
+        Expected count of chance survivors.
+    """
+    return battery_size * max(0.0, 1.0 - rarity_floor)
+
+
 def bh_surviving_indices(rarities: list[float], alpha: float = 0.05) -> set[int]:
     """Return original indices that survive Benjamini-Hochberg FDR correction.
 

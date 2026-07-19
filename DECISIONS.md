@@ -100,3 +100,30 @@
 **Consequences:** The engine can finally ask a question a fan would ask. First live run surfaced real findings (a hitter whose swing-rate gap between breaking balls and fastballs is wider than 98% of measured hitters) alongside the plate-discipline leaderboards. Multiplicity grew — the daily battery went from ~18 to ~46 comparisons — so BH now logs `tested` and `battery` separately, and contrast candidates are counted in the battery even though they don't flow through the `_Hit` path. FDR stays advisory pending calibration.
 
 **Honesty constraint we had to adopt:** pitch-level data covers roughly 135 hitters, not all of MLB, because event ingest is roster-scoped. Every split claim now says "of the 135 hitters with pitch-level data" rather than "qualified MLB hitters" — the referee's statistician lens blocked the first draft for exactly this, calling a convenience sample a league. A league-wide event backfill would remove the caveat; until then the caveat ships.
+
+## ADR-007 — BH correction is unachievable at our resolution; report the noise floor instead
+
+**Date:** 2026-07-18
+**Status:** Decided
+
+**Context:** ADR-002 mandated FDR control, and the Phase 3 plan called for flipping it from advisory to strict once splits multiplied the daily battery. Every run reported `survivors=0, dropped=31`, which looked like a calibration problem. It is not.
+
+An ECDF over `n` players cannot resolve finer than `1/n`: a player who beats everyone reaches `1 - 1/n`, so the smallest p-value proxy the method can emit is `1/n`. Benjamini-Hochberg requires the strongest result to clear `alpha/m`. With a 135-player ingested population and a 46-comparison battery, that is 0.0074 against a threshold of 0.0011 — **the best hitter in baseball could not pass.** Empirical-Bayes shrinkage makes it strictly worse, since it pulls rarity toward 0.5. Flipping to strict as planned would have silently emptied the feed and read as a run of quiet days.
+
+**Decision:**
+- `bh_is_feasible(population, battery, alpha)` encodes the resolution ceiling. Strict mode **refuses to enforce** when infeasibility is provable, logs why, and falls back to advisory. The veto fires only on proof — an unknown population must not disable the gate, which would be the same failure in reverse.
+- Report `expected_false_discoveries(battery, floor)` every run instead. At a 0.85 floor over 46 comparisons, ~7 hits are expected from chance. This is more useful than a binary verdict: it says out loud that a day surfacing 8 hits surfaced approximately nothing.
+- The real enforced filters are the rarity floor, the sample and stabilization gates, the referee, and human approval. `docs/METHODOLOGY.md` now says this plainly rather than implying FDR is load-bearing.
+
+**Consequences:** Widening the ingested population or narrowing the daily battery makes BH feasible; lowering alpha never does, because both sides scale together. This supersedes the Phase 3 plan's "flip FDR to strict" step, which was wrong.
+
+## ADR-008 — Career-baseline detection ships silent until a league cohort exists
+
+**Date:** 2026-07-18
+**Status:** Decided
+
+**Context:** `detect/changepoint.py` compares a player's season to his own multi-year baseline — the "is he a different player" question. Building it surfaced two data facts. `player_season_batting` is sourced per team (`team_season_hitting/135`), so it holds Padres only, and its stat columns are VARCHAR, so `AVG(ops)` raised an error that an over-broad handler turned into a silent "no shifts today."
+
+**Decision:** The detector is complete and correct, and gated off by `MIN_COHORT = 30`. The cohort supplying the "how much do players normally move" spread currently contains three players. Dividing by a three-observation standard deviation manufactures large z-scores from nothing, and the cohort would consist of the subject's own teammates — the self-comparison the league-control rule exists to prevent. The gate logs the cohort size and what would unlock it, and the detector activates on its own once league-wide season data is ingested. The VARCHAR casts are fixed and the fetch handler now logs at error level, because a failure that presents as "no story today" is the worst available outcome.
+
+**Consequences:** A built, tested detector sits dormant. That is the right trade against shipping a plausible-looking claim built on a three-player spread — and it is the same class of defect the referee's coverage lens blocked in the split work (a convenience sample described as a league).

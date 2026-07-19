@@ -186,6 +186,34 @@ not all of MLB. Every split claim says so — "wider than 95% of the 135 hitters
 with pitch-level data" — because calling that group "qualified MLB hitters"
 would describe a convenience sample as if it were the league.
 
+## Career baselines: is he different from who he has been?
+
+**Question:** every other lens compares a player to the league. This one compares
+him to himself — the question a fan actually asks about a familiar name.
+
+- The baseline is his own prior seasons (at least three, each with 150+ PA).
+  Fewer than that and a "baseline" is one or two numbers wearing a average.
+- **League drift is removed.** The whole league moves year to year — the ball,
+  the rules, the pitching pool — so part of any career-vs-now delta is the era,
+  not the player. We subtract the league's own move over the same span before
+  claiming anything.
+- The residual is judged against **how much players normally move season to
+  season**, not against the player's own noise. A three-season personal standard
+  deviation is far too unstable to divide by.
+
+**Gate:** the cohort supplying that "normal movement" spread must contain at
+least 30 players. Below that, the spread is an accident of a handful of
+observations, and dividing by it manufactures large-looking changes out of
+nothing.
+
+**Status: currently silent, by design.** Our season-level batting table is
+ingested per team, so the cohort is about twenty Padres a season and only a
+handful carry enough prior seasons to contribute. Rather than compare a Padre
+against a three-player spread — which would also mean comparing him to his own
+teammates, the exact self-comparison the league-control rule exists to prevent —
+the detector reports why it can't run. It activates on its own once league-wide
+season data is ingested.
+
 ## The referee: a reasoning check before anything posts
 
 Every gate above catches a **wrong number**. None of them catches a **wrong
@@ -241,10 +269,26 @@ day's battery and log how many hits it would drop.
 
 One honest caveat: the engine ranks effect sizes over an empirical distribution, so
 `1 − rarity` is a **p-value proxy, not a calibrated p-value**. BH over that proxy is
-a multiplicity *check*, not a significance test. It currently runs in advisory mode —
-reported every run, not yet enforced — precisely because we won't turn a gate on
-before the proxy is calibrated against real outcomes. The enforced filters today are
-the rarity floor, the sample/stabilization gates above, and a human approval step.
+a multiplicity *check*, not a significance test.
+
+There is a second, sharper reason it runs in advisory mode, and it's arithmetic
+rather than caution. An ECDF over `n` players cannot resolve finer than `1/n` — a
+player who beats everyone still only reaches `1 − 1/n`. So the smallest p-value the
+method can produce is `1/n`, while BH requires the best result to clear `α/m`. With
+135 players and a 46-comparison battery, that's 0.0074 against a threshold of 0.0011:
+**the best hitter in baseball could not pass.** Enforcing it wouldn't be strict, it
+would reject everything and look like a quiet day. The engine now refuses to enforce
+a gate it can prove is unachievable, and says so in the log. Widening the ingested
+population or narrowing the daily battery fixes this; lowering α does not, because
+both sides scale together.
+
+What we report instead is the **expected noise floor**: at a 0.85 rarity floor over a
+46-comparison battery, roughly 7 hits are expected from chance alone. That's logged
+every run. It's more useful than a binary gate, because it says plainly that a day
+surfacing 8 hits has surfaced approximately nothing.
+
+The enforced filters today are the rarity floor, the sample and stabilization gates
+above, the referee, and a human approval step.
 
 ## Spatial cards: the rigor harness
 

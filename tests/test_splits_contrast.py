@@ -268,3 +268,130 @@ def test_split_narrows_the_aggregate(padres_db) -> None:
     right = fetch_agg_rows(padres_db, _CHASE, 2026, SplitSpec(column="p_throws", value="R"))[0]
     assert left == []  # no LHP faced in the fixture
     assert right
+
+
+# ── multiplicity feasibility ────────────────────────────────────────────────
+
+
+def test_bh_is_unachievable_at_our_population_and_battery() -> None:
+    """An ECDF over n players can't resolve below 1/n; BH needs alpha/m."""
+    from padres_analytics.detect.lenses import bh_is_feasible
+
+    # 135 ingested hitters, 46 comparisons: even a perfect result can't pass.
+    assert bh_is_feasible(population_size=135, battery_size=46, alpha=0.05) is False
+    # A big population and a small battery can.
+    assert bh_is_feasible(population_size=5000, battery_size=3, alpha=0.05) is True
+
+
+def test_strict_mode_falls_back_rather_than_emptying_the_feed() -> None:
+    """A gate nothing can pass is indistinguishable from a broken one."""
+    from padres_analytics.detect.lenses import LensResult
+    from padres_analytics.detect.registry import MetricSpec, ScanConfig
+    from padres_analytics.detect.scanner import GenericScanner, _Hit
+
+    m = MetricSpec(id="x", label="X", table="t", value_col="v", population="p")
+    hits = [
+        _Hit(
+            LensResult(0.99, "f", "2026", "extremeness"), m, i, f"P{i}", 1.0, 1, 135, [], "t", 2026
+        )
+        for i in range(30)
+    ]
+    kept = GenericScanner._apply_fdr(hits, ScanConfig(fdr_mode="strict"), 46, 135)
+    assert len(kept) == len(hits)  # infeasible -> advisory, nothing dropped
+
+    dropped = GenericScanner._apply_fdr(hits, ScanConfig(fdr_mode="strict"), 3, 5000)
+    assert len(dropped) < len(hits)  # feasible -> actually enforced
+
+
+def test_expected_false_discoveries_reports_the_noise_floor() -> None:
+    from padres_analytics.detect.lenses import expected_false_discoveries
+
+    assert expected_false_discoveries(46, 0.85) == pytest.approx(6.9)
+    assert expected_false_discoveries(10, 1.0) == 0.0
+
+
+# ── career baselines ────────────────────────────────────────────────────────
+
+
+def test_career_shift_removes_league_drift() -> None:
+    """A player who moved with the league has not moved."""
+    from padres_analytics.detect.changepoint import CareerShift
+
+    shift = CareerShift(
+        player_id=1,
+        player_name="P",
+        metric="ops",
+        metric_label="OPS",
+        value_format=".3f",
+        current=0.700,
+        baseline=0.800,
+        prior_seasons=4,
+        league_delta=-0.100,
+        cohort_sd=0.050,
+        season=2026,
+    )
+    assert shift.raw_delta == pytest.approx(-0.100)
+    assert shift.net_delta == pytest.approx(0.0)
+    assert shift.z == pytest.approx(0.0)
+
+
+def test_career_shift_z_is_relative_to_how_players_normally_move() -> None:
+    from padres_analytics.detect.changepoint import CareerShift
+
+    shift = CareerShift(
+        player_id=1,
+        player_name="P",
+        metric="ops",
+        metric_label="OPS",
+        value_format=".3f",
+        current=0.900,
+        baseline=0.800,
+        prior_seasons=4,
+        league_delta=0.0,
+        cohort_sd=0.050,
+        season=2026,
+    )
+    assert shift.z == pytest.approx(2.0)
+
+
+def test_career_shift_framing_states_the_baseline_and_the_league_move() -> None:
+    from padres_analytics.detect.changepoint import CareerShift
+
+    shift = CareerShift(
+        player_id=1,
+        player_name="Test Padre",
+        metric="ops",
+        metric_label="OPS",
+        value_format=".3f",
+        current=0.900,
+        baseline=0.800,
+        prior_seasons=4,
+        league_delta=-0.020,
+        cohort_sd=0.050,
+        season=2026,
+    )
+    text = shift.framing()
+    assert "0.800" in text and "0.900" in text
+    assert "4-season baseline" in text
+    assert "league" in text
+
+
+def test_a_thin_cohort_yields_no_shift_at_all(padres_db) -> None:
+    """Three players is not a distribution; dividing by its spread invents z-scores."""
+    from padres_analytics.detect.changepoint import detect_career_shifts
+
+    padres_db.execute(
+        """
+        CREATE TABLE player_season_batting (
+            player_id INTEGER, player_name VARCHAR, season INTEGER, team_id INTEGER,
+            pa INTEGER, ops VARCHAR, obp VARCHAR, slg VARCHAR
+        )
+        """
+    )
+    rows = []
+    for pid in range(3):
+        for season in (2022, 2023, 2024, 2025):
+            rows.append((pid, f"P{pid}", season, 135, 400, "0.800", "0.350", "0.450"))
+        rows.append((pid, f"P{pid}", 2026, 135, 400, "0.500", "0.250", "0.250"))
+    padres_db.executemany("INSERT INTO player_season_batting VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    assert detect_career_shifts(padres_db, 2026, {0, 1, 2}) == []
