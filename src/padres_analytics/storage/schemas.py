@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -529,6 +529,21 @@ DDL_STATEMENTS: tuple[str, ...] = (
         confidence   DOUBLE,
         outcome      VARCHAR NOT NULL,
         reviewed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    # Studio job runs — sync, discovery, ingest. In-memory job state dies with
+    # the server, which loses the answer to "what did last night's run find".
+    # One row per run, steps_json holding the per-step outcome the UI replays.
+    """
+    CREATE TABLE IF NOT EXISTS studio_jobs (
+        run_id      VARCHAR PRIMARY KEY,
+        job         VARCHAR NOT NULL,
+        season      INTEGER,
+        started_at  TIMESTAMP NOT NULL,
+        finished_at TIMESTAMP,
+        ok          BOOLEAN,
+        summary     VARCHAR,
+        steps_json  JSON NOT NULL
     )
     """,
 )

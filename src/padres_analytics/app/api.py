@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from padres_analytics.app import chains, jobs
 from padres_analytics.config import CARDS_DIR, DUCKDB_PATH
 from padres_analytics.detect.candidates import ChartDataset, SpatialDataset, TablePayload
 from padres_analytics.render.cards import RenderError, render
@@ -702,49 +704,72 @@ def update_board_lead_status(lead_id: str, body: StatusUpdate) -> dict[str, str]
 
 # ── Actions — kick the engine from the app ──────────────────────────────────────
 #
-# Sync is a network-bound team pull; it runs on a background thread with a small
-# in-memory status the frontend can poll. Scout is DB-only and fast, so it runs
-# inline and returns the refreshed leads.
+# Long chains (sync, discovery) run as named background jobs with pollable
+# per-step progress; see app/jobs.py. Scout is DB-only and fast, so it stays
+# inline and returns the refreshed leads. No chain calls a model — discovery
+# produces candidates and leads, and the prompt desk hands them to Claude.
 
-_SYNC_STATE: dict[str, Any] = {"running": False, "season": None, "steps": [], "finished_at": None}
+
+def _current_year() -> int:
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.UTC).astimezone().year
 
 
-def _run_sync_job(season: int) -> None:
-    """Background worker: refresh the DB and record per-step results in _SYNC_STATE."""
-    from padres_analytics.ingest.sync import run_sync
-    from padres_analytics.storage.db import connect
-    from padres_analytics.storage.schemas import initialize
-
+def _start_job(job: str, worker_for: Callable[[int], chains.Worker], season: int) -> dict[str, Any]:
+    """Start a named job, reporting the conflict rather than queueing behind it."""
+    yr = season or _current_year()
     try:
-        with connect() as conn:
-            initialize(conn)
-            results = run_sync(conn, season)
-        _SYNC_STATE["steps"] = [{"name": r.name, "ok": r.ok, "detail": r.detail} for r in results]
-    except Exception as exc:
-        logger.exception("sync job failed")
-        _SYNC_STATE["steps"] = [{"name": "sync", "ok": False, "detail": str(exc)}]
+        run = jobs.start(job, worker_for(yr), season=yr)
+    except jobs.JobBusyError as busy:
+        return {"started": False, "running": True, "blocked_by": busy.running}
+    return {"started": True, "running": True, "season": yr, "run_id": run.run_id}
+
+
+def _job_status(job: str) -> dict[str, Any]:
+    """Live job state, falling back to the last persisted run on a cold server."""
+    state = jobs.latest(job)
+    if state is not None:
+        return state
+    conn = _ro()
+    try:
+        persisted = jobs.last_persisted(conn, job)
     finally:
-        _SYNC_STATE["running"] = False
+        conn.close()
+    return persisted or {
+        "job": job,
+        "running": False,
+        "season": None,
+        "steps": [],
+        "started_at": None,
+        "finished_at": None,
+        "ok": None,
+        "summary": "",
+    }
 
 
 @app.post("/api/actions/sync")
 def action_sync(season: int = 0) -> dict[str, Any]:
     """Start a DB refresh on a background thread. Poll /api/actions/sync for status."""
-    import datetime as _dt
-    import threading
-
-    if _SYNC_STATE["running"]:
-        return {"started": False, "running": True}
-    yr = season or _dt.datetime.now(_dt.UTC).astimezone().year
-    _SYNC_STATE.update(running=True, season=yr, steps=[], finished_at=None)
-    threading.Thread(target=_run_sync_job, args=(yr,), daemon=True).start()
-    return {"started": True, "running": True, "season": yr}
+    return _start_job("sync", chains.sync_worker, season)
 
 
 @app.get("/api/actions/sync")
 def action_sync_status() -> dict[str, Any]:
     """Current/last sync status for the Sync button's progress."""
-    return dict(_SYNC_STATE)
+    return _job_status("sync")
+
+
+@app.post("/api/actions/discover")
+def action_discover(season: int = 0) -> dict[str, Any]:
+    """Start the discovery chain: coverage → detect → scan → briefing → scout."""
+    return _start_job("discover", chains.discovery_worker, season)
+
+
+@app.get("/api/actions/discover")
+def action_discover_status() -> dict[str, Any]:
+    """Current/last discovery status for the Run discovery progress."""
+    return _job_status("discover")
 
 
 @app.post("/api/actions/scout")
