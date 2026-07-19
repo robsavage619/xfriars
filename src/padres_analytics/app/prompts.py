@@ -131,6 +131,15 @@ class PromptSpec:
 # ── Dossier assembly ──────────────────────────────────────────────────────────
 
 
+def _readable_subject(
+    conn: duckdb.DuckDBPyConnection, subject: str | None, facts: dict[str, Any]
+) -> str:
+    """Resolve an engine subject key to a player name for the prompt's dossier."""
+    from padres_analytics.daily import _readable_subject as resolve
+
+    return resolve(conn, subject, facts) or (subject or "")
+
+
 def _candidate_row(conn: duckdb.DuckDBPyConnection, candidate_id: str) -> dict[str, Any]:
     row = conn.execute(
         """
@@ -143,13 +152,16 @@ def _candidate_row(conn: duckdb.DuckDBPyConnection, candidate_id: str) -> dict[s
     ).fetchone()
     if row is None:
         raise LookupError(f"candidate {candidate_id!r} not found")
+    facts = json.loads(row[5]) if isinstance(row[5], str) else row[5]
     return {
         "candidate_id": row[0],
         "detector": row[1],
-        "subject": row[2],
+        # Machine subject keys (SDP|CONJUNCTION|665487|2026) tell a writer
+        # nothing about who the post is about.
+        "subject": _readable_subject(conn, row[2], facts),
         "as_of": row[3],
         "novelty_score": row[4],
-        "facts": json.loads(row[5]) if isinstance(row[5], str) else row[5],
+        "facts": facts,
         "provenance": json.loads(row[6]) if isinstance(row[6], str) else (row[6] or {}),
         "claim_scope": row[7],
         "coverage_window": row[8],

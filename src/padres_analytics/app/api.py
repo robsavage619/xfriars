@@ -788,7 +788,7 @@ def get_board() -> dict[str, Any]:
     conn = _ro()
     try:
         cards = [_board_card(c) for c in list_cards(conn)]
-        leads = [_board_lead(land) for land in list_leads(conn)]
+        leads = [_board_lead(land, conn) for land in list_leads(conn)]
     finally:
         conn.close()
     return {"cards": cards, "leads": leads}
@@ -814,11 +814,23 @@ def _board_card(c: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _board_lead(land: dict[str, Any]) -> dict[str, Any]:
-    """Shape a board_leads row for the frontend."""
+def _board_lead(
+    land: dict[str, Any], conn: duckdb.DuckDBPyConnection | None = None
+) -> dict[str, Any]:
+    """Shape a board_leads row for the frontend.
+
+    The subject is humanized here rather than only at write time: leads written
+    before that fix existed still carry machine keys, and the Leads lane is
+    where a human decides what to work on.
+    """
+    subject = land["subject"]
+    if conn is not None:
+        from padres_analytics.daily import _readable_subject
+
+        subject = _readable_subject(conn, subject, {}) or subject
     return {
         "lead_id": land["lead_id"],
-        "subject": land["subject"],
+        "subject": subject,
         "kind": land["kind"],
         "headline": land["headline"],
         "explore": land["explore"],
@@ -1030,7 +1042,7 @@ def action_scout(season: int = 0) -> dict[str, Any]:
     try:
         leads = scout(conn, yr, as_of=today)
         n = add_leads(conn, leads)
-        refreshed = [_board_lead(land) for land in list_leads(conn)]
+        refreshed = [_board_lead(land, conn) for land in list_leads(conn)]
     finally:
         conn.close()
     return {"written": n, "leads": refreshed}

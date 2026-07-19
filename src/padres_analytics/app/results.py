@@ -314,12 +314,13 @@ def land(
 
     if kind == "no_story":
         why = str(payload.get("why", "")).strip() or "no reason given"
-        _archive(payload, "no_story", inbox)
+        saved = _archive(payload, "no_story", inbox)
         return GateResult(
             kind="no_story",
             accepted=True,
             summary=f"Recorded as no story: {why}",
             gates=[{"name": "honest_exit", "ok": True, "detail": why}],
+            saved_to=str(saved),
         )
     if kind == "draft":
         return _ingest_draft_payload(conn, payload, inbox, cards_dir)

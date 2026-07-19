@@ -1,5 +1,21 @@
 // API client — thin fetch wrappers, no external dependencies.
-// The app only reads the board and flips statuses; Sync/Scout kick the engine.
+//
+// The app reads the engine's output and hands prompts out; it never calls a
+// model. Results come back through /results, where the server's gates decide.
+
+import type {
+  Board,
+  BoardLead,
+  Candidate,
+  CoverageReport,
+  Draft,
+  GateOutcome,
+  JobState,
+  PostedItem,
+  Predictions,
+  Prompt,
+  Stats,
+} from "./types.ts";
 
 const BASE = "/api";
 
@@ -11,82 +27,87 @@ async function _json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-export interface BoardCard {
-  card_id: string;
-  kind: "season_story" | "live_moment" | string;
-  subject: string;
-  title: string;
-  headline: string;
-  rank_note: string | null;
-  confidence: string;
-  reconciled: boolean;
-  source: string;
-  caption: string;
-  status: "new" | "queued" | "dismissed" | string;
-  created_at: string;
-  has_image: boolean;
+function _post<T>(path: string, body?: unknown): Promise<T> {
+  return fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).then((r) => _json<T>(r));
 }
-
-export interface BoardLead {
-  lead_id: string;
-  subject: string;
-  kind: string;
-  headline: string;
-  explore: string;
-  interest: number;
-  status: "new" | "exploring" | "dismissed" | string;
-  created_at: string;
-}
-
-export interface Board {
-  cards: BoardCard[];
-  leads: BoardLead[];
-}
-
-export interface SyncStep {
-  name: string;
-  ok: boolean;
-  detail: string;
-}
-
-export interface SyncState {
-  running: boolean;
-  season: number | null;
-  steps: SyncStep[];
-  finished_at: string | null;
-}
-
-// ── Endpoints ─────────────────────────────────────────────────────────────────
 
 export const api = {
+  // ── Board ──────────────────────────────────────────────────────────────────
   board: (): Promise<Board> => fetch(`${BASE}/board`).then((r) => _json<Board>(r)),
 
-  // created_at busts the cache: a re-render writes the same URL with new pixels.
+  // created_at busts the cache: a re-render reuses the URL with new pixels.
   cardImageUrl: (id: string, version?: string): string =>
     `${BASE}/board/cards/${id}/image.png${version ? `?v=${encodeURIComponent(version)}` : ""}`,
 
   setCardStatus: (id: string, status: string): Promise<{ status: string }> =>
-    fetch(`${BASE}/board/cards/${id}/status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    }).then((r) => _json(r)),
+    _post(`/board/cards/${id}/status`, { status }),
 
   setLeadStatus: (id: string, status: string): Promise<{ status: string }> =>
-    fetch(`${BASE}/board/leads/${id}/status`, {
-      method: "POST",
+    _post(`/board/leads/${id}/status`, { status }),
+
+  // ── Desk context ───────────────────────────────────────────────────────────
+  stats: (): Promise<Stats> => fetch(`${BASE}/stats`).then((r) => _json<Stats>(r)),
+
+  coverage: (): Promise<CoverageReport[]> =>
+    fetch(`${BASE}/coverage`).then((r) => _json<CoverageReport[]>(r)),
+
+  predictions: (): Promise<Predictions> =>
+    fetch(`${BASE}/predictions`).then((r) => _json<Predictions>(r)),
+
+  posted: (): Promise<PostedItem[]> =>
+    fetch(`${BASE}/posted`).then((r) => _json<PostedItem[]>(r)),
+
+  // ── Triage ─────────────────────────────────────────────────────────────────
+  candidates: (status = "new"): Promise<Candidate[]> =>
+    fetch(`${BASE}/candidates?status=${status}`).then((r) => _json<Candidate[]>(r)),
+
+  renderCandidate: (id: string): Promise<{ card_path: string }> =>
+    _post(`/candidates/${id}/render`),
+
+  candidateImageUrl: (id: string, bust?: number): string =>
+    `${BASE}/candidates/${id}/card.png${bust ? `?v=${bust}` : ""}`,
+
+  rejectCandidate: (id: string): Promise<unknown> => _post(`/candidates/${id}/reject`),
+
+  // ── Drafts ─────────────────────────────────────────────────────────────────
+  drafts: (status = "pending,verified,approved"): Promise<Draft[]> =>
+    fetch(`${BASE}/drafts?status=${status}`).then((r) => _json<Draft[]>(r)),
+
+  updateDraft: (id: string, text: string): Promise<unknown> =>
+    fetch(`${BASE}/drafts/${id}`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ text }),
     }).then((r) => _json(r)),
 
-  startSync: (): Promise<{ started: boolean; running: boolean }> =>
-    fetch(`${BASE}/actions/sync`, { method: "POST" }).then((r) => _json(r)),
+  approveDraft: (id: string): Promise<unknown> => _post(`/drafts/${id}/approve`),
+  rejectDraft: (id: string): Promise<unknown> => _post(`/drafts/${id}/reject`),
 
-  syncStatus: (): Promise<SyncState> =>
-    fetch(`${BASE}/actions/sync`).then((r) => _json<SyncState>(r)),
+  // ── Prompt desk ────────────────────────────────────────────────────────────
+  divePrompt: (leadId: string): Promise<Prompt> =>
+    fetch(`${BASE}/prompts/dive/${leadId}`).then((r) => _json<Prompt>(r)),
 
-  runScout: (): Promise<{ written: number; leads: BoardLead[] }> =>
-    fetch(`${BASE}/actions/scout`, { method: "POST" }).then((r) => _json(r)),
+  draftPrompt: (candidateId: string): Promise<Prompt> =>
+    fetch(`${BASE}/prompts/draft/${candidateId}`).then((r) => _json<Prompt>(r)),
+
+  reviewPrompt: (draftId: string): Promise<Prompt> =>
+    fetch(`${BASE}/prompts/review/${draftId}`).then((r) => _json<Prompt>(r)),
+
+  hypothesisPrompt: (): Promise<Prompt> =>
+    fetch(`${BASE}/prompts/hypothesis`).then((r) => _json<Prompt>(r)),
+
+  landResult: (text: string): Promise<GateOutcome> => _post("/results", { text }),
+
+  // ── Jobs ───────────────────────────────────────────────────────────────────
+  startJob: (job: "sync" | "discover"): Promise<{ started: boolean; blocked_by?: string }> =>
+    _post(`/actions/${job}`),
+
+  jobStatus: (job: "sync" | "discover"): Promise<JobState> =>
+    fetch(`${BASE}/actions/${job}`).then((r) => _json<JobState>(r)),
+
+  runScout: (): Promise<{ written: number; leads: BoardLead[] }> => _post("/actions/scout"),
 };

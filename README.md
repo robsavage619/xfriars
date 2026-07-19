@@ -10,8 +10,8 @@
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="python 3.12"/></a>
   <a href="https://duckdb.org/"><img src="https://img.shields.io/badge/store-DuckDB-fff100" alt="DuckDB"/></a>
-  <a href="studio/"><img src="https://img.shields.io/badge/studio-React%2019-61dafb" alt="React 19"/></a>
-  <a href="src/padres_analytics/storage/schemas.py"><img src="https://img.shields.io/badge/schema-v11-informational" alt="schema v11"/></a>
+  <a href="studio/"><img src="https://img.shields.io/badge/studio-React%2018-61dafb" alt="React 18"/></a>
+  <a href="src/padres_analytics/storage/schemas.py"><img src="https://img.shields.io/badge/schema-v16-informational" alt="schema v16"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT"/></a>
 </p>
 
@@ -210,12 +210,25 @@ ingest (MLB API + Baseball Savant → padres.db)
 **Backend** — Python 3.12, DuckDB, Playwright. A `typer` CLI (`pad <verb>`) drives
 ingestion, detection, draft management, and posting.
 
-**Frontend (Studio)** — React 19, TypeScript, Vite, Tailwind. Candidate review,
-draft queue, and PNG card preview.
+**Frontend (Studio)** — React 18, TypeScript, Vite, hand-written CSS on the
+brand-v3 token set. Four views following the pipeline: **Desk** (run discovery,
+data freshness, what's waiting), **Triage** (candidates and leads → open a
+prompt), **Drafts** (paste Claude's result, edit captions, referee verdicts,
+approve), **Shipped** (queue, post commands, scorecard, engagement).
+
+**The prompt desk** — the Studio never calls a model. It assembles a prompt
+carrying the full dossier, the coverage windows, the voice rules, and a JSON
+contract; a human runs it in Claude and pastes the deliverable back, where the
+existing gates (digit audit, scope guard, render, verify, referee) decide its
+fate. Pasted output is data, never instructions: it is classified by shape and
+can only enter the path that shape allows.
 
 ```
 src/padres_analytics/
 ├── app/         # FastAPI Studio + Board backend
+│                #   prompts.py — prompt assembly (the handoff to Claude)
+│                #   results.py — paste-back door into the deterministic gates
+│                #   jobs.py / chains.py — named background jobs (sync, discovery)
 ├── detect/      # SQL detectors, generic scan engine (registry, lenses, conjunction, scanner), scout, story, discovery
 ├── ingest/      # MLB API, Statcast (Baseball Savant), live GUMBO poller/serve, ingest-run tracking
 ├── render/      # Playwright PNG renderer, story + spatial templates, D3 bundle, MLB assets
@@ -223,8 +236,8 @@ src/padres_analytics/
 ├── live*.py     # In-game path: GUMBO reads, moment detector, ask intents, live pitcher card
 ├── board.py     # The Board — store + API where cards and scout leads land
 └── tweets/      # Ammo file exporter, draft pipeline, digit audit, scope guard
-studio/          # React SPA — the Board gallery (candidate review + card preview)
-tests/           # pytest suite (247 tests)
+studio/          # React SPA — the production desk (discover → triage → prompt → draft → ship)
+tests/           # pytest suite (529 tests)
 examples/        # Public metric registry + anchor bank (private/ overrides)
 ```
 
