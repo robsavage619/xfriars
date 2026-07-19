@@ -270,7 +270,7 @@ _METRIC_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("expected_outcome", ("xba", "xslg", "xwoba", "est_woba", "xiso", "xera")),
     ("contact_quality", ("exit_velocity", "max_ev", "hard_hit", "barrel", "brl", "sweet_spot")),
     ("swing", ("bat_speed", "swing_length", "squared_up", "blast")),
-    ("discipline", ("chase", "whiff", "k_percent", "bb_percent", "zone_contact")),
+    ("discipline", ("chase", "whiff", "k_percent", "bb_percent", "zone_contact", "swing_rate")),
     ("speed", ("sprint_speed", "baserunning", "steal")),
     ("defense", ("oaa", "arm_strength", "arm_value", "range", "framing", "pop_time")),
     ("power_output", ("home_run", "_hr", "slg", "iso")),
@@ -308,7 +308,11 @@ def metric_family(metric_id: str) -> str:
         The family name, or the metric id itself when it matches none (an
         unmatched metric is treated as its own family — never silently merged).
     """
-    lowered = metric_id.lower()
+    # Strip any split suffix first. ``swing_rate__zone_bucket:heart`` and
+    # ``swing_rate__pitch_class:breaking`` are the same skill measured in two
+    # situations — treating them as separate families let a conjunction claim a
+    # player was elite at two things when it was one thing counted twice.
+    lowered = metric_id.split("__", 1)[0].lower()
     for family, needles in _METRIC_FAMILIES:
         if any(n in lowered for n in needles):
             return family

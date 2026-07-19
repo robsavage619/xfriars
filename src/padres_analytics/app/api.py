@@ -50,23 +50,32 @@ _STUDIO_DIST = Path(__file__).parents[3] / "studio" / "dist"
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
 
-def _ro() -> duckdb.DuckDBPyConnection:
-    """Open a read-only padres.db connection. Caller must close."""
+def _require_db() -> None:
     if not DUCKDB_PATH.exists():
         raise HTTPException(
             status_code=503,
             detail="padres.db not found. Run: uv run pad init",
         )
-    return duckdb.connect(str(DUCKDB_PATH), read_only=True)
+
+
+def _ro() -> duckdb.DuckDBPyConnection:
+    """Open a padres.db connection for reading. Caller must close.
+
+    Deliberately *not* ``read_only=True``. DuckDB refuses to open one file with
+    two different configurations in a single process, so mixing a read-only
+    connection here with the read-write one the status endpoints need made every
+    request after the first of the other kind fail with a configuration error.
+    Since the Studio has to write (queueing and dismissing cards), read-write is
+    the mode both must share.
+    """
+    _require_db()
+    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return duckdb.connect(str(DUCKDB_PATH))
 
 
 def _rw() -> duckdb.DuckDBPyConnection:
     """Open a read-write padres.db connection. Caller must close."""
-    if not DUCKDB_PATH.exists():
-        raise HTTPException(
-            status_code=503,
-            detail="padres.db not found. Run: uv run pad init",
-        )
+    _require_db()
     DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     return duckdb.connect(str(DUCKDB_PATH))
 

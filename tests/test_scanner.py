@@ -375,3 +375,22 @@ def test_conjunction_framing_never_asserts_elite() -> None:
     group = find_conjunctions(hits)[0]
     cand = _build_conjunction_candidate(group, (5, 140), date(2026, 7, 18))
     assert "elite" not in cand.facts_json["headline"].lower()
+
+
+def test_split_variants_of_one_metric_are_the_same_family() -> None:
+    """Swing rate in the zone and vs breaking balls is one skill, measured twice."""
+    variants = [
+        "swing_rate",
+        "swing_rate__zone_bucket:heart",
+        "swing_rate__pitch_class:breaking",
+    ]
+    assert len({metric_family(v) for v in variants}) == 1
+
+
+def test_a_conjunction_cannot_be_built_from_one_metrics_splits() -> None:
+    """Otherwise 'elite at two things' is one thing counted twice."""
+    hits = [
+        _hit_for("swing_rate__zone_bucket:heart", 0.97),
+        _hit_for("swing_rate__pitch_class:breaking", 0.95),
+    ]
+    assert find_conjunctions(hits) == []

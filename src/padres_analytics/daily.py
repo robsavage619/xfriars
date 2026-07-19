@@ -95,6 +95,71 @@ def _run_hypothesis_cycle(conn: duckdb.DuckDBPyConnection, today: date) -> list[
     return notes
 
 
+def _candidate_leads(conn: duckdb.DuckDBPyConnection, limit: int = 6) -> list[str]:
+    """Surface the day's strongest engine candidates on the Board as leads.
+
+    Everything the scan, hypothesis and study paths produce lands in
+    ``stat_candidates`` — which is a table, not a surface anyone looks at. The
+    Board only ever received the single top story angle, so conjunctions, split
+    contrasts, career shifts and studies were invisible in the one place a human
+    actually reviews work. A detector nobody sees is a detector that may as well
+    not run.
+
+    These are queued as *leads*, not cards: they are ranked observations worth a
+    look, not reconciled and rendered posts. The card lane keeps its meaning.
+    """
+    from padres_analytics.board import add_leads
+    from padres_analytics.detect.leads import Lead
+
+    try:
+        # One row per *subject*, newest wins. candidate_id hashes the payload, so
+        # any re-render or reworded framing mints a new id for the same finding —
+        # without this the Board fills with the same claim in four phrasings.
+        rows = conn.execute(
+            """
+            WITH ranked AS (
+                SELECT candidate_id, detector, subject, facts_json, novelty_score,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY subject ORDER BY ingested_at DESC
+                       ) AS rn
+                FROM stat_candidates
+                WHERE status = 'new'
+                  AND ingested_at >= CURRENT_TIMESTAMP - INTERVAL 2 DAY
+            )
+            SELECT candidate_id, detector, subject, facts_json, novelty_score
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY novelty_score DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+    except Exception as exc:
+        logger.warning("daily: candidate leads unavailable: %s", exc)
+        return [f"Could not read candidates for the Board: {exc}"]
+
+    if not rows:
+        return []
+
+    leads: list[Lead] = []
+    for candidate_id, detector, subject, facts_raw, score in rows:
+        facts = json.loads(facts_raw) if isinstance(facts_raw, str) else (facts_raw or {})
+        headline = facts.get("headline") or facts.get("framing") or subject
+        kind = "conjunction" if "conjunction" in (subject or "") else detector
+        leads.append(
+            Lead(
+                subject=subject or candidate_id,
+                kind=kind,
+                headline=str(headline)[:240],
+                explore=f"pad render {candidate_id}  ·  pad review pack {candidate_id} --candidate",
+                interest=float(score),
+            )
+        )
+
+    n = add_leads(conn, leads)
+    return [f"Queued {n} engine candidate(s) on the Board as leads."] if n else []
+
+
 def run_briefing(
     conn: duckdb.DuckDBPyConnection,
     season: int,
@@ -131,6 +196,7 @@ def run_briefing(
         notes.append(f"Learning pass failed (ranking unchanged): {exc}")
 
     notes.extend(_run_hypothesis_cycle(conn, today))
+    notes.extend(_candidate_leads(conn))
 
     angles = discover(conn, season, as_of=today)
     if not angles:
