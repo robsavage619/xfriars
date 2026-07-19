@@ -78,3 +78,33 @@ def test_run_briefing_reports_a_quiet_day(padres_db: duckdb.DuckDBPyConnection) 
     assert b.story is None
     assert any("No story" in n for n in b.notes)
     assert b.scorecard["graded"] == 0  # grading ran, nothing to grade
+
+
+def test_machine_subjects_become_readable_names(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """The Leads lane is where a human picks what to work on — it can't read as a DB dump."""
+    from padres_analytics.daily import _readable_subject
+
+    padres_db.execute(
+        "CREATE TABLE IF NOT EXISTS team_rosters (player_id INTEGER, player_name VARCHAR)"
+    )
+    padres_db.execute(
+        "INSERT INTO team_rosters (player_id, player_name) VALUES (665487, 'Fernando Tatis Jr.')"
+    )
+
+    assert _readable_subject(padres_db, "SDP|CONJUNCTION|665487|2026", {}) == "Fernando Tatis Jr."
+    assert _readable_subject(padres_db, "Manny Machado", {}) == "Manny Machado"
+
+
+def test_facts_name_wins_over_an_id_lookup(padres_db: duckdb.DuckDBPyConnection) -> None:
+    from padres_analytics.daily import _readable_subject
+
+    subject = "SDP|PCTL_B_OAA|999999|2026"
+    assert _readable_subject(padres_db, subject, {"player": "Jackson Merrill"}) == "Jackson Merrill"
+
+
+def test_an_unresolvable_subject_is_left_alone(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Better a machine key than a wrong name."""
+    from padres_analytics.daily import _readable_subject
+
+    subject = "SDP|CONJUNCTION|123456|2026"
+    assert _readable_subject(padres_db, subject, {}) == subject

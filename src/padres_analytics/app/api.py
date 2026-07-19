@@ -112,25 +112,156 @@ def _table_exists(conn: duckdb.DuckDBPyConnection, name: str) -> bool:
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
 
+def _count(conn: duckdb.DuckDBPyConnection, sql: str) -> int:
+    """Single-value COUNT, tolerating a table the schema hasn't created yet."""
+    try:
+        row = conn.execute(sql).fetchone()
+    except duckdb.Error:
+        return 0
+    return int(row[0]) if row and row[0] is not None else 0
+
+
 @app.get("/api/stats")
 def get_stats() -> dict[str, int]:
-    """Dashboard summary counts."""
+    """Dashboard summary counts — one number per lane of the desk."""
     conn = _ro()
     try:
-        new_c = conn.execute("SELECT COUNT(*) FROM stat_candidates WHERE status = 'new'").fetchone()
-        queue = conn.execute(
-            "SELECT COUNT(*) FROM tweet_drafts WHERE status IN ('pending','verified','approved')"
-        ).fetchone()
-        posted = conn.execute(
-            "SELECT COUNT(*) FROM tweet_drafts WHERE status = 'posted'"
-        ).fetchone()
         return {
-            "new_candidates": new_c[0] if new_c else 0,
-            "queue_size": queue[0] if queue else 0,
-            "posted_count": posted[0] if posted else 0,
+            "new_candidates": _count(
+                conn, "SELECT COUNT(*) FROM stat_candidates WHERE status = 'new'"
+            ),
+            "queue_size": _count(
+                conn,
+                "SELECT COUNT(*) FROM tweet_drafts "
+                "WHERE status IN ('pending','verified','approved')",
+            ),
+            "posted_count": _count(conn, "SELECT COUNT(*) FROM tweet_drafts WHERE status='posted'"),
+            "open_leads": _count(
+                conn, "SELECT COUNT(*) FROM board_leads WHERE status != 'dismissed'"
+            ),
+            "board_new": _count(conn, "SELECT COUNT(*) FROM board_cards WHERE status = 'new'"),
+            "board_queued": _count(
+                conn, "SELECT COUNT(*) FROM board_cards WHERE status = 'queued'"
+            ),
         }
     finally:
         conn.close()
+
+
+# ── Coverage, receipts, and history ───────────────────────────────────────────
+
+
+@app.get("/api/coverage")
+def get_coverage() -> list[dict[str, Any]]:
+    """What the database can currently support, and how fresh it is.
+
+    Surfaced on the Desk because stale data has silently produced empty
+    discovery runs before — a degraded domain should be visible before it costs
+    you a night's material, not inferred from the absence of stories.
+    """
+    from padres_analytics.storage import coverage
+
+    conn = _ro()
+    try:
+        reports = coverage.audit(conn)
+    finally:
+        conn.close()
+    return [
+        {
+            "domain": r.domain,
+            "table": r.table,
+            "status": r.status,
+            "rows": r.rows,
+            "seasons": list(r.seasons),
+            "latest_date": r.latest_date.isoformat() if r.latest_date else None,
+            "n_players": r.n_players,
+            "blocks": list(r.blocks),
+            "reason": r.reason,
+        }
+        for r in reports
+    ]
+
+
+@app.get("/api/predictions")
+def get_predictions() -> dict[str, Any]:
+    """The account's batting average on its own calls, plus recent history."""
+    from padres_analytics.predict import scorecard
+
+    conn = _ro()
+    try:
+        card = scorecard(conn)
+        try:
+            rows = conn.execute(
+                "SELECT prediction_id, claim, CAST(posted_at AS VARCHAR), "
+                "CAST(resolves_by AS VARCHAR), outcome "
+                "FROM predictions ORDER BY COALESCE(posted_at, resolves_by) DESC LIMIT 50"
+            ).fetchall()
+        except duckdb.Error:
+            rows = []
+    finally:
+        conn.close()
+    return {
+        "scorecard": card,
+        "recent": [
+            {
+                "prediction_id": r[0],
+                "claim": r[1],
+                "posted_at": r[2],
+                "resolves_by": r[3],
+                "outcome": r[4],
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.get("/api/posted")
+def get_posted() -> list[dict[str, Any]]:
+    """Posted drafts with their latest engagement numbers."""
+    conn = _ro()
+    try:
+        try:
+            rows = conn.execute(
+                """
+                SELECT d.draft_id, d.text, CAST(d.posted_at AS VARCHAR), d.posted_tweet_id,
+                       c.detector, c.subject,
+                       m.impressions, m.likes, m.reposts, m.replies
+                FROM tweet_drafts d
+                LEFT JOIN stat_candidates c ON c.candidate_id = d.candidate_id
+                LEFT JOIN (
+                    SELECT * FROM post_metrics
+                    QUALIFY ROW_NUMBER() OVER (
+                        PARTITION BY posted_tweet_id ORDER BY captured_at DESC
+                    ) = 1
+                ) m ON m.posted_tweet_id = d.posted_tweet_id
+                WHERE d.status = 'posted'
+                ORDER BY d.posted_at DESC
+                """
+            ).fetchall()
+        except duckdb.Error:
+            logger.info("posted history unavailable (post_metrics may not exist yet)")
+            rows = conn.execute(
+                "SELECT draft_id, text, CAST(posted_at AS VARCHAR), posted_tweet_id, "
+                "'', '', NULL, NULL, NULL, NULL FROM tweet_drafts "
+                "WHERE status = 'posted' ORDER BY posted_at DESC"
+            ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "draft_id": r[0],
+            "text": r[1],
+            "posted_at": r[2],
+            "posted_tweet_id": r[3],
+            "detector": r[4],
+            "subject": r[5],
+            "impressions": r[6],
+            "likes": r[7],
+            "reposts": r[8],
+            "replies": r[9],
+        }
+        for r in rows
+    ]
 
 
 # ── Candidates ─────────────────────────────────────────────────────────────────
@@ -324,6 +455,52 @@ def reject_candidate(candidate_id: str) -> dict[str, str]:
 # ── Drafts ─────────────────────────────────────────────────────────────────────
 
 
+def _referee_state(conn: duckdb.DuckDBPyConnection, draft_id: str) -> dict[str, Any] | None:
+    """The panel's standing verdict on a draft, and whether it still applies.
+
+    ``packet_hash`` ties a clearance to exact content. If the caption has been
+    edited since the panel ran, the clearance is stale and the UI has to say so
+    rather than showing a green light the approval gate will refuse to honor.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT lens, verdict, failure_mode, evidence, confidence, outcome, packet_hash "
+            "FROM review_verdicts WHERE target_kind = 'draft' AND target_id = ? "
+            "ORDER BY reviewed_at DESC",
+            [draft_id],
+        ).fetchall()
+    except duckdb.Error:
+        return None
+    if not rows:
+        return None
+
+    packet_hash = rows[0][6]
+    stale = False
+    try:
+        from padres_analytics.review.packet import build_packet
+
+        stale = build_packet(conn, draft_id=draft_id).packet_hash() != packet_hash
+    except Exception:
+        stale = True
+
+    latest = [r for r in rows if r[6] == packet_hash]
+    return {
+        "outcome": latest[0][5],
+        "stale": stale,
+        "failure_modes": sorted({r[2] for r in latest if r[2]}),
+        "lenses": [
+            {
+                "lens": r[0],
+                "verdict": r[1],
+                "failure_mode": r[2],
+                "evidence": r[3],
+                "confidence": r[4],
+            }
+            for r in latest
+        ],
+    }
+
+
 @app.get("/api/drafts")
 def list_drafts(status: str = "pending,verified,approved") -> list[dict[str, Any]]:
     """List tweet drafts, joined with their candidate."""
@@ -364,6 +541,7 @@ def list_drafts(status: str = "pending,verified,approved") -> list[dict[str, Any
                     "novelty_score": round(r[9], 3),
                     "facts": facts,
                     "claim_scope": r[11],
+                    "referee": _referee_state(conn, r[0]),
                 }
             )
         return result

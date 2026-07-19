@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from padres_analytics.board import add_card
 from padres_analytics.caption import build_caption, caption_audit, first_reply
@@ -95,6 +96,50 @@ def _run_hypothesis_cycle(conn: duckdb.DuckDBPyConnection, today: date) -> list[
     return notes
 
 
+_MLBAM_ID = re.compile(r"\b(\d{6})\b")
+
+
+def _readable_subject(
+    conn: duckdb.DuckDBPyConnection, subject: str | None, facts: dict[str, Any]
+) -> str:
+    """Turn an engine subject key into something a human reads.
+
+    Scan and conjunction candidates key on machine strings like
+    ``SDP|CONJUNCTION|665487|2026``. Shown raw, the Board's Leads lane reads as
+    a database dump, and the lane is the one place a human decides what to work
+    on. This resolves the embedded MLBAM id to a player name; it renames, it
+    never derives a number.
+    """
+    if not subject:
+        return ""
+    if "|" not in subject:
+        return subject
+
+    for key in ("player", "player_name", "subject_name"):
+        value = facts.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    match = _MLBAM_ID.search(subject)
+    if match:
+        for table, id_col, name_col in (
+            ("team_rosters", "player_id", "player_name"),
+            ("statcast_batting_expected", "player_id", "player_name"),
+            ("player_season_stats", "player_id", "player_name"),
+        ):
+            try:
+                row = conn.execute(
+                    f"SELECT {name_col} FROM {table} WHERE {id_col} = ? "
+                    f"AND {name_col} IS NOT NULL LIMIT 1",
+                    [int(match.group(1))],
+                ).fetchone()
+            except Exception:  # a table that doesn't exist yet is just another miss
+                continue
+            if row and row[0]:
+                return str(row[0])
+    return subject
+
+
 def _candidate_leads(conn: duckdb.DuckDBPyConnection, limit: int = 6) -> list[str]:
     """Surface the day's strongest engine candidates on the Board as leads.
 
@@ -148,7 +193,7 @@ def _candidate_leads(conn: duckdb.DuckDBPyConnection, limit: int = 6) -> list[st
         kind = "conjunction" if "conjunction" in (subject or "") else detector
         leads.append(
             Lead(
-                subject=subject or candidate_id,
+                subject=_readable_subject(conn, subject, facts) or candidate_id,
                 kind=kind,
                 headline=str(headline)[:240],
                 explore=f"pad render {candidate_id}  ·  pad review pack {candidate_id} --candidate",
