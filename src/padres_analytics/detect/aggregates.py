@@ -274,11 +274,11 @@ def population_label(
         ).fetchone()
     except Exception as exc:
         logger.debug("aggregates: qualified population unavailable: %s", exc)
-        return f"{measured} hitters with pitch-level data"
+        return f"{measured} hitters with event-level data"
 
     qualified = int(row[0]) if row and row[0] else 0
     if qualified <= 0:
-        return f"{measured} hitters with pitch-level data"
+        return f"{measured} hitters with event-level data"
 
     coverage = measured / qualified
     if coverage >= LEAGUE_COVERAGE_THRESHOLD:
@@ -288,8 +288,8 @@ def population_label(
         # measured hitters sit below the PA bar. Attributing a qualification the
         # group doesn't necessarily hold is the same error as calling a partial
         # sample the league, just smaller.
-        return f"{measured} MLB hitters (league-wide pitch-level coverage)"
+        return f"{measured} MLB hitters (league-wide coverage)"
     return (
-        f"{measured} of {qualified} qualified MLB hitters with pitch-level data "
+        f"{measured} of {qualified} qualified MLB hitters with event-level data "
         f"— not the full league"
     )

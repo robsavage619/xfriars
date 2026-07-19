@@ -434,5 +434,5 @@ def test_label_is_conservative_when_the_population_is_unknown(padres_db) -> None
     from padres_analytics.detect.aggregates import population_label
 
     label = population_label(padres_db, measured=42, year=2026)
-    assert "pitch-level data" in label
+    assert "event-level data" in label
     assert "league-wide" not in label
