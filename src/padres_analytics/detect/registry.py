@@ -60,11 +60,23 @@ class ScanConfig(BaseModel):
     top_k: int = 12
     subject_filter: str = "padres"
     fdr_alpha: float = 0.05
+    fdr_mode: Literal["off", "advisory", "strict"] = "advisory"
+    """How Benjamini-Hochberg correction acts on the daily battery.
+
+    ``advisory`` logs how many hits BH would have dropped without dropping them;
+    ``strict`` actually drops non-survivors. Note that ``1 - rarity`` is a
+    p-value *proxy* over an ECDF, not a calibrated p-value — the rarity floor and
+    BH together form a two-layer noise gate, not a significance test.
+    """
     min_observation_n: int = 30
     min_rarity: float = 0.85
     """Rarity floor for surfacing a hit. The daily battery is ranked effect sizes,
-    not independent significance tests, so a floor + the Studio human kill-switch
-    guard against noise. BH FDR (fdr_alpha) is retained for opt-in strict mode."""
+    not independent significance tests, so a floor + BH correction (fdr_mode) +
+    the Studio human kill-switch guard against noise."""
+    star_ids: list[int] = Field(default_factory=list)
+    """Marquee player MLBAM IDs — a non-elite mark still earns a standalone card.
+    Editorial judgment, so it belongs in private/metrics.toml (the closed brain);
+    the scanner falls back to a built-in list when this is empty."""
 
 
 class Registry(BaseModel):

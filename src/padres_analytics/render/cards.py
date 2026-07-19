@@ -303,6 +303,7 @@ _CARD_TEMPLATES: dict[str, str] = {
     "slider": "card_slider.html.j2",
     "scatter": "card_scatter.html.j2",
     "bar": "card_bar.html.j2",
+    "conjunction": "card_conjunction.html.j2",
 }
 
 # Spatial (event-level) cards — each carries the rigor harness. Grows per phase.

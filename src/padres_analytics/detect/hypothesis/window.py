@@ -20,9 +20,34 @@ if TYPE_CHECKING:
     import duckdb
 
 # A per-player window must clear this many events before it's trustworthy.
+# Pitch-grain tables carry far more rows per player per day than batted-ball
+# tables, so a flat floor would let a two-game sample through — hence per-table.
 MIN_WINDOW_EVENTS = 8
+_MIN_EVENTS_BY_TABLE: dict[str, int] = {
+    "statcast_batter_pitches": 50,
+    "statcast_pitches": 50,
+}
+
+# Per-event subject columns. Pitch tables are keyed by the player whose POV they
+# record, so a single hardcoded ``player_id`` silently fails on both of them.
+_ID_COLS_BY_TABLE: dict[str, tuple[str, str]] = {
+    "statcast_batter_pitches": ("batter_id", "batter_name"),
+    "statcast_pitches": ("pitcher_id", "pitcher_name"),
+}
+_DEFAULT_ID_COLS = ("player_id", "player_name")
+
 # Candidate per-event date columns, in priority order.
 _DATE_COLS = ("game_date", "date")
+
+
+def min_events_for(table: str) -> int:
+    """Minimum per-player events required in the window for a given table."""
+    return _MIN_EVENTS_BY_TABLE.get(table.split(".")[-1], MIN_WINDOW_EVENTS)
+
+
+def id_columns_for(table: str) -> tuple[str, str]:
+    """Return the (id_col, name_col) pair identifying the subject of each event."""
+    return _ID_COLS_BY_TABLE.get(table.split(".")[-1], _DEFAULT_ID_COLS)
 
 
 def date_column(conn: duckdb.DuckDBPyConnection, table: str) -> str | None:
@@ -61,15 +86,17 @@ def fetch_window_rows(
     order = "DESC" if spec.direction == "higher" else "ASC"
     where = f"AND ({spec.filter_sql})" if spec.filter_sql else ""
     start = as_of - timedelta(days=spec.window.days)
+    id_col, name_col = id_columns_for(spec.table)
+    min_events = min_events_for(spec.table)
 
     sql = f"""
-        SELECT player_id, ANY_VALUE(player_name), {agg}({spec.value_col})
+        SELECT {id_col}, ANY_VALUE({name_col}), {agg}({spec.value_col})
         FROM {src}
         WHERE {date_col} BETWEEN ? AND ?
           AND {spec.value_col} IS NOT NULL {where}
-        GROUP BY player_id
+        GROUP BY {id_col}
         HAVING COUNT(*) >= ?
         ORDER BY {agg}({spec.value_col}) {order}
     """
-    rows = conn.execute(sql, [start, as_of, MIN_WINDOW_EVENTS]).fetchall()
+    rows = conn.execute(sql, [start, as_of, min_events]).fetchall()
     return [(int(r[0]), fmt_name(str(r[1])), float(r[2])) for r in rows], src

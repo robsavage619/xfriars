@@ -21,47 +21,13 @@ from padres_analytics.detect.hypothesis.validate import validate
 from padres_analytics.detect.hypothesis.window import date_column, fetch_window_rows
 from padres_analytics.detect.registry import ScanConfig
 from padres_analytics.detect.scanner import _build_candidate, _Hit, _run_metric, lenses_over_rows
-from padres_analytics.detect.sql import max_year, padre_ids, padre_ids_roster
+from padres_analytics.detect.sql import available_padre_ids, max_year
 from padres_analytics.storage.coverage import CONTRACT, CoverageReport, audit
 
 if TYPE_CHECKING:
     import duckdb
 
 logger = logging.getLogger(__name__)
-
-
-def _available_subset(conn: duckdb.DuckDBPyConnection, ids: set[int]) -> set[int]:
-    """Restrict ``ids`` to players whose roster status is active/unknown.
-
-    Returns the subset still available — including the empty set when everyone is
-    out (the all-injured case must not silently fall back to the full roster).
-    Degrades to the full input only when the status column itself is absent.
-    """
-    placeholders = ",".join("?" * len(ids))
-    try:
-        rows = conn.execute(
-            f"SELECT player_id FROM team_rosters "
-            f"WHERE player_id IN ({placeholders}) "
-            f"AND (status IS NULL OR status ILIKE 'Active')",
-            list(ids),
-        ).fetchall()
-    except Exception:  # no status column / no table — can't filter, don't over-drop
-        return ids
-    return {int(r[0]) for r in rows}
-
-
-def _focal_padres(conn: duckdb.DuckDBPyConnection, roster_year: int) -> set[int]:
-    """Padre subjects for scanning — 40-man, filtered to currently-available players.
-
-    Honors the hard availability gate (never feature an out player): when the
-    40-man is sourced from ``team_rosters``, injured/optioned players are dropped
-    at detection, not just at render. The bwar fallback carries no status, so it
-    is used as-is.
-    """
-    roster = padre_ids_roster(conn, roster_year)
-    if roster:
-        return _available_subset(conn, roster)
-    return padre_ids(conn, roster_year)
 
 
 def _coverage_block(reports: list[CoverageReport], table: str) -> str | None:
@@ -198,7 +164,7 @@ class HypothesisScanDetector:
             return []
 
         roster_year = year if year <= as_of.year else as_of.year
-        padres = _focal_padres(conn, roster_year)
+        padres = available_padre_ids(conn, roster_year)
         if not padres:
             store.log_outcome(conn, spec, as_of, "no_data", reason=f"no roster for {roster_year}")
             return []
@@ -227,7 +193,7 @@ class HypothesisScanDetector:
             )
             return []
 
-        padres = _focal_padres(conn, as_of.year)
+        padres = available_padre_ids(conn, as_of.year)
         if not padres:
             store.log_outcome(conn, spec, as_of, "no_data", reason=f"no roster for {as_of.year}")
             return []

@@ -258,6 +258,43 @@ class ConjunctionGroup:
     combined_rarity: float
 
 
+# A conjunction is only interesting when its members measure *different* things.
+# Exit velocity, max EV and hard-hit% are three names for one skill: chaining them
+# manufactures a guaranteed-unique claim out of a single underlying trait, and the
+# geometric-mean rarity treats correlated marks as if they were independent.
+# One member per family, so "elite at X and Y" means two genuinely separate things.
+_METRIC_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("expected_outcome", ("xba", "xslg", "xwoba", "est_woba", "xiso", "gap_woba", "xera")),
+    ("contact_quality", ("exit_velocity", "max_ev", "hard_hit", "barrel", "brl", "sweet_spot")),
+    ("swing", ("bat_speed", "swing_length", "squared_up", "blast")),
+    ("discipline", ("chase", "whiff", "k_percent", "bb_percent", "zone_contact")),
+    ("speed", ("sprint_speed", "baserunning", "steal")),
+    ("defense", ("oaa", "arm_strength", "arm_value", "range", "framing", "pop_time")),
+    ("power_output", ("home_run", "_hr", "slg", "iso")),
+    ("velocity", ("fastball_velo", "release_speed", "spin")),
+)
+
+# More than this and a card stops being a story and becomes a stat dump.
+MAX_CONJUNCTION_MEMBERS = 3
+
+
+def metric_family(metric_id: str) -> str:
+    """Coarse family for a metric id — correlated metrics share one.
+
+    Args:
+        metric_id: A registry or discovered metric id (e.g. ``pctl_B_max_ev``).
+
+    Returns:
+        The family name, or the metric id itself when it matches none (an
+        unmatched metric is treated as its own family — never silently merged).
+    """
+    lowered = metric_id.lower()
+    for family, needles in _METRIC_FAMILIES:
+        if any(n in lowered for n in needles):
+            return family
+    return metric_id
+
+
 def find_conjunctions(hits: list) -> list[ConjunctionGroup]:
     """Group _Hit objects by player; return groups with 2+ distinct metrics.
 
@@ -278,21 +315,27 @@ def find_conjunctions(hits: list) -> list[ConjunctionGroup]:
 
     groups: list[ConjunctionGroup] = []
     for pid, player_hits in by_player.items():
-        distinct_metrics = list({h.metric.id: h for h in player_hits}.keys())
-        if len(distinct_metrics) < 2:
+        # One hit per *family* (best rarity), not per metric — see _METRIC_FAMILIES.
+        best_per_family: dict[str, Any] = {}
+        for h in player_hits:
+            fam = metric_family(h.metric.id)
+            if (
+                fam not in best_per_family
+                or h.lens_result.rarity > best_per_family[fam].lens_result.rarity
+            ):
+                best_per_family[fam] = h
+
+        if len(best_per_family) < 2:
             continue
 
-        # One hit per metric (best rarity)
-        best_per_metric: dict[str, Any] = {}
-        for h in player_hits:
-            mid = h.metric.id
-            if (
-                mid not in best_per_metric
-                or h.lens_result.rarity > best_per_metric[mid].lens_result.rarity
-            ):
-                best_per_metric[mid] = h
+        # Strongest few, so the claim stays legible and the independence
+        # assumption behind the geometric mean stays defensible.
+        selected = sorted(
+            best_per_family.values(),
+            key=lambda h: h.lens_result.rarity,
+            reverse=True,
+        )[:MAX_CONJUNCTION_MEMBERS]
 
-        selected = list(best_per_metric.values())
         rarities = [h.lens_result.rarity for h in selected]
         combined = math.prod(rarities) ** (1.0 / len(rarities))
 
@@ -305,7 +348,7 @@ def find_conjunctions(hits: list) -> list[ConjunctionGroup]:
                 player_id=pid,
                 player_name=player_name,
                 hits=selected,
-                metric_ids=list(best_per_metric.keys()),
+                metric_ids=[h.metric.id for h in selected],
                 combined_framing=combined_framing,
                 combined_rarity=combined,
             )
@@ -313,3 +356,66 @@ def find_conjunctions(hits: list) -> list[ConjunctionGroup]:
 
     groups.sort(key=lambda g: g.combined_rarity, reverse=True)
     return groups
+
+
+def count_players_meeting_all(
+    conn: duckdb.DuckDBPyConnection,
+    hits: list,
+) -> int | None:
+    """Count MLB players who simultaneously meet every member hit's mark.
+
+    This is what earns a "one of N players" claim. Without it, a conjunction is
+    just two facts printed next to each other; with it, the compound itself is
+    the finding. Each member contributes a threshold at the focal player's own
+    value (``>=`` for higher-is-better metrics, ``<=`` otherwise), so the count
+    answers: how many players are at least this good at all of these at once?
+
+    Args:
+        conn: DB connection.
+        hits: Member _Hit objects (one per distinct metric).
+
+    Returns:
+        Player count, or None when the members span tables/years that can't be
+        joined or any query fails — callers must fall back to plain conjunction
+        framing rather than asserting uniqueness.
+    """
+    if len(hits) < 2:
+        return None
+
+    years = {h.metric_year for h in hits}
+    if len(years) != 1:
+        logger.debug("conjunction.count: members span years %s; no uniqueness claim", years)
+        return None
+    year = years.pop()
+
+    selects: list[str] = []
+    params: list[Any] = []
+    for i, hit in enumerate(hits):
+        metric = hit.metric
+        src = resolve_table(conn, metric.table)
+        value_expr = metric.derived_expr or metric.value_col
+        cmp_op = ">=" if metric.direction == "higher" else "<="
+        where = f"AND ({metric.filter_sql})" if metric.filter_sql else ""
+        selects.append(
+            f"""
+            SELECT {metric.id_col} AS pid
+            FROM {src}
+            WHERE {metric.year_col} = ?
+              AND {value_expr} IS NOT NULL
+              AND {value_expr} {cmp_op} ?
+              {where}
+            """
+        )
+        params.extend([year, hit.focal_value])
+        del i
+
+    joined = " INTERSECT ".join(f"({s})" for s in selects)
+    try:
+        row = conn.execute(f"SELECT COUNT(*) FROM ({joined})", params).fetchone()
+    except Exception as exc:
+        logger.debug("conjunction.count: query failed: %s", exc)
+        return None
+
+    if not row or row[0] is None:
+        return None
+    return int(row[0])

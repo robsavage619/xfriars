@@ -30,7 +30,11 @@ _SEASON_TABLES = (
     "statcast_batter_percentile_ranks",
 )
 # Game-grain tables — one row per event, usable with a rolling `window`.
-_GAME_TABLES = ("statcast_batted_balls",)
+_GAME_TABLES = (
+    "statcast_batted_balls",
+    "statcast_batter_pitches",
+    "statcast_pitches",
+)
 _SCANNABLE_TABLES = _SEASON_TABLES + _GAME_TABLES
 _SKIP_COLS = frozenset(
     {
@@ -120,7 +124,13 @@ def _recent_candidates(conn: duckdb.DuckDBPyConnection) -> list[dict]:
 def _already_posted(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     rows = _rows(
         conn,
-        "SELECT subject, angle, as_of FROM post_metrics ORDER BY as_of DESC LIMIT 25",
+        """
+        SELECT subject, angle_key, MAX(captured_at) AS last_seen
+        FROM post_metrics
+        GROUP BY subject, angle_key
+        ORDER BY last_seen DESC
+        LIMIT 25
+        """,
     )
     return [{"subject": s, "angle": a, "as_of": str(d)} for s, a, d in rows]
 

@@ -27,6 +27,9 @@ from datetime import date
 
 import duckdb
 
+# Re-exported: canonical definition lives in detect.sql; leads/reconcile import it here.
+from padres_analytics.detect.sql import available_roster_ids as available_roster_ids
+
 # Regression-to-the-mean break-even for wOBA (The Book, 2007).
 REGRESSION_PA_PRIOR = 220
 
@@ -187,24 +190,6 @@ class _Ctx:
     league_woba: float
     league_xwoba: float
     league_ev: float
-
-
-def available_roster_ids(conn: duckdb.DuckDBPyConnection) -> list[int]:
-    """Roster player ids that are currently AVAILABLE — never feature a player who's out.
-
-    Filters on ``team_rosters.status`` to drop the injured list, minors
-    reassignments, etc. (a 60-day-IL bat shouldn't headline a "current" story).
-    Degrades to the full roster when the status column isn't present (test fixtures).
-    """
-    try:
-        rows = conn.execute(
-            "SELECT player_id FROM team_rosters WHERE status IS NULL OR status ILIKE 'Active'"
-        ).fetchall()
-    except duckdb.BinderException:
-        rows = conn.execute("SELECT player_id FROM team_rosters").fetchall()
-    except duckdb.CatalogException:
-        return []  # no roster table at all
-    return [r[0] for r in rows]
 
 
 def _context(conn: duckdb.DuckDBPyConnection, season: int, as_of: date) -> _Ctx | None:

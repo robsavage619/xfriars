@@ -110,6 +110,47 @@ no one takes.
 *even after* the league got hot — and by more than normal variation explains." One
 is a stat; the other is a finding.
 
+## Compound claims: "one of N players with X and Y"
+
+**Question:** is a player doing several rare things at once — and how rare is that
+combination, really?
+
+- A conjunction fires when one player clears the rarity floor on **two or three
+  metrics that measure different things**. The count of players meeting every mark
+  simultaneously is a real SQL count against the league, not an estimate, and it
+  lands in the card's facts so the digit audit covers it.
+- **Correlated metrics are collapsed first.** Exit velocity, max exit velocity and
+  hard-hit% are three names for one skill. Chaining them would manufacture a
+  guaranteed "only player in baseball" out of a single underlying trait, so metrics
+  are grouped into families (contact quality, swing, plate discipline, speed,
+  defense, expected outcomes, …) and only the strongest member of each family can
+  join a conjunction.
+- Members are capped at three. Past that a card stops being a story and becomes a
+  stat dump, and the combined-rarity math (a geometric mean, which assumes rough
+  independence) stops being defensible.
+- The framing states the **rank**, not a verdict: "in the top 12% in both X and Y."
+  A high xwOBA − wOBA gap means *unlucky*, not excellent, so a compound claim never
+  calls a member "elite" — each metric's own label carries its meaning.
+- **Scope is the most conservative member's scope.** A Statcast-era mark and a
+  franchise-history mark in the same conjunction yield a Statcast-era claim.
+
+**Gate:** combined rarity (geometric mean) must itself clear the rarity floor —
+two mediocre marks never add up to one good story.
+
+## Multiplicity: correcting for the size of the daily search
+
+Every scan day runs many comparisons at once (every metric × every lens × every
+rostered player), and the more you look, the more "rare" things you find by chance.
+We run **Benjamini–Hochberg** false-discovery-rate correction across the whole
+day's battery and log how many hits it would drop.
+
+One honest caveat: the engine ranks effect sizes over an empirical distribution, so
+`1 − rarity` is a **p-value proxy, not a calibrated p-value**. BH over that proxy is
+a multiplicity *check*, not a significance test. It currently runs in advisory mode —
+reported every run, not yet enforced — precisely because we won't turn a gate on
+before the proxy is calibrated against real outcomes. The enforced filters today are
+the rarity floor, the sample/stabilization gates above, and a human approval step.
+
 ## Spatial cards: the rigor harness
 
 Every spray chart, zone map, and pitch-arsenal card must state its denominators on

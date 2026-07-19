@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import duckdb
+# Runtime import (not TYPE_CHECKING-only): the availability helpers below
+# discriminate on duckdb's exception classes, not just annotate with them.
+import duckdb
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,67 @@ def padre_ids_roster(conn: duckdb.DuckDBPyConnection, season: int) -> set[int]:
             return {r[0] for r in rows}
     logger.debug("padre_ids_roster: no team_rosters available for season=%d", season)
     return set()
+
+
+def available_roster_ids(conn: duckdb.DuckDBPyConnection) -> list[int]:
+    """Roster player ids that are currently AVAILABLE — never feature a player who's out.
+
+    Filters on ``team_rosters.status`` to drop the injured list, minors
+    reassignments, etc. (a 60-day-IL bat shouldn't headline a "current" story).
+    Degrades to the full roster when the status column isn't present (test fixtures).
+    """
+    try:
+        rows = conn.execute(
+            "SELECT player_id FROM team_rosters WHERE status IS NULL OR status ILIKE 'Active'"
+        ).fetchall()
+    except duckdb.BinderException:
+        rows = conn.execute("SELECT player_id FROM team_rosters").fetchall()
+    except duckdb.CatalogException:
+        return []  # no roster table at all
+    return [r[0] for r in rows]
+
+
+def available_subset(conn: duckdb.DuckDBPyConnection, ids: set[int]) -> set[int]:
+    """Restrict ``ids`` to players whose roster status is active/unknown.
+
+    Returns the subset still available — including the empty set when everyone is
+    out (the all-injured case must not silently fall back to the full roster).
+    Degrades to the full input only when the status column itself is absent.
+    """
+    if not ids:
+        return set()
+    placeholders = ",".join("?" * len(ids))
+    try:
+        rows = conn.execute(
+            f"SELECT player_id FROM team_rosters "
+            f"WHERE player_id IN ({placeholders}) "
+            f"AND (status IS NULL OR status ILIKE 'Active')",
+            list(ids),
+        ).fetchall()
+    except Exception:  # no status column / no table — can't filter, don't over-drop
+        return ids
+    return {int(r[0]) for r in rows}
+
+
+def available_padre_ids(conn: duckdb.DuckDBPyConnection, season: int) -> set[int]:
+    """Padre subjects for detection — 40-man, filtered to currently-available players.
+
+    Honors the hard availability gate (never feature an out player): when the
+    40-man is sourced from ``team_rosters``, injured/optioned players are dropped
+    at detection, not just at render. The bwar fallback carries no status, so it
+    is used as-is.
+
+    Args:
+        conn: Connection with hist attached.
+        season: Roster season.
+
+    Returns:
+        Available Padre MLBAM IDs for the season.
+    """
+    roster = padre_ids_roster(conn, season)
+    if roster:
+        return available_subset(conn, roster)
+    return padre_ids(conn, season)
 
 
 def padre_ids_latest(conn: duckdb.DuckDBPyConnection) -> set[int]:

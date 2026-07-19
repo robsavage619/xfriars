@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from padres_analytics.detect.candidates import ChartDataset
 
 # Card types with a template wired today; grows per phase.
-IMPLEMENTED_CARDS: frozenset[str] = frozenset({"hero", "slider", "scatter", "bar"})
+IMPLEMENTED_CARDS: frozenset[str] = frozenset({"hero", "slider", "scatter", "bar", "conjunction"})
 
 # Full vocabulary the selector may name (templates land across P1-P5).
 KNOWN_CARDS: tuple[str, ...] = (
@@ -27,6 +27,7 @@ KNOWN_CARDS: tuple[str, ...] = (
     "radial",
     "bar",
     "table",
+    "conjunction",
 )
 
 

@@ -23,10 +23,16 @@ from padres_analytics.detect.candidates import (
     StatCandidate,
     make_candidate_id,
 )
-from padres_analytics.detect.conjunction import evaluate_franchise_scope, find_conjunctions
+from padres_analytics.detect.conjunction import (
+    ConjunctionGroup,
+    count_players_meeting_all,
+    evaluate_franchise_scope,
+    find_conjunctions,
+)
 from padres_analytics.detect.discovery import discover_metrics
 from padres_analytics.detect.lenses import (
     LensResult,
+    bh_surviving_indices,
     extremeness_lens,
     milestone_proximity_lens,
     percentile_elite_lens,
@@ -35,10 +41,9 @@ from padres_analytics.detect.lenses import (
 from padres_analytics.detect.registry import MetricSpec, ScanConfig, load_registry
 from padres_analytics.detect.scoring import novelty_score
 from padres_analytics.detect.sql import (
+    available_padre_ids,
     fmt_name,
     max_year,
-    padre_ids,
-    padre_ids_roster,
     resolve_table,
 )
 
@@ -380,8 +385,9 @@ _MIN_LEADERBOARD = 3
 # Extremeness rarity that counts as genuinely league-elite (≈ top 5%).
 _HERO_ELITE_RARITY = 0.95
 # Marquee Padres — a non-elite stat still earns a standalone card for these names.
-# TODO: move to private config (the "closed brain") alongside the metric registry.
-_STAR_IDS: frozenset[int] = frozenset(
+# Editorial judgment, so private/metrics.toml [scan] star_ids overrides this; the
+# built-in list is only the fallback when no private registry is present.
+_STAR_IDS_FALLBACK: frozenset[int] = frozenset(
     {
         665487,  # Fernando Tatis Jr.
         592518,  # Manny Machado
@@ -406,7 +412,7 @@ _METRIC_PRESENTATION: dict[str, dict[str, str]] = {
 }
 
 
-def _passes_hero_gate(hit: _Hit) -> bool:
+def _passes_hero_gate(hit: _Hit, star_ids: frozenset[int]) -> bool:
     """True if a single-player hit deserves a standalone (hero) card.
 
     Per editorial policy: a standalone card requires a genuinely league-elite
@@ -414,7 +420,7 @@ def _passes_hero_gate(hit: _Hit) -> bool:
     else rolls into a leaderboard or is suppressed — no hero cards for
     dead-average numbers on bench players.
     """
-    if hit.player_id in _STAR_IDS:
+    if hit.player_id in star_ids:
         return True
     return hit.lens_result.lens == "extremeness" and hit.lens_result.rarity >= _HERO_ELITE_RARITY
 
@@ -507,6 +513,144 @@ def _build_leaderboard_candidate(
     )
 
 
+def _build_conjunction_candidate(
+    group: ConjunctionGroup,
+    peer_count: int | None,
+    as_of: date,
+) -> StatCandidate:
+    """Build a compound candidate: one player, several elite marks at once.
+
+    The claim scope is the *most conservative* member scope — a conjunction can
+    never be broader than its narrowest member, or a Statcast-era mark would
+    smuggle a franchise-history claim in alongside it.
+
+    Args:
+        group: A conjunction group (2+ distinct metrics for one player).
+        peer_count: League players meeting every member mark, or None when the
+            count couldn't be computed (no uniqueness claim is then made).
+        as_of: Reference date.
+
+    Returns:
+        StatCandidate carrying a conjunction ChartDataset.
+    """
+    members = group.hits
+    year = members[0].metric_year
+
+    rows: list[list[str | int | float | None]] = []
+    facts: dict[str, str | int | float] = {
+        "player_id": group.player_id,
+        "n_metrics": len(members),
+        "metric_year": year,
+        "combined_rarity": round(group.combined_rarity, 4),
+    }
+    for hit in members:
+        metric = hit.metric
+        val = round(hit.focal_value, 3)
+        # For a Savant percentile column the value IS a percentile; printing it
+        # beside our own ECDF percentile puts two different percentiles on one
+        # row and reads as a contradiction. Show the rank only.
+        is_percentile_metric = hit.lens_result.lens == "percentile_elite"
+        rows.append(
+            [
+                metric.label,
+                None if is_percentile_metric else val,
+                round(hit.lens_result.rarity * 100),
+            ]
+        )
+        if not is_percentile_metric:
+            facts[f"{metric.id}_value"] = val
+        facts[f"{metric.id}_percentile"] = round(hit.lens_result.rarity * 100)
+
+    # Conservative scope: the narrowest (longest-qualified) member scope wins.
+    scopes = {h.lens_result.claim_scope for h in members}
+    claim_scope = max(scopes, key=len) if scopes else members[0].lens_result.claim_scope
+
+    # "Elite" is only true for metrics where high = good. A high xwOBA-wOBA gap
+    # means unlucky, not excellent, so the framing states the *rank* and lets each
+    # metric's own label carry its meaning. Labels keep their casing (xwOBA, not xwoba).
+    feats = " and ".join(h.metric.label for h in members)
+    top_pct = max(1, round((1.0 - min(h.lens_result.rarity for h in members)) * 100))
+    quantifier = "both" if len(members) == 2 else "all of"
+    facts["top_percent"] = top_pct
+
+    if peer_count is not None and peer_count >= 1:
+        facts["players_meeting_all"] = peer_count
+        subject_phrase = (
+            f"{group.player_name} is the only player in MLB"
+            if peer_count == 1
+            else f"{group.player_name} is one of {peer_count} players in MLB"
+        )
+        headline = f"{subject_phrase} in the top {top_pct}% in {quantifier} {feats} ({year})"
+    else:
+        headline = (
+            f"{group.player_name} ranks in MLB's top {top_pct}% in {quantifier} {feats} ({year})"
+        )
+
+    dataset = ChartDataset(
+        title=group.player_name.upper(),
+        subtitle=f"{year} · {len(members)} top-{top_pct}% marks",
+        as_of=as_of,
+        columns=[
+            Column(key="metric", label="Metric", role="dimension"),
+            Column(key="value", label="Value", role="measure", format=".3f"),
+            Column(
+                key="percentile",
+                label="MLB Percentile",
+                role="measure",
+                format=".0f",
+                higher_is_better=True,
+            ),
+        ],
+        rows=rows,
+        framing=headline,
+        source="Baseball Savant",
+        headline=headline,
+        claim_scope=claim_scope,
+        population_label=f"Qualified MLB players, {year}",
+        card_hint="conjunction",
+        facts=facts,
+    )
+
+    score, components = novelty_score(
+        {
+            "rarity": group.combined_rarity,
+            # A compound story is the point of the engine — magnitude tracks the
+            # combined mark rather than being capped like a single-metric hit.
+            "magnitude": min(group.combined_rarity + 0.05, 0.98),
+            "timeliness": 0.80,
+            "rootability": 0.90,
+            "legibility": 0.85,
+        },
+        detector="scan",
+    )
+
+    subject = f"SDP|conjunction|{group.player_id}|{year}"
+    cid = make_candidate_id("scan", subject, dataset.model_dump(mode="json"))
+    return StatCandidate(
+        candidate_id=cid,
+        detector="scan",
+        subject=subject,
+        as_of=as_of,
+        category="season",
+        payload_kind="dataset",
+        facts_json=dataset.model_dump(mode="json"),
+        provenance_json=[
+            {
+                "source_table": h.resolved_table,
+                "metric_id": h.metric.id,
+                "lens": h.lens_result.lens,
+                "year": year,
+                "as_of": str(as_of),
+            }
+            for h in members
+        ],
+        coverage_window=f"{year}-{year}",
+        claim_scope=claim_scope,
+        novelty_score=score,
+        novelty_components=components,
+    )
+
+
 class GenericScanner:
     """Runs the TOML metric registry through statistical lenses.
 
@@ -551,10 +695,11 @@ class GenericScanner:
                 continue
 
             roster_year = metric_year if metric_year <= as_of.year else as_of.year
-            # Prefer the real 40-man (main.team_rosters); fall back to bwar team assignments.
-            padres = padre_ids_roster(conn, roster_year) or padre_ids(conn, roster_year)
+            # Availability-filtered: the 40-man includes IL and optioned players,
+            # and an out-for-season bat must never headline a card.
+            padres = available_padre_ids(conn, roster_year)
             if not padres:
-                logger.debug("scan: no Padre IDs for year=%d", roster_year)
+                logger.debug("scan: no available Padre IDs for year=%d", roster_year)
                 continue
 
             hits = _run_metric(conn, metric, metric_year, padres, scan_cfg.min_observation_n)
@@ -567,6 +712,7 @@ class GenericScanner:
         # Gate: rarity floor, then dedup to ONE strongest hit per (player, metric).
         # Collapsing across lenses kills the "same player, same metric, 3 cards" spam.
         floored = [h for h in all_hits if h.lens_result.rarity >= scan_cfg.min_rarity]
+        floored = self._apply_fdr(floored, scan_cfg)
         best: dict[tuple[int, str], _Hit] = {}
         for h in floored:
             key = (h.player_id, h.metric.id)
@@ -609,29 +755,46 @@ class GenericScanner:
             except Exception as exc:
                 logger.debug("scan: scope eval failed: %s", exc)
 
-        # Log conjunction stories (multi-metric players) for future narrative use
-        conjunctions = find_conjunctions(surviving_hits)
-        if conjunctions:
-            logger.info(
-                "scan: %d conjunction group(s) found: %s",
-                len(conjunctions),
-                [g.combined_framing[:60] for g in conjunctions[:3]],
-            )
+        candidates: list[StatCandidate] = []
+
+        # Conjunctions first: a player elite in several things at once is a better
+        # story than any of those things alone, and the members are then spent —
+        # they must not also surface as standalone hero cards.
+        conjunctions = [
+            g for g in find_conjunctions(surviving_hits) if g.combined_rarity >= scan_cfg.min_rarity
+        ]
+        spent: set[tuple[int, str]] = set()
+        for group in conjunctions:
+            try:
+                peers = count_players_meeting_all(conn, group.hits)
+                candidates.append(_build_conjunction_candidate(group, peers, as_of))
+                spent.update((group.player_id, h.metric.id) for h in group.hits)
+                logger.info(
+                    "scan: conjunction %s across %s (peers=%s)",
+                    group.player_name,
+                    group.metric_ids,
+                    peers,
+                )
+            except Exception as exc:
+                logger.warning("scan: conjunction build failed for %s: %s", group.player_name, exc)
+
+        remaining = [h for h in surviving_hits if (h.player_id, h.metric.id) not in spent]
 
         # Group by metric: >= _MIN_LEADERBOARD Padres collapse into ONE ranked card;
         # otherwise emit standalone cards gated by elite-or-star.
         by_metric: dict[str, list[_Hit]] = {}
-        for hit in surviving_hits:
+        for hit in remaining:
             by_metric.setdefault(hit.metric.id, []).append(hit)
 
-        candidates: list[StatCandidate] = []
+        star_ids = frozenset(scan_cfg.star_ids) if scan_cfg.star_ids else _STAR_IDS_FALLBACK
+
         for metric_id, hits in by_metric.items():
             try:
                 if len(hits) >= _MIN_LEADERBOARD:
                     candidates.append(_build_leaderboard_candidate(hits[0].metric, hits, as_of))
                     continue
                 for hit in hits:
-                    if _passes_hero_gate(hit):
+                    if _passes_hero_gate(hit, star_ids):
                         candidates.append(_build_candidate(hit, as_of))
                     else:
                         logger.debug(
@@ -645,6 +808,34 @@ class GenericScanner:
 
         candidates.sort(key=lambda c: c.novelty_score, reverse=True)
         return candidates[: scan_cfg.top_k]
+
+    @staticmethod
+    def _apply_fdr(hits: list[_Hit], scan_cfg: ScanConfig) -> list[_Hit]:
+        """Apply Benjamini-Hochberg correction across the day's test battery.
+
+        Args:
+            hits: Hits that already cleared the rarity floor.
+            scan_cfg: Scan configuration (mode + alpha).
+
+        Returns:
+            The surviving hits under ``strict``; the input unchanged otherwise.
+        """
+        if scan_cfg.fdr_mode == "off" or not hits:
+            return hits
+
+        surviving = bh_surviving_indices([h.lens_result.rarity for h in hits], scan_cfg.fdr_alpha)
+        dropped = len(hits) - len(surviving)
+        logger.info(
+            "scan: BH fdr_mode=%s alpha=%.3f battery=%d survivors=%d dropped=%d",
+            scan_cfg.fdr_mode,
+            scan_cfg.fdr_alpha,
+            len(hits),
+            len(surviving),
+            dropped,
+        )
+        if scan_cfg.fdr_mode == "advisory":
+            return hits
+        return [h for i, h in enumerate(hits) if i in surviving]
 
 
 register(GenericScanner())
