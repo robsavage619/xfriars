@@ -395,3 +395,44 @@ def test_a_thin_cohort_yields_no_shift_at_all(padres_db) -> None:
         rows.append((pid, f"P{pid}", 2026, 135, 400, "0.500", "0.250", "0.250"))
     padres_db.executemany("INSERT INTO player_season_batting VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
     assert detect_career_shifts(padres_db, 2026, {0, 1, 2}) == []
+
+
+# ── the population caveat corrects itself as ingest fills in ────────────────
+
+
+def test_partial_coverage_says_it_is_not_the_league(padres_db) -> None:
+    """Calling a convenience sample 'the league' is what a referee blocked."""
+    from padres_analytics.detect.aggregates import population_label
+
+    padres_db.executemany(
+        "INSERT INTO statcast_batting_expected (player_id, player_name, year, pa) "
+        "VALUES (?, ?, 2026, 400)",
+        [(i, f"P{i}") for i in range(300)],
+    )
+    label = population_label(padres_db, measured=135, year=2026)
+    assert "not the full league" in label
+    assert "135 of 300" in label
+
+
+def test_near_complete_coverage_drops_the_caveat(padres_db) -> None:
+    """Once the sample is the league, the caveat undersells a real comparison."""
+    from padres_analytics.detect.aggregates import population_label
+
+    padres_db.executemany(
+        "INSERT INTO statcast_batting_expected (player_id, player_name, year, pa) "
+        "VALUES (?, ?, 2026, 400)",
+        [(i, f"P{i}") for i in range(300)],
+    )
+    label = population_label(padres_db, measured=290, year=2026)
+    assert "not the full league" not in label
+    assert "league-wide" in label
+    # Must not claim a PA qualification the measured group doesn't necessarily hold.
+    assert "min 100 PA" not in label
+
+
+def test_label_is_conservative_when_the_population_is_unknown(padres_db) -> None:
+    from padres_analytics.detect.aggregates import population_label
+
+    label = population_label(padres_db, measured=42, year=2026)
+    assert "pitch-level data" in label
+    assert "league-wide" not in label

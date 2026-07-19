@@ -120,6 +120,7 @@ def split_contrast_lens(
     split_a: SplitSpec,
     split_b: SplitSpec,
     claim_scope: str,
+    population_label: str | None = None,
 ) -> LensResult | None:
     """Rank a player's split gap against the league distribution of that gap.
 
@@ -130,6 +131,9 @@ def split_contrast_lens(
         split_a: First condition.
         split_b: Baseline condition.
         claim_scope: Scope tag — must already carry the split qualifiers.
+        population_label: How to describe the comparison group. Derived from actual
+            coverage by :func:`aggregates.population_label`; falls back to the
+            conservative wording when absent.
 
     Returns:
         LensResult, or None when the population is too thin, the focal sample too
@@ -174,8 +178,9 @@ def split_contrast_lens(
     framing = (
         f"{focal.player_name} — {metric.label.lower()}: "
         f"{focal.a_value:.1f}% {split_a.display()}, {focal.b_value:.1f}% {split_b.display()} "
-        f"— a {gap:.1f}-point gap, wider than {pct}% of the {len(population)} hitters "
-        f"with pitch-level data (min {MIN_SIDE_OPPORTUNITIES} pitches each side)"
+        f"— a {gap:.1f}-point gap, wider than {pct}% of "
+        f"{population_label or f'the {len(population)} hitters with pitch-level data'} "
+        f"(min {MIN_SIDE_OPPORTUNITIES} pitches each side)"
     )
 
     return LensResult(

@@ -234,3 +234,62 @@ def rate_is_bounded(conn: duckdb.DuckDBPyConnection, metric: AggMetric, year: in
     """
     rows, _sizes, _src = fetch_agg_rows(conn, metric, year)
     return all(value <= metric.scale + 1e-9 for _pid, _name, value in rows)
+
+
+# At or above this share of the qualified population, the event tables are the
+# league for practical purposes and the sample caveat stops being informative.
+LEAGUE_COVERAGE_THRESHOLD = 0.90
+
+
+def population_label(
+    conn: duckdb.DuckDBPyConnection,
+    measured: int,
+    year: int,
+    min_pa: int = 100,
+) -> str:
+    """Describe the comparison population as honestly as its coverage allows.
+
+    Event ingest fills player by player, so for a long time the "league" in a
+    split claim was really whoever had been ingested. Calling that group
+    "qualified MLB hitters" describes a convenience sample as the league — a
+    referee blocked exactly that. But once coverage is near-complete the caveat
+    becomes noise that undersells a real league comparison.
+
+    So the label is derived from measured coverage rather than fixed either way,
+    and it corrects itself as ingest fills in.
+
+    Args:
+        conn: DB connection.
+        measured: Players actually in the comparison.
+        year: Season.
+        min_pa: Plate-appearance floor defining "qualified".
+
+    Returns:
+        A population label safe to put on a card.
+    """
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM statcast_batting_expected WHERE year = ? AND pa >= ?",
+            [year, min_pa],
+        ).fetchone()
+    except Exception as exc:
+        logger.debug("aggregates: qualified population unavailable: %s", exc)
+        return f"{measured} hitters with pitch-level data"
+
+    qualified = int(row[0]) if row and row[0] else 0
+    if qualified <= 0:
+        return f"{measured} hitters with pitch-level data"
+
+    coverage = measured / qualified
+    if coverage >= LEAGUE_COVERAGE_THRESHOLD:
+        # Deliberately does *not* say "qualified (min N PA)". The measured group
+        # is whoever cleared the metric's own pitch minimum, which is not the
+        # same set as the PA-qualified population it is compared against — some
+        # measured hitters sit below the PA bar. Attributing a qualification the
+        # group doesn't necessarily hold is the same error as calling a partial
+        # sample the league, just smaller.
+        return f"{measured} MLB hitters (league-wide pitch-level coverage)"
+    return (
+        f"{measured} of {qualified} qualified MLB hitters with pitch-level data "
+        f"— not the full league"
+    )

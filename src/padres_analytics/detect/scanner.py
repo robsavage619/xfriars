@@ -564,7 +564,7 @@ def _scan_contrasts(
     as_of: date,
 ) -> list[StatCandidate]:
     """Rank each Padre's split gaps against the league distribution of that gap."""
-    from padres_analytics.detect.aggregates import BATTER_AGGS
+    from padres_analytics.detect.aggregates import BATTER_AGGS, population_label
     from padres_analytics.detect.contrast import (
         MIN_SIDE_OPPORTUNITIES,
         fetch_contrast_rows,
@@ -587,6 +587,7 @@ def _scan_contrasts(
                 f"{year}, {split_a.display()} against {split_b.display()}, "
                 f"min {MIN_SIDE_OPPORTUNITIES} each side"
             )
+            pop_label = population_label(conn, len(population), year)
             for row in population:
                 if row.player_id not in padres:
                     continue
@@ -597,12 +598,13 @@ def _scan_contrasts(
                     split_a=split_a,
                     split_b=split_b,
                     claim_scope=scope,
+                    population_label=pop_label,
                 )
                 if lr is None:
                     continue
                 out.append(
                     _build_contrast_candidate(
-                        row, lr, metric, split_a, split_b, len(population), year, as_of
+                        row, lr, metric, split_a, split_b, len(population), year, as_of, pop_label
                     )
                 )
     return out
@@ -617,6 +619,7 @@ def _build_contrast_candidate(
     population_size: int,
     year: int,
     as_of: date,
+    pop_label: str,
 ) -> StatCandidate:
     """Build a split-contrast candidate: both sides shown, gap as the story."""
     dataset = ChartDataset(
@@ -643,10 +646,7 @@ def _build_contrast_candidate(
         source="Baseball Savant",
         headline=lr.framing,
         claim_scope=lr.claim_scope,
-        population_label=(
-            f"{population_size} MLB hitters with pitch-level data ingested, {year} "
-            f"— not the full league"
-        ),
+        population_label=pop_label,
         card_hint="contrast",
         facts={
             "player_id": row.player_id,
