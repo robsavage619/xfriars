@@ -18,7 +18,11 @@ from padres_analytics.detect.candidates import StatCandidate, make_candidate_id
 from padres_analytics.detect.hypothesis import store
 from padres_analytics.detect.hypothesis.spec import HypothesisSpec
 from padres_analytics.detect.hypothesis.validate import validate
-from padres_analytics.detect.hypothesis.window import date_column, fetch_window_rows
+from padres_analytics.detect.hypothesis.window import (
+    date_column,
+    fetch_window_rows,
+    min_events_for,
+)
 from padres_analytics.detect.registry import ScanConfig
 from padres_analytics.detect.scanner import _build_candidate, _Hit, _run_metric, lenses_over_rows
 from padres_analytics.detect.sql import available_padre_ids, max_year
@@ -28,6 +32,26 @@ if TYPE_CHECKING:
     import duckdb
 
 logger = logging.getLogger(__name__)
+
+
+def _staleness_days(
+    conn: duckdb.DuckDBPyConnection,
+    table: str,
+    date_col: str,
+    as_of: date,
+) -> int | None:
+    """Days between a table's newest row and the reference date, or None if unknown."""
+    from padres_analytics.detect.sql import resolve_table
+
+    try:
+        row = conn.execute(f"SELECT MAX({date_col}) FROM {resolve_table(conn, table)}").fetchone()
+    except Exception:
+        return None
+    if not row or row[0] is None:
+        return None
+    latest = row[0]
+    latest = latest.date() if hasattr(latest, "date") else latest
+    return (as_of - latest).days
 
 
 def _coverage_block(reports: list[CoverageReport], table: str) -> str | None:
@@ -198,6 +222,26 @@ class HypothesisScanDetector:
             store.log_outcome(conn, spec, as_of, "no_data", reason=f"no roster for {as_of.year}")
             return []
 
+        # A window that closes before the table's latest data is a staleness
+        # problem, not a bad hypothesis. Saying "no qualifying rows" would teach
+        # the proposer to stop asking recency questions when the real fix is an
+        # ingest run — and the ledger is read back as guidance.
+        assert spec.window is not None  # windowed path; validated upstream
+        stale_by = _staleness_days(conn, spec.table, date_col, as_of)
+        if stale_by is not None and stale_by > spec.window.days:
+            store.log_outcome(
+                conn,
+                spec,
+                as_of,
+                "no_data",
+                reason=(
+                    f"{spec.table} data is {stale_by} days stale; a "
+                    f"{spec.window.days}-day window ends before it begins. "
+                    f"Re-run ingest rather than reworking this spec."
+                ),
+            )
+            return []
+
         rows, src = fetch_window_rows(conn, spec, as_of, date_col)
         # Honest claim scope: the candidate is a last-N-day window, not the season.
         metric = spec.to_metric_spec().model_copy(
@@ -205,9 +249,33 @@ class HypothesisScanDetector:
         )
         hits = lenses_over_rows(metric, rows, src, as_of.year, padres, cfg.min_observation_n)
         if not hits:
-            store.log_outcome(
-                conn, spec, as_of, "no_data", reason="no qualifying Padre rows in window"
-            )
+            # "No data" and "data, but nobody was extreme" teach opposite lessons.
+            # The first says fix the ingest; the second says this question has been
+            # asked and answered. Conflating them makes the ledger misleading, and
+            # the ledger is what the proposer reads back.
+            subjects_present = sum(1 for pid, _, _ in rows if pid in padres)
+            if subjects_present:
+                store.log_outcome(
+                    conn,
+                    spec,
+                    as_of,
+                    "below_gate",
+                    reason=(
+                        f"{subjects_present} Padre(s) measured over {len(rows)} players; "
+                        f"none reached the rarity floor"
+                    ),
+                )
+            else:
+                store.log_outcome(
+                    conn,
+                    spec,
+                    as_of,
+                    "no_data",
+                    reason=(
+                        f"{len(rows)} players had qualifying windows but no available "
+                        f"Padre cleared the {min_events_for(spec.table)}-event minimum"
+                    ),
+                )
         return hits
 
 

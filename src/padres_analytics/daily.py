@@ -9,6 +9,7 @@ a one-tap human approval. Nothing posts — the human gate stays.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -46,6 +47,54 @@ class Briefing:
     notes: list[str] = field(default_factory=list)
 
 
+def _run_hypothesis_cycle(conn: duckdb.DuckDBPyConnection, today: date) -> list[str]:
+    """Drain yesterday's queued hypotheses, then stage tomorrow's context pack.
+
+    The proposal step stays agent-mediated — Claude reads the pack in a session
+    and enqueues specs — so this runs the two ends the engine owns: scanning
+    whatever is queued, and leaving the next pack ready. Without both halves
+    running daily the machinery is complete and never fires, which is exactly
+    what it did for its first months.
+
+    Failures are reported, never raised: discovery is additive to the briefing,
+    and a bad spec must not cost the day its story.
+    """
+    notes: list[str] = []
+
+    try:
+        # Detectors register as an import side-effect, and nothing else on the
+        # daily path imports this one — without the import it is simply absent.
+        import padres_analytics.detect.hypothesis.detector  # noqa: F401
+        from padres_analytics.detect.base import emit, get_detector
+
+        detector = get_detector("hypothesis")
+        candidates = detector.run(conn, today)
+        if candidates:
+            emit(conn, candidates)
+            notes.append(f"Hypothesis scan: {len(candidates)} candidate(s) from queued proposals.")
+    except Exception as exc:
+        logger.warning("daily: hypothesis scan failed: %s", exc)
+        notes.append(f"Hypothesis scan failed: {exc}")
+
+    try:
+        from padres_analytics.detect.hypothesis.context import build_context_pack
+
+        pack = build_context_pack(conn, today)
+        out = Path("inbox") / f"hypothesis_context_{today.isoformat()}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(pack, indent=2, default=str), encoding="utf-8")
+        explored = len(pack.get("explored", []) or [])
+        notes.append(
+            f"Context pack for tomorrow written to {out} "
+            f"({explored} explored spec(s) on the ledger)."
+        )
+    except Exception as exc:
+        logger.warning("daily: context pack failed: %s", exc)
+        notes.append(f"Context pack failed: {exc}")
+
+    return notes
+
+
 def run_briefing(
     conn: duckdb.DuckDBPyConnection,
     season: int,
@@ -80,6 +129,8 @@ def run_briefing(
     except Exception as exc:  # a learning failure must never block the briefing
         logger.warning("daily: learning pass failed: %s", exc)
         notes.append(f"Learning pass failed (ranking unchanged): {exc}")
+
+    notes.extend(_run_hypothesis_cycle(conn, today))
 
     angles = discover(conn, season, as_of=today)
     if not angles:
