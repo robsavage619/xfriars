@@ -33,27 +33,38 @@ logger = logging.getLogger(__name__)
 # the supporting detail rather than the finding.
 _MAX_BLOCKS = 6
 
+# Panels needed before the layout reads as a story rather than two facts adrift
+# in a mostly empty card.
+_MIN_BLOCKS = 3
+
+# The node whose firing *is* the story. Every other node explains it.
+_TRIGGER_NODE = "gap"
+
 # How each node presents when it fires: the fact carrying its percentile, the
 # fact carrying its display value, and how to read the direction.
 _PANEL_SPEC: dict[str, dict[str, str]] = {
     "gap": {
+        "label": "Results vs contact",
         "metric": "wOBA vs Expected",
         "value_fact": "gap",
         "percentile_fact": "gap_percentile",
         "value_format": ".3f",
     },
     "components": {
+        "label": "Where the gap lives",
         "metric": "Average vs Power",
         "value_fact": "ba_gap",
         "value_format": ".3f",
     },
     "contact": {
+        "label": "Contact quality",
         "metric": "Exit Velocity",
         "value_fact": "avg_exit_velocity",
         "percentile_fact": "exit_velocity_percentile",
         "value_format": ".1f",
     },
     "approach": {
+        "label": "Approach",
         "metric": "Chase Rate",
         "value_fact": "chase_now",
         "value_format": ".1f",
@@ -98,7 +109,7 @@ def _block(node: StudyNode, subject_id: int) -> StoryBlock | None:
     percentile = node.facts.get(spec.get("percentile_fact", ""))
 
     return StoryBlock(
-        label=node.question.rstrip("?"),
+        label=spec["label"],
         metric=spec["metric"],
         value=value,
         percentile=int(percentile) if isinstance(percentile, int | float) else None,
@@ -118,16 +129,31 @@ def story_card_from_dossier(dossier: StudyDossier) -> StoryCard | None:
         The card, or None when too little fired to be worth rendering — a study
         that answered one question is a fact, not a story.
     """
-    blocks = [b for b in (_block(n, dossier.subject_id) for n in dossier.fired()) if b is not None]
-    if len(blocks) < 2:
+    # No anomaly, no card. The supporting nodes explain a finding; without one
+    # they are just facts about a player, and the composed card ends up with a
+    # blank hero and a half-empty canvas. This is a content judgment, not a
+    # layout one — the whitespace was the symptom.
+    trigger = next(
+        (n for n in dossier.nodes if n.node_id == _TRIGGER_NODE and n.verdict == "fired"), None
+    )
+    if trigger is None:
         logger.info(
-            "study %s: %d panel(s) — not enough fired to compose a card",
+            "study %s: trigger node did not fire — nothing to build a card around",
             dossier.study_id,
-            len(blocks),
         )
         return None
 
-    gap_node = next((n for n in dossier.nodes if n.node_id == "gap"), None)
+    blocks = [b for b in (_block(n, dossier.subject_id) for n in dossier.fired()) if b is not None]
+    if len(blocks) < _MIN_BLOCKS:
+        logger.info(
+            "study %s: %d panel(s), need %d — too thin to compose a card",
+            dossier.study_id,
+            len(blocks),
+            _MIN_BLOCKS,
+        )
+        return None
+
+    gap_node = next((n for n in dossier.nodes if n.node_id == "gap" and n.verdict == "fired"), None)
     hero = None
     if gap_node is not None and isinstance(gap_node.facts.get("gap"), int | float):
         gap = float(gap_node.facts["gap"])
@@ -157,7 +183,8 @@ def story_card_from_dossier(dossier: StudyDossier) -> StoryCard | None:
             else "Every step of the decomposition fired."
         )
 
-    scope = gap_node.claim_scope if gap_node else str(dossier.as_of.year)
+    anchor = next((n for n in dossier.nodes if n.claim_scope), None)
+    scope = anchor.claim_scope if anchor else str(dossier.as_of.year)
     return StoryCard(
         title=dossier.subject_name.upper(),
         subtitle=f"{dossier.as_of.year} · what the numbers say and don't",

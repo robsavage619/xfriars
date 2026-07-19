@@ -43,7 +43,11 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
   font-family: "Big Shoulders Display", sans-serif;
   font-weight: 800; font-size: 42px; line-height: 0.94; color: {{ ink }};
   letter-spacing: 0.01em; text-transform: uppercase;
+  /* A long name wrapping to two lines pushed the subtitle out of the header.
+     Keep it on one line and let it condense instead. */
+  white-space: nowrap; overflow: hidden; text-overflow: clip;
 }
+.title.long { font-size: 32px; letter-spacing: -0.01em; }
 .subtitle {
   font-size: 12px; color: {{ text_muted }}; margin-top: 6px;
   letter-spacing: 0.14em; text-transform: uppercase;
@@ -77,8 +81,8 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px 30px 18px; border-top: 1px solid {{ hairline }}; flex-shrink: 0;
 }
-.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; }
-.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; }
+.source { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.1em; text-transform: uppercase; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tagline { font-size: 10px; color: {{ text_muted }}; letter-spacing: 0.14em; text-transform: uppercase; flex: 0 0 auto; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -90,7 +94,7 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
       {% if photo %}<img class="headshot" src="file://{{ photo }}" alt="">{% endif %}
       <div>
         <div class="kicker">San Diego Padres · Statcast</div>
-        <div class="title">{{ title }}</div>
+        <div class="title{% if title|length > 15 %} long{% endif %}">{{ title }}</div>
         {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
       </div>
     </div>
@@ -109,7 +113,7 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
 
   <div class="footer">
     <span class="source">Source: {{ source }}{% if population_label %} · {{ population_label }}{% endif %}</span>
-    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span> · San Diego Baseball Intelligence</span>
+    <span class="tagline"><span style="color:{{ brown_dim }};font-weight:600">@xFriars</span></span>
   </div>
 </div>
 
@@ -161,7 +165,7 @@ html, body { width: 540px; height: 675px; overflow: hidden; background: {{ paper
   const W = container.offsetWidth  || 540;
   const H = container.offsetHeight || 300;
 
-  const padL = 30, padR = 30, labelW = 160, valueW = 62;
+  const padL = 30, padR = 30, labelW = 160, valueW = 76;
   const trackX = padL + labelW;
   const trackW = W - trackX - valueW - padR;
 
