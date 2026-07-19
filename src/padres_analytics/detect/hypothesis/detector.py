@@ -254,7 +254,24 @@ class HypothesisScanDetector:
             # asked and answered. Conflating them makes the ledger misleading, and
             # the ledger is what the proposer reads back.
             subjects_present = sum(1 for pid, _, _ in rows if pid in padres)
-            if subjects_present:
+            # A window whose whole population is Padres is not a league
+            # comparison — event ingest is roster-scoped, so recent windows fill
+            # for Padres first. Reporting "nobody was extreme" would imply a
+            # comparison that never happened.
+            if len(rows) < cfg.min_observation_n:
+                store.log_outcome(
+                    conn,
+                    spec,
+                    as_of,
+                    "no_data",
+                    reason=(
+                        f"only {len(rows)} player(s) have qualifying data in this window "
+                        f"({subjects_present} of them Padres); {cfg.min_observation_n} are "
+                        f"needed to compare against a league. Recent windows fill for the "
+                        f"roster before the rest of MLB."
+                    ),
+                )
+            elif subjects_present:
                 store.log_outcome(
                     conn,
                     spec,

@@ -333,6 +333,10 @@ def render(
             out = render_card(
                 TablePayload.model_validate(facts), CARDS_DIR, candidate_id, visual=visual
             )
+        elif payload_kind == "story":
+            from padres_analytics.detect.candidates import StoryCard
+
+            out = render_card(StoryCard.model_validate(facts), CARDS_DIR, candidate_id)
         else:
             typer.echo(f"Error: unsupported payload_kind {payload_kind!r}", err=True)
             raise typer.Exit(ERR)
@@ -2503,6 +2507,15 @@ def study_run(
         dossier = build_gap_study(conn, player_id, season, ref, candidate_id)
         study_store.save(conn, dossier)
 
+        # A study joins the normal candidate path so it passes the same gates —
+        # including the referee — as anything else that reaches the Board.
+        from padres_analytics.detect.base import emit
+        from padres_analytics.study.compose import candidate_from_dossier
+
+        study_candidate = candidate_from_dossier(dossier)
+        if study_candidate is not None:
+            emit(conn, [study_candidate])
+
     typer.echo(f"\nStudy {dossier.study_id} — {dossier.subject_name} ({season})")
     typer.echo(f"{dossier.headline}\n")
     for node in dossier.nodes:
@@ -2513,6 +2526,11 @@ def study_run(
         if node.reason:
             typer.echo(f"      (could not answer: {node.reason})")
     typer.echo(f"\n{dossier.summary()}")
+    if study_candidate is not None:
+        typer.echo(f"Composed card queued as candidate {study_candidate.candidate_id}")
+        typer.echo(f"  render with: pad render {study_candidate.candidate_id}")
+    else:
+        typer.echo("Not enough steps fired to compose a card — dossier saved for reference.")
 
 
 def _resolve_study_subject(conn: object, subject: str) -> tuple[int | None, str | None]:

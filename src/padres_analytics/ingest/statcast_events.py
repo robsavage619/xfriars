@@ -324,6 +324,42 @@ def ingest_batter_pitches(
     return len(rows)
 
 
+def ingest_batter_pitches_for(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    players: list[tuple[int, str | None]],
+) -> dict[str, int]:
+    """Ingest every pitch faced for several hitters; one ``ingest_runs`` row each.
+
+    Distinct from batted balls: this is every pitch *seen*, which is what swing
+    decisions are measured over. Plate-discipline rates and split contrasts read
+    from this table, so leaving it out of the roster pass silently freezes all
+    of them at whenever it was last filled.
+
+    Args:
+        conn: Write-mode padres.db connection.
+        season: Season year.
+        players: ``(player_id, player_name)`` pairs.
+
+    Returns:
+        Dict mapping ``"<name|id>"`` → rows inserted. Per-player failures are
+        logged and recorded as 0 rather than aborting the batch.
+    """
+    source = f"baseball-savant/batter-pitches/{season}"
+    results: dict[str, int] = {}
+    for player_id, player_name in players:
+        key = player_name or str(player_id)
+        try:
+            with record_run(conn, f"{source}/{player_id}") as run:
+                n = ingest_batter_pitches(conn, season, player_id)
+                results[key] = n
+                run["rows_written"] = n
+        except Exception as exc:
+            logger.error("batter_pitches ingest failed for player=%d: %s", player_id, exc)
+            results[key] = 0
+    return results
+
+
 def ingest_batted_balls_for(
     conn: duckdb.DuckDBPyConnection,
     season: int,
@@ -419,5 +455,8 @@ def ingest_roster_events(conn: duckdb.DuckDBPyConnection, season: int) -> dict[s
     )
     return {
         "batters": ingest_batted_balls_for(conn, season, batters),
+        # Batters get their faced pitches too — plate discipline and every split
+        # contrast read from this table, and it is not derivable from batted balls.
+        "batter_pitches": ingest_batter_pitches_for(conn, season, batters),
         "pitchers": ingest_pitches_for(conn, season, pitchers),
     }

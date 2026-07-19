@@ -47,8 +47,14 @@ _COLUMNS = (
 
 
 @dataclass(frozen=True)
-class _Grade:
-    """How to grade one detector's call: which stats anchor it, how to re-measure."""
+class GradableSpec:
+    """How to grade one forward claim: what anchors it, and how to re-measure.
+
+    A prediction is only worth logging if the same number can be looked up again
+    later without judgment. That means naming the table, column and keys up
+    front — a claim whose resolution depends on interpretation is a take, not a
+    prediction.
+    """
 
     baseline_key: str  # angle.stats key holding the value at prediction time
     target_key: str  # angle.stats key holding where the peripherals point
@@ -60,10 +66,18 @@ class _Grade:
     season_col: str
 
 
-# Only the luck detectors make a forward, falsifiable claim (results regress toward
-# the peripheral baseline). Change/league-control describe what *happened*; the
-# approach/power outliers are skill reads, not predictions.
-_GRADABLE: dict[str, _Grade] = {
+# Backwards-compatible alias for the previous private name.
+_Grade = GradableSpec
+
+
+# Only forward, falsifiable claims belong here: results regressing toward a
+# peripheral baseline. Change and league-control describe what *happened*; the
+# approach and power outliers are skill reads. Neither is a prediction.
+#
+# Registered rather than hardcoded so a new source of falsifiable claims — a
+# study, a future detector — can add one without editing the grading logic. The
+# grader itself stays closed.
+_GRADABLE: dict[str, GradableSpec] = {
     "pitcher_luck": _Grade(
         baseline_key="pit_era",
         target_key="pit_fip",
@@ -101,6 +115,37 @@ def _ensure_columns(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(f"ALTER TABLE predictions ADD COLUMN IF NOT EXISTS {col}")
 
 
+def gradable_spec(key: str) -> GradableSpec | None:
+    """The grading spec for a claim key, or None when the claim isn't falsifiable."""
+    return _GRADABLE.get(key)
+
+
+def register_gradable(key: str, spec: GradableSpec) -> None:
+    """Register a new falsifiable claim shape.
+
+    Args:
+        key: The claim key predictions will be logged under.
+        spec: How to re-measure it at maturity.
+
+    Raises:
+        ValueError: If the key is already registered with a different spec —
+            silently rebinding how a claim is graded would rewrite the meaning
+            of predictions already logged against it.
+    """
+    existing = _GRADABLE.get(key)
+    if existing is not None and existing != spec:
+        raise ValueError(
+            f"{key!r} is already registered with a different grading spec. "
+            f"Re-binding it would change how already-logged predictions resolve."
+        )
+    _GRADABLE[key] = spec
+
+
+def gradable_keys() -> tuple[str, ...]:
+    """Every claim shape the engine can currently grade."""
+    return tuple(sorted(_GRADABLE))
+
+
 def _stat_value(angle: StoryAngle, key: str) -> float | None:
     for st in angle.stats:
         if st.key == key:
@@ -136,7 +181,7 @@ def log_predictions(
     now = datetime.now()  # local wall-clock is fine for a posting timestamp
     logged = 0
     for angle in angles:
-        grade = _GRADABLE.get(angle.key)
+        grade = gradable_spec(angle.key)
         if grade is None or angle.subject_id is None:
             continue
         baseline = _stat_value(angle, grade.baseline_key)

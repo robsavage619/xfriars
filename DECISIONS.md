@@ -144,3 +144,20 @@ An ECDF over `n` players cannot resolve finer than `1/n`: a player who beats eve
 **Consequences:** `pad study run <player_id|candidate_id>` produces a real decomposition today: gap sized and ranked, gap attributed to average versus power, contact quality percentile-ranked, approach change ruled in or out against how the league's hitters moved, and the regression loop explicitly left open. Schema v15 adds `study_dossiers`.
 
 **What building it caught:** the study's approach node reported a chase rate of 99.8%, which is impossible. The Phase 3 aggregate metrics had numerators that did not imply their denominators — chase counted *all* swings over *out-of-zone* pitches, and zone contact counted all non-whiff rows including takes. Fixed, with an empirical `rate_is_bounded` invariant test over data containing every event type (textual containment can't be asserted, since a whiff is semantically a swing without naming every swing type). Post-fix the rates land on published MLB values: chase median 29.6%, whiff 21.3%, zone contact 86.4%, swing 47.1%. No surfaced claim had used the broken metrics — the contrast candidates that fired were all swing rate — but they were one extreme value away from doing so.
+
+## ADR-010 — Study composition, a gradable registry, and the ingest gap that hid under both
+
+**Date:** 2026-07-18
+**Status:** Decided
+
+**Context:** Three loose ends from Phase 5: dossiers couldn't be rendered, `predict.py` could only grade two hardcoded detectors, and the pitch data was a month stale.
+
+**Decision:**
+- **Composition is selection, not authorship** (`study/compose.py`). Which panels appear is decided by which nodes fired, so a card's shape follows the investigation rather than a template — this retires the hardcoded five-player roster that never varied. Nothing in composition computes; every displayed value is copied from a node's facts, keeping the dossier the audit corpus. A study with fewer than two fired nodes composes nothing: one answered question is a fact, not a story.
+- **The closing line names what is still open**, and does not restate the finding the hero already carries. A deep dive that hides its open questions is selling a conclusion it didn't reach.
+- **Studies join the normal candidate path** as `payload_kind="story"`, so they pass the same gates as anything else — including the referee. The CLI's render dispatch was missing that branch even though the renderer supported it.
+- **Gradable claims are registered, not hardcoded** (`register_gradable` / `gradable_spec`). Re-binding an existing key raises, because silently changing how a claim grades would rewrite the meaning of predictions already logged against it.
+
+**The gap this surfaced:** `pad ingest all-events` covered batted balls and pitcher events but **not** `statcast_batter_pitches` — the table every plate-discipline rate and split contrast reads from. There was no roster-wide command for it at all, only a per-player one, so the entire Phase 3 feature set was silently pinned to whenever that table was last hand-filled (a month prior). Batters now get their faced pitches in the same pass; all three event tables are current.
+
+**A second honesty fix in the same area:** with fresh data a 21-day window contained eight players, all Padres, because event ingest is roster-scoped and recent windows fill for the roster before the rest of the league. The population gate correctly refused to run, but the ledger reported "none reached the rarity floor" — implying a league comparison that never happened. It now distinguishes a population too thin to compare from a comparison that found nothing, and says which. This is the third instance of the same class of bug in this ledger; the pattern to watch is any path where an empty result can arise from two different causes that imply opposite next moves.
