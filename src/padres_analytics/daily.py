@@ -22,7 +22,7 @@ from padres_analytics.caption import build_caption, caption_audit, first_reply
 from padres_analytics.detect.angles import StoryAngle, discover
 from padres_analytics.detect.reconcile import ReconcileError, verify_angle
 from padres_analytics.predict import grade_predictions, log_predictions, scorecard
-from padres_analytics.render.story_infographic import render_angle
+from padres_analytics.render.story_infographic import card_stem, render_angle
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ def run_briefing(
         notes.append(f"Top story ({chosen.key}) failed source verification: {exc}")
         return Briefing(None, None, None, None, 0, graded, card, [], notes)
 
-    image = render_fn(chosen, out_dir, f"daily_{chosen.key}_{season}")
+    image = render_fn(chosen, out_dir, card_stem("daily", chosen, season))
     caption = build_caption(chosen)
     reply = first_reply(chosen)
     warnings = caption_audit(caption)

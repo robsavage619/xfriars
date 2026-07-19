@@ -178,7 +178,11 @@ function Card({ card, onChanged }: { card: BoardCard; onChanged: () => void }) {
   return (
     <article className={`card${card.status === "queued" ? " is-queued" : ""}`}>
       {card.has_image ? (
-        <img className="card-img" src={api.cardImageUrl(card.card_id)} alt={card.title} />
+        <img
+          className="card-img"
+          src={api.cardImageUrl(card.card_id, card.created_at)}
+          alt={card.title}
+        />
       ) : (
         <div className="card-img card-img--missing">image not rendered</div>
       )}

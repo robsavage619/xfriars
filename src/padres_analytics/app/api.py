@@ -37,7 +37,7 @@ app = FastAPI(title="xFriars Studio", docs_url="/api/docs")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Vite dev server
+        "http://localhost:5174",  # Vite dev server
         "http://localhost:7547",  # FastAPI itself (built app)
     ],
     allow_methods=["*"],

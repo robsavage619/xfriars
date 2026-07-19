@@ -63,7 +63,9 @@ export interface SyncState {
 export const api = {
   board: (): Promise<Board> => fetch(`${BASE}/board`).then((r) => _json<Board>(r)),
 
-  cardImageUrl: (id: string): string => `${BASE}/board/cards/${id}/image.png`,
+  // created_at busts the cache: a re-render writes the same URL with new pixels.
+  cardImageUrl: (id: string, version?: string): string =>
+    `${BASE}/board/cards/${id}/image.png${version ? `?v=${encodeURIComponent(version)}` : ""}`,
 
   setCardStatus: (id: string, status: string): Promise<{ status: string }> =>
     fetch(`${BASE}/board/cards/${id}/status`, {

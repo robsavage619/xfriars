@@ -1188,7 +1188,7 @@ def story_infographic_cmd(
     from padres_analytics.detect.angles import discover
     from padres_analytics.detect.reconcile import ReconcileError, verify_angle
     from padres_analytics.render.cards import RenderError
-    from padres_analytics.render.story_infographic import render_angle
+    from padres_analytics.render.story_infographic import card_stem, render_angle
     from padres_analytics.storage.db import connect
 
     ref_season = season or _la_today().year
@@ -1214,7 +1214,7 @@ def story_infographic_cmd(
             raise typer.Exit(ERR) from exc
 
     try:
-        out = render_angle(chosen, CARDS_DIR, f"story_{chosen.key}_{ref_season}")
+        out = render_angle(chosen, CARDS_DIR, card_stem("story", chosen, ref_season))
     except (RenderError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(ERR) from exc

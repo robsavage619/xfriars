@@ -142,6 +142,17 @@ class _Canvas:
         )
 
 
+def card_stem(prefix: str, angle: StoryAngle, season: int) -> str:
+    """Filename stem for a story card PNG, unique per subject.
+
+    The lens key alone collides: two subjects surfaced by the same lens in one
+    season overwrite each other's PNG on disk while both board rows keep
+    pointing at it, so the older card renders the newer subject's image.
+    """
+    subject = re.sub(r"[^a-z0-9]+", "_", angle.subject.lower()).strip("_")
+    return f"{prefix}_{angle.key}_{subject or 'subject'}_{season}"
+
+
 def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
