@@ -369,3 +369,63 @@ def test_one_failed_player_does_not_end_the_run(padres_db, monkeypatch) -> None:
     assert tally["fetched"] == 2
     assert tally["failed"] == 1
     assert tally["rows"] == 10
+
+
+# ── the comps control (mean regression vs owed luck) ────────────────────────
+
+
+def _seed_comp_history(conn, *, gap_rebound: float, control_rebound: float) -> None:
+    """Two cohorts: gap hitters and same-wOBA no-gap hitters, with next seasons."""
+    conn.execute("DELETE FROM statcast_batting_expected")
+    rows = []
+    pid = 1
+    for _ in range(40):  # gap cohort: woba .270, gap +.037
+        rows.append((pid, f"G{pid}", 2020, 400, 300, 0.24, 0.28, 0.40, 0.45, 0.270, 0.307))
+        rows.append(
+            (pid, f"G{pid}", 2021, 400, 300, 0.25, 0.26, 0.42, 0.43, 0.270 + gap_rebound, 0.300)
+        )
+        pid += 1
+    for _ in range(40):  # control: woba .270, no gap
+        rows.append((pid, f"C{pid}", 2020, 400, 300, 0.24, 0.24, 0.40, 0.40, 0.270, 0.272))
+        rows.append(
+            (pid, f"C{pid}", 2021, 400, 300, 0.25, 0.25, 0.42, 0.42, 0.270 + control_rebound, 0.272)
+        )
+        pid += 1
+    conn.executemany(
+        "INSERT INTO statcast_batting_expected "
+        "(player_id, player_name, year, pa, bip, ba, est_ba, slg, est_slg, woba, est_woba) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+
+
+def test_a_rebound_matched_by_the_control_is_not_owed_luck(padres_db) -> None:
+    """The trap: gap hitters just had a bad year, and bad years rebound anyway."""
+    from padres_analytics.study.trees import _node_comps
+
+    _seed_comp_history(padres_db, gap_rebound=0.030, control_rebound=0.029)
+    node, _ = _node_comps(padres_db, player_id=9999, year=2026, gap=0.037, woba=0.270)
+    assert node.verdict == "quiet"
+    assert "ordinary regression" in node.finding
+    assert abs(float(node.facts["net_effect"])) < 0.010
+
+
+def test_a_rebound_the_control_does_not_match_is_a_real_effect(padres_db) -> None:
+    from padres_analytics.study.trees import _node_comps
+
+    _seed_comp_history(padres_db, gap_rebound=0.060, control_rebound=0.010)
+    node, _ = _node_comps(padres_db, player_id=9999, year=2026, gap=0.037, woba=0.270)
+    assert node.verdict == "fired"
+    assert float(node.facts["net_effect"]) >= 0.010
+    assert "the gap itself is worth" in node.finding
+
+
+def test_no_control_cohort_means_no_claim(padres_db) -> None:
+    """Without a control the rebound can't be separated from mean regression."""
+    from padres_analytics.study.trees import _node_comps
+
+    _seed_comp_history(padres_db, gap_rebound=0.030, control_rebound=0.029)
+    # Ask about a wOBA far from the seeded control band.
+    node, _ = _node_comps(padres_db, player_id=9999, year=2026, gap=0.037, woba=0.400)
+    assert node.verdict == "insufficient"
+    assert "control" in node.reason

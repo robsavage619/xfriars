@@ -179,3 +179,20 @@ An ECDF over `n` players cannot resolve finer than `1/n`: a player who beats eve
 **Extended to batted balls (same day).** The driver was generalized to a `LeagueGroup` rather than copied, since two divergent copies of throttle/resume/failure-isolation logic is worse than either. `statcast_batted_balls` went from 12 players to 352 (339 fetched, 0 failed, 70,869 rows); both event domains now report OK. The label wording moved from "pitch-level" to grain-neutral "league-wide coverage" now that it describes batted-ball populations too.
 
 **What that unlocked immediately:** the hypothesis engine went from every windowed spec returning `no_data` or `coverage_blocked` to four of five emitting against populations of 249–310 players — bat speed over 21 days, swing length, run value per pitch seen, launch angle over 30 days. None of these exist as a fixed detector; they are LLM-proposed questions the scanner measured and gated. The fifth was held at `below_gate` (rarity 0.83 against a 0.85 floor), which is the system declining to publish something merely close.
+
+## ADR-012 — Historical expected stats, and the control that deflated our own luck story
+
+**Date:** 2026-07-18
+**Status:** Decided
+
+**Context:** The study's comps node returned `insufficient` on every run because expected stats covered one season. Closing it turned out to be nearly free: `statcast_batter_expected_stats(season)` is a *leaderboard* pull, one API call per season, and all four Statcast season tables delete by year before inserting, so a backfill cannot clobber the current season.
+
+**Decision:** Backfilled 2015–2025 (11 seasons, ~1 minute). `statcast_batting_expected` now spans 12 seasons with 1,968 players carrying 2+ seasons and 1,063 carrying 4+.
+
+**What that produced, and why it changed the node's design.** With history available, the comps node initially reported: *"Of 291 hitters who carried a similar gap, 210 (72%) saw their wOBA rise the following season — an average move of +0.024."* A strong, postable finding.
+
+It is also very likely an artifact, and checking took one query. Hitters carrying a large positive gap have by construction just had a **bad results season**, and bad seasons are followed by better ones regardless of luck. Against a control of hitters with the same wOBA and *no* meaningful gap: 75% improved, mean **+0.022**. The gap cohort's edge over the control is **+0.002**.
+
+So the node now runs the control by default and reports the net effect. On current data it returns `quiet` with: *"the gap is worth +0.002, so this rebound is ordinary regression, not owed luck."* It fires only when the net effect clears 0.010, and returns `insufficient` when no control cohort exists — because without one, a rebound cannot be separated from mean regression at all.
+
+**Consequences:** This is the same league-control principle the engine already applies to short-window player changes, applied to a longitudinal claim. It deflates a story this account would otherwise be inclined to tell, which is the point of building the control rather than the reason to skip it. Scope note recorded in METHODOLOGY: this measures the *next-season* horizon; the in-season luck detectors make a shorter-horizon claim that this does not directly test.

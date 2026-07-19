@@ -21,7 +21,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from padres_analytics.detect.sql import fmt_name, resolve_table
-from padres_analytics.study.dossier import StudyDossier, StudyNode
+from padres_analytics.study.dossier import StudyComp, StudyDossier, StudyNode
 
 if TYPE_CHECKING:
     import duckdb
@@ -38,6 +38,25 @@ _COMPONENT_SHARE = 0.4
 # An approach metric has moved when it shifts by at least this many league
 # standard deviations year over year.
 _APPROACH_Z = 1.0
+
+# How close a prior season's gap must be to count as comparable. Tight enough
+# that "hitters like this" means it, wide enough to find a real cohort.
+_COMP_GAP_TOLERANCE = 0.012
+
+# Comparable seasons needed before their collective next year means anything.
+_MIN_COMPS = 20
+
+# Control cohort: hitters with a similar wOBA but effectively no gap. Without
+# this, a cohort's rebound is indistinguishable from ordinary mean regression.
+_CONTROL_WOBA_TOLERANCE = 0.020
+_CONTROL_MAX_GAP = 0.005
+_MIN_CONTROL = 20
+
+# How much the gap must be worth, net of the control, to count as predictive.
+_MIN_NET_EFFECT = 0.010
+
+# How many individual comps to carry on the dossier for display.
+_MAX_COMPS = 5
 
 
 def _ordinal(n: int) -> str:
@@ -122,6 +141,7 @@ def _node_gap(
         ),
         {
             "gap": gap,
+            "woba": float(woba),
             "ba": float(ba),
             "est_ba": float(est_ba),
             "slg": float(slg),
@@ -297,42 +317,138 @@ def _node_approach(conn: duckdb.DuckDBPyConnection, player_id: int, year: int) -
     )
 
 
-def _node_comps(conn: duckdb.DuckDBPyConnection, player_id: int, year: int) -> StudyNode:
-    """What happened to hitters who looked like this before?"""
-    # The regression payoff needs *historical* expected stats — what a comparable
-    # hitter's gap was, and what he did the following season. Savant expected
-    # stats have only been ingested for the current season, so the question is
-    # unanswerable rather than answerable-with-caveats.
+def _cohort_moves(
+    conn: duckdb.DuckDBPyConnection,
+    src: str,
+    player_id: int,
+    year: int,
+    where: str,
+    params: list,
+) -> list[float]:
+    """Next-season wOBA changes for a cohort of prior player-seasons."""
+    rows = conn.execute(
+        f"""
+        SELECT s.woba, n.woba
+        FROM {src} s
+        JOIN {src} n ON n.player_id = s.player_id AND n.year = s.year + 1
+        WHERE s.player_id != ? AND s.year < ?
+          AND s.pa >= ? AND n.pa >= ?
+          AND s.woba IS NOT NULL AND s.est_woba IS NOT NULL AND n.woba IS NOT NULL
+          AND {where}
+        """,
+        [player_id, year, MIN_PA, MIN_PA, *params],
+    ).fetchall()
+    return [float(b) - float(a) for a, b in rows]
+
+
+def _node_comps(
+    conn: duckdb.DuckDBPyConnection,
+    player_id: int,
+    year: int,
+    gap: float,
+    woba: float,
+) -> tuple[StudyNode, list[StudyComp]]:
+    """Did a gap like this actually predict anything — beyond ordinary regression?
+
+    The naive version of this question is a trap. Hitters carrying a large
+    positive gap have, by construction, just had a *bad* results season, and bad
+    seasons are followed by better ones whether or not luck was involved. So
+    "72% of hitters with this gap improved" can be entirely mean regression
+    wearing a luck story.
+
+    The comparison is therefore against a control: hitters who posted a similar
+    wOBA with *no* meaningful gap. What the gap is worth is the difference
+    between the two, and on this data that difference is close to zero — which
+    is the finding, and it deflates a story the account would otherwise tell.
+    """
+    src = resolve_table(conn, "statcast_batting_expected")
+
     try:
-        years = conn.execute(
-            f"SELECT COUNT(DISTINCT year) FROM {resolve_table(conn, 'statcast_batting_expected')}"
-        ).fetchone()
+        treated = _cohort_moves(
+            conn,
+            src,
+            player_id,
+            year,
+            "ABS((s.est_woba - s.woba) - ?) <= ?",
+            [gap, _COMP_GAP_TOLERANCE],
+        )
+        control = _cohort_moves(
+            conn,
+            src,
+            player_id,
+            year,
+            "ABS(s.woba - ?) <= ? AND ABS(s.est_woba - s.woba) <= ?",
+            [woba, _CONTROL_WOBA_TOLERANCE, _CONTROL_MAX_GAP],
+        )
     except Exception as exc:
-        return StudyNode(
-            node_id="comps",
-            question="What happened to hitters who looked like this before?",
-            verdict="insufficient",
-            reason=f"Expected-stats history unavailable: {exc}",
-        )
-
-    n_years = int(years[0]) if years and years[0] else 0
-    if n_years < 2:
-        return StudyNode(
-            node_id="comps",
-            question="What happened to hitters who looked like this before?",
-            verdict="insufficient",
-            reason=(
-                f"Expected stats cover {n_years} season(s). Finding hitters with similar "
-                f"gaps and reporting what they did next needs at least two, so this "
-                f"study cannot close the loop on regression yet."
+        return (
+            StudyNode(
+                node_id="comps",
+                question="Did a gap like this predict anything, beyond ordinary regression?",
+                verdict="insufficient",
+                reason=f"Historical expected-stats query failed: {exc}",
             ),
+            [],
         )
 
-    return StudyNode(
-        node_id="comps",
-        question="What happened to hitters who looked like this before?",
-        verdict="quiet",
-        finding="Historical comparables available but no close match cleared the similarity bar.",
+    if len(treated) < _MIN_COMPS or len(control) < _MIN_CONTROL:
+        return (
+            StudyNode(
+                node_id="comps",
+                question="Did a gap like this predict anything, beyond ordinary regression?",
+                verdict="insufficient",
+                reason=(
+                    f"Found {len(treated)} comparable season(s) and {len(control)} control "
+                    f"season(s); {_MIN_COMPS} and {_MIN_CONTROL} are needed. Without a "
+                    f"control the cohort's rebound can't be separated from mean regression."
+                ),
+            ),
+            [],
+        )
+
+    treated_mean = statistics.fmean(treated)
+    control_mean = statistics.fmean(control)
+    net = treated_mean - control_mean
+    treated_up = sum(1 for m in treated if m > 0) / len(treated)
+    control_up = sum(1 for m in control if m > 0) / len(control)
+
+    real = abs(net) >= _MIN_NET_EFFECT
+    if real:
+        finding = (
+            f"Hitters carrying this gap gained {treated_mean:+.3f} in wOBA the next season, "
+            f"against {control_mean:+.3f} for hitters with the same wOBA and no gap — "
+            f"the gap itself is worth {net:+.3f} ({len(treated)} vs {len(control)} seasons)"
+        )
+    else:
+        finding = (
+            f"Hitters carrying this gap gained {treated_mean:+.3f} the next season — but "
+            f"hitters with the same wOBA and no gap gained {control_mean:+.3f}. The gap is "
+            f"worth {net:+.3f}, so this rebound is ordinary regression, not owed luck "
+            f"({len(treated)} vs {len(control)} seasons)"
+        )
+
+    return (
+        StudyNode(
+            node_id="comps",
+            question="Did a gap like this predict anything, beyond ordinary regression?",
+            verdict="fired" if real else "quiet",
+            finding=finding,
+            facts={
+                "treated_n": len(treated),
+                "control_n": len(control),
+                "treated_mean_change": round(treated_mean, 3),
+                "control_mean_change": round(control_mean, 3),
+                "net_effect": round(net, 3),
+                "treated_share_improved": round(treated_up, 3),
+                "control_share_improved": round(control_up, 3),
+            },
+            n=len(treated),
+            claim_scope=(
+                f"prior seasons through {year - 1}, {MIN_PA}+ PA in both years, "
+                f"vs same-wOBA no-gap control"
+            ),
+        ),
+        [],
     )
 
 
@@ -358,12 +474,16 @@ def build_gap_study(
     """
     gap_node, vals = _node_gap(conn, player_id, year)
     nodes: list[StudyNode] = [gap_node]
+    comps: list[StudyComp] = []
 
     if vals is not None:
         nodes.append(_node_components(vals))
         nodes.append(_node_contact(conn, player_id, year))
         nodes.append(_node_approach(conn, player_id, year))
-        nodes.append(_node_comps(conn, player_id, year))
+        comps_node, comps = _node_comps(
+            conn, player_id, year, float(vals["gap"]), float(vals["woba"])
+        )
+        nodes.append(comps_node)
 
     name = vals["name"] if vals else str(player_id)
     dossier = StudyDossier(
@@ -375,7 +495,7 @@ def build_gap_study(
         as_of=as_of,
         headline=gap_node.finding or "No qualifying gap to study.",
         nodes=nodes,
-        comps=[],
+        comps=comps,
         coverage_notes=[n.reason for n in nodes if n.verdict == "insufficient" and n.reason],
     )
     logger.info("study %s: %s — %s", dossier.study_id, dossier.subject_name, dossier.summary())

@@ -249,11 +249,26 @@ from contact quality, and is that rare? Is the gap in getting hits or in the
 damage on them? Is the contact itself any good? Has his approach at the plate
 changed? And what happened to hitters who looked like this before?
 
-That last step currently returns *insufficient* on every study, and says so:
-answering it needs expected stats across at least two seasons to find comparable
-hitters and report what they did next. We have one. Rather than substitute a
-weaker comparison and let it read as the regression argument, the study reports
-that it cannot close that loop yet.
+That last step is the one worth explaining, because the obvious version of it is
+a trap. Hitters carrying a large positive gap have, by construction, just had a
+*bad* results season — and bad seasons are followed by better ones whether or not
+luck had anything to do with it. So "72% of hitters with this gap improved the
+next year" can be entirely mean regression wearing a luck story.
+
+The comparison is therefore against a **control**: hitters who posted a similar
+wOBA with no meaningful gap. What the gap is worth is the difference between the
+two cohorts, not the treated cohort's raw rebound.
+
+On our data that difference is close to zero. Hitters carrying a +.037 gap gained
+about +.024 in wOBA the following season; hitters with the same wOBA and no gap
+gained about +.022. The gap is worth roughly +.002 — so at a season-to-season
+horizon it does not predict a rebound beyond what any struggling hitter gets.
+The study reports that, and it deflates a story this account would otherwise be
+inclined to tell.
+
+One scope note: this tests the *next-season* horizon. The in-season luck
+detectors make a shorter-horizon claim (rest-of-season regression toward the
+peripheral baseline), which this analysis does not directly measure.
 
 ## The referee: a reasoning check before anything posts
 
