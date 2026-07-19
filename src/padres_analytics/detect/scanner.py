@@ -811,8 +811,69 @@ class GenericScanner:
             except Exception as exc:
                 logger.warning("scan: candidate build failed metric=%s: %s", metric_id, exc)
 
-        candidates.sort(key=lambda c: c.novelty_score, reverse=True)
-        return candidates[: scan_cfg.top_k]
+        return self._rank_with_priors(conn, candidates, scan_cfg)
+
+    @staticmethod
+    def _rank_with_priors(
+        conn: duckdb.DuckDBPyConnection,
+        candidates: list[StatCandidate],
+        scan_cfg: ScanConfig,
+    ) -> list[StatCandidate]:
+        """Order by learned editorial priors, keeping slots open for the unproven.
+
+        Priors bias rank order only — they never touch facts or relax a gate. The
+        exploration floor is the guard against the obvious failure mode: rank by
+        what got approved before and the engine converges on a house style,
+        stops surfacing anything unfamiliar, and quietly gets more boring. A
+        fixed number of slots always go to the best candidates by *raw* novelty,
+        so something unproven reaches the Board every day.
+        """
+        from padres_analytics.learn.apply import apply_priors, latest_stats
+        from padres_analytics.learn.features import _star_ids, candidate_features
+
+        by_raw = sorted(candidates, key=lambda c: c.novelty_score, reverse=True)
+
+        stats = latest_stats(conn)
+        if not stats:
+            return by_raw[: scan_cfg.top_k]
+
+        stars = _star_ids(conn)
+        adjusted: list[StatCandidate] = []
+        for cand in candidates:
+            feats = candidate_features(
+                cand.detector, cand.facts_json, cand.provenance_json, cand.novelty_score, stars
+            )
+            score, components = apply_priors(stats, cand.novelty_score, feats)
+            if components:
+                adjusted.append(
+                    cand.model_copy(
+                        update={
+                            "novelty_score": score,
+                            "novelty_components": {**(cand.novelty_components or {}), **components},
+                        }
+                    )
+                )
+            else:
+                adjusted.append(cand)
+
+        adjusted.sort(key=lambda c: c.novelty_score, reverse=True)
+
+        reserved = min(scan_cfg.exploration_slots, scan_cfg.top_k)
+        if reserved <= 0:
+            return adjusted[: scan_cfg.top_k]
+
+        picked: list[StatCandidate] = []
+        seen: set[str] = set()
+        for cand in by_raw[:reserved]:
+            picked.append(cand)
+            seen.add(cand.candidate_id)
+        for cand in adjusted:
+            if len(picked) >= scan_cfg.top_k:
+                break
+            if cand.candidate_id not in seen:
+                picked.append(cand)
+                seen.add(cand.candidate_id)
+        return picked
 
     @staticmethod
     def _apply_fdr(hits: list[_Hit], scan_cfg: ScanConfig) -> list[_Hit]:

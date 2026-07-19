@@ -73,6 +73,11 @@ class ScanConfig(BaseModel):
     """Rarity floor for surfacing a hit. The daily battery is ranked effect sizes,
     not independent significance tests, so a floor + BH correction (fdr_mode) +
     the Studio human kill-switch guard against noise."""
+    exploration_slots: int = 2
+    """Slots per run reserved for the best candidates by *raw* novelty, ignoring
+    learned priors. Without this, ranking by what was approved before converges
+    on a house style and the feed quietly narrows — the engine stops being
+    surprised by anything. Deterministic epsilon-greedy; set 0 to disable."""
     star_ids: list[int] = Field(default_factory=list)
     """Marquee player MLBAM IDs — a non-elite mark still earns a standalone card.
     Editorial judgment, so it belongs in private/metrics.toml (the closed brain);

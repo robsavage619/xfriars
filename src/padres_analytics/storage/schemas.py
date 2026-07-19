@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -468,6 +468,30 @@ DDL_STATEMENTS: tuple[str, ...] = (
         max_rarity   DOUBLE,
         candidate_id VARCHAR,
         reason       VARCHAR,
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    # Learned editorial priors — a stateless snapshot recomputed by `pad learn run`
+    # from Board verdicts, Studio rejections, referee outcomes and prediction
+    # grades. Consumers read the latest run; the history is the audit trail.
+    """
+    CREATE TABLE IF NOT EXISTS learned_priors (
+        prior_id     VARCHAR PRIMARY KEY,
+        run_id       VARCHAR NOT NULL,
+        kind         VARCHAR NOT NULL,
+        feature      VARCHAR NOT NULL,
+        n_pos        DOUBLE,
+        n_total      DOUBLE,
+        multiplier   DOUBLE NOT NULL,
+        computed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS learning_runs (
+        run_id       VARCHAR PRIMARY KEY,
+        as_of        DATE NOT NULL,
+        observations INTEGER,
+        summary_json JSON,
         created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,

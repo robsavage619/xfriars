@@ -38,6 +38,8 @@ hypothesis_app = typer.Typer(help="LLM-driven discovery — context, enqueue, sc
 app.add_typer(hypothesis_app, name="hypothesize")
 review_app = typer.Typer(help="Referee — agentic reasoning review before anything posts.")
 app.add_typer(review_app, name="review")
+learn_app = typer.Typer(help="Self-learning priors — recompute from editorial decisions.")
+app.add_typer(learn_app, name="learn")
 
 logger = logging.getLogger(__name__)
 
@@ -2315,3 +2317,153 @@ def review_queue() -> None:
         typer.echo("\nMost common failure modes:")
         for m in modes[:8]:
             typer.echo(f"  {m['failure_mode']:<26} {m['n']:>3}  ({m['lens']})")
+
+
+# ── pad learn ──────────────────────────────────────────────────────────────────
+
+
+@learn_app.command("run")
+def learn_run(
+    as_of: str | None = typer.Option(None, "--date", help="Reference date (YYYY-MM-DD)."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would change without persisting."
+    ),
+) -> None:
+    """Recompute editorial priors from every labelled decision, then report."""
+    configure_logging()
+    import contextlib
+
+    from padres_analytics.learn.run import learn, report
+    from padres_analytics.storage.db import TradesDbNotFoundError, attach_trades, connect
+
+    ref = date.fromisoformat(as_of) if as_of else _la_today()
+    with connect(read_only=dry_run) as conn:
+        with contextlib.suppress(TradesDbNotFoundError):
+            attach_trades(conn)
+        result = learn(conn, ref, dry_run=dry_run)
+
+    typer.echo(report(result))
+    if dry_run:
+        typer.echo("\n(dry run — nothing persisted)")
+
+
+@learn_app.command("report")
+def learn_report() -> None:
+    """Show the most recent learning run."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        row = conn.execute(
+            "SELECT run_id, as_of, observations, summary_json FROM learning_runs "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            typer.echo("No learning run recorded yet. Run 'pad learn run'.")
+            return
+        run_id, ref, observations, summary = row
+        priors = conn.execute(
+            "SELECT kind, feature, n_pos, n_total, multiplier FROM learned_priors "
+            "WHERE run_id = ? AND multiplier != 1.0 ORDER BY ABS(multiplier - 1.0) DESC",
+            [run_id],
+        ).fetchall()
+
+    typer.echo(f"Run {run_id} — {ref} — {observations} observation(s)")
+    if not priors:
+        typer.echo("No feature has enough evidence to move off neutral.")
+    for kind, feature, n_pos, n_total, mult in priors:
+        evidence = f"({n_pos:.1f}/{n_total:.1f})" if n_total is not None else ""
+        typer.echo(f"  [{kind}] {feature:<34} x{mult:.3f} {evidence}")
+    if summary:
+        typer.echo(f"\n{summary}")
+
+
+@learn_app.command("show")
+def learn_show(
+    feature: str = typer.Argument(..., help="Feature key, e.g. 'detector:scan'."),
+) -> None:
+    """Show one feature's history across learning runs."""
+    configure_logging()
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT r.as_of, p.n_pos, p.n_total, p.multiplier
+            FROM learned_priors p
+            JOIN learning_runs r ON r.run_id = p.run_id
+            WHERE p.feature = ?
+            ORDER BY r.created_at DESC
+            LIMIT 20
+            """,
+            [feature],
+        ).fetchall()
+
+    if not rows:
+        typer.echo(f"No prior recorded for {feature!r}.")
+        return
+    typer.echo(f"{feature}")
+    for ref, n_pos, n_total, mult in rows:
+        evidence = f"{n_pos:.1f}/{n_total:.1f}" if n_total is not None else "—"
+        typer.echo(f"  {ref}  x{mult:.3f}  ({evidence} kept)")
+
+
+@metrics_app.command("from-board")
+def metrics_from_board(
+    limit: int = typer.Option(10, "--limit", help="How many recent queued cards to walk."),
+) -> None:
+    """Walk recently queued Board cards and prompt for each one's numbers.
+
+    The engagement loop only closes if someone transcribes metrics from X, and
+    remembering angle keys and tweet ids is most of that friction. This lists the
+    cards that were actually queued and asks per card; blank input skips.
+    """
+    configure_logging()
+    from padres_analytics.engagement import record_metrics
+    from padres_analytics.storage.db import connect
+    from padres_analytics.storage.schemas import initialize
+
+    with connect() as conn:
+        initialize(conn)
+        cards = conn.execute(
+            """
+            SELECT card_id, angle_key, subject, headline, created_at
+            FROM board_cards
+            WHERE status = 'queued'
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+
+        if not cards:
+            typer.echo("No queued cards to record metrics for.")
+            return
+
+        recorded = 0
+        for card_id, angle_key, subject, headline, created in cards:
+            typer.echo(f"\n{created}  [{angle_key or 'unknown'}]  {headline or card_id}")
+            tweet_id = typer.prompt("  tweet id (blank to skip)", default="", show_default=False)
+            if not tweet_id.strip():
+                continue
+            likes = typer.prompt("  likes", default=0, type=int)
+            reposts = typer.prompt("  reposts", default=0, type=int)
+            replies = typer.prompt("  replies", default=0, type=int)
+            bookmarks = typer.prompt("  bookmarks", default=0, type=int)
+            impressions = typer.prompt("  impressions", default=0, type=int)
+            follows = typer.prompt("  follows attributed", default=0, type=int)
+            record_metrics(
+                conn,
+                tweet_id.strip(),
+                angle_key=angle_key or "",
+                subject=subject or "",
+                impressions=impressions,
+                likes=likes,
+                reposts=reposts,
+                replies=replies,
+                bookmarks=bookmarks,
+                follows=follows,
+            )
+            recorded += 1
+
+    typer.echo(f"\nRecorded {recorded} post(s). Run 'pad learn run' to fold them into ranking.")

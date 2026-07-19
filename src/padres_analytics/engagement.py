@@ -27,6 +27,9 @@ _W_FOLLOW = 6.0
 
 _MIN_POSTS = 3  # below this many posts for an angle, there's no signal yet
 _FLOOR, _CEIL = 0.7, 1.4  # the multiplier is bounded so a hot/cold streak can't dominate
+# Engagement evidence half-life. What landed in April shouldn't steer July's feed
+# as strongly as last week did — the account's audience and voice both move.
+_HALF_LIFE_DAYS = 45.0
 
 
 def _ensure_columns(conn: duckdb.DuckDBPyConnection) -> None:
@@ -90,12 +93,16 @@ def _score_sql() -> str:
 
 
 def _latest_scores_by_angle(conn: duckdb.DuckDBPyConnection) -> dict[str, list[float]]:
-    """The newest metric snapshot per tweet, scored, grouped by angle key."""
+    """The newest metric snapshot per tweet, scored and recency-weighted, by angle key."""
     try:
         rows = conn.execute(
             f"""
             WITH latest AS (
-                SELECT angle_key, {_score_sql()} AS score,
+                SELECT angle_key,
+                       ({_score_sql()}) * POWER(
+                           0.5,
+                           DATE_DIFF('day', captured_at, CURRENT_TIMESTAMP) / {_HALF_LIFE_DAYS}
+                       ) AS score,
                        ROW_NUMBER() OVER (PARTITION BY posted_tweet_id ORDER BY captured_at DESC) rn
                 FROM post_metrics WHERE angle_key IS NOT NULL
             )

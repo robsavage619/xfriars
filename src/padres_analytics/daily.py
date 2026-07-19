@@ -9,6 +9,7 @@ a one-tap human approval. Nothing posts — the human gate stays.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -21,6 +22,8 @@ from padres_analytics.detect.angles import StoryAngle, discover
 from padres_analytics.detect.reconcile import ReconcileError, verify_angle
 from padres_analytics.predict import grade_predictions, log_predictions, scorecard
 from padres_analytics.render.story_infographic import render_angle
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import duckdb
@@ -62,6 +65,21 @@ def run_briefing(
 
     graded = grade_predictions(conn, as_of=today)
     card = scorecard(conn)
+
+    # Recompute priors before discovery so today's ranking reflects yesterday's
+    # verdicts. Cheap (pure SQL) and stateless, so it's safe to run every day.
+    try:
+        from padres_analytics.learn.run import learn
+
+        learned = learn(conn, today)
+        moved = len(learned.informative())
+        if moved:
+            notes.append(f"Priors updated from {learned.observations} verdict(s); {moved} moved.")
+        elif learned.notes:
+            notes.append(learned.notes[0])
+    except Exception as exc:  # a learning failure must never block the briefing
+        logger.warning("daily: learning pass failed: %s", exc)
+        notes.append(f"Learning pass failed (ranking unchanged): {exc}")
 
     angles = discover(conn, season, as_of=today)
     if not angles:
