@@ -341,8 +341,8 @@ def test_backfill_skips_players_already_current(padres_db, monkeypatch) -> None:
     monkeypatch.setattr(ev, "ingest_batter_pitches", _fake_ingest)
     monkeypatch.setattr(ev.time, "sleep", lambda _s: None)
 
-    tally = ev.ingest_league_batter_pitches(
-        padres_db, 2026, delay_seconds=0, fresh_through=_date(2026, 7, 15)
+    tally = ev.ingest_league_events(
+        padres_db, 2026, "batter_pitches", delay_seconds=0, fresh_through=_date(2026, 7, 15)
     )
     assert fetched == [2]  # the current player was not refetched
     assert tally["skipped"] == 1
@@ -365,7 +365,7 @@ def test_one_failed_player_does_not_end_the_run(padres_db, monkeypatch) -> None:
     monkeypatch.setattr(ev, "ingest_batter_pitches", _flaky)
     monkeypatch.setattr(ev.time, "sleep", lambda _s: None)
 
-    tally = ev.ingest_league_batter_pitches(padres_db, 2026, delay_seconds=0)
+    tally = ev.ingest_league_events(padres_db, 2026, "batter_pitches", delay_seconds=0)
     assert tally["fetched"] == 2
     assert tally["failed"] == 1
     assert tally["rows"] == 10

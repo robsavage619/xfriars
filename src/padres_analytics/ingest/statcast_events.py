@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
@@ -350,9 +352,42 @@ def qualified_batter_ids(
     return [(int(r[0]), str(r[1]) if r[1] else None) for r in rows]
 
 
-def ingest_league_batter_pitches(
+@dataclass(frozen=True)
+class LeagueGroup:
+    """One league-fill target: where it lands and how a single player is fetched."""
+
+    key: str
+    table: str
+    id_col: str
+    source: str
+    fetch: Callable[[duckdb.DuckDBPyConnection, int, int], int]
+    describes: str
+
+
+LEAGUE_GROUPS: dict[str, LeagueGroup] = {
+    "batter_pitches": LeagueGroup(
+        key="batter_pitches",
+        table="statcast_batter_pitches",
+        id_col="batter_id",
+        source="league-pitches",
+        fetch=lambda conn, season, pid: ingest_batter_pitches(conn, season, pid),
+        describes="every pitch seen — the population behind swing-decision claims",
+    ),
+    "batted_balls": LeagueGroup(
+        key="batted_balls",
+        table="statcast_batted_balls",
+        id_col="player_id",
+        source="league-batted-balls",
+        fetch=lambda conn, season, pid: ingest_batted_balls(conn, season, pid),
+        describes="balls in play — the population behind contact-quality claims",
+    ),
+}
+
+
+def ingest_league_events(
     conn: duckdb.DuckDBPyConnection,
     season: int,
+    group: str = "batter_pitches",
     *,
     min_pa: int = 100,
     delay_seconds: float = 1.5,
@@ -360,22 +395,23 @@ def ingest_league_batter_pitches(
     limit: int | None = None,
     progress_every: int = 25,
 ) -> dict[str, int]:
-    """Fill faced-pitch data league-wide, throttled and resumable.
+    """Fill one event table league-wide, throttled and resumable.
 
-    Every split contrast and plate-discipline percentile compares a Padre against
-    this population. While it holds only the players we happened to ingest, those
-    claims have to carry a caveat naming the sample — filling it league-wide is
-    what removes the caveat.
+    Split contrasts, plate-discipline percentiles and contact-quality reads all
+    compare a Padre against whoever is in these tables. While a table holds only
+    the players we happened to ingest, its claims carry a caveat naming the
+    sample; filling it league-wide is what removes the caveat.
 
     Two things make this safe to run against a public service. Requests are
     spaced by ``delay_seconds``, so a few hundred players is a slow trickle
     rather than a burst. And players whose data already reaches ``fresh_through``
-    are skipped, so an interrupted run resumes instead of restarting — which
-    also means re-running costs almost nothing.
+    are skipped, so an interrupted run resumes instead of restarting — which also
+    means re-running costs almost nothing.
 
     Args:
         conn: Write-mode connection.
         season: Season to fill.
+        group: Which target in :data:`LEAGUE_GROUPS` to fill.
         min_pa: Plate-appearance floor defining "qualified".
         delay_seconds: Pause between players.
         fresh_through: Skip players whose latest row is on or after this date.
@@ -384,23 +420,30 @@ def ingest_league_batter_pitches(
 
     Returns:
         ``{"fetched": n, "skipped": n, "failed": n, "rows": n}``.
+
+    Raises:
+        KeyError: If ``group`` is not a known target.
     """
+    target = LEAGUE_GROUPS[group]
     players = qualified_batter_ids(conn, season, min_pa)
+
     already: dict[int, date] = {}
     if fresh_through is not None:
         rows = conn.execute(
-            "SELECT batter_id, MAX(game_date) FROM statcast_batter_pitches "
-            "WHERE season = ? GROUP BY batter_id",
+            f"SELECT {target.id_col}, MAX(game_date) FROM {target.table} "
+            f"WHERE season = ? GROUP BY {target.id_col}",
             [season],
         ).fetchall()
         already = {int(r[0]): r[1] for r in rows if r[1] is not None}
 
     tally = {"fetched": 0, "skipped": 0, "failed": 0, "rows": 0}
     logger.info(
-        "league backfill: %d qualified batter(s) for %d (delay %.1fs)",
+        "league backfill [%s]: %d qualified batter(s) for %d (delay %.1fs) — %s",
+        target.key,
         len(players),
         season,
         delay_seconds,
+        target.describes,
     )
 
     for i, (player_id, player_name) in enumerate(players, start=1):
@@ -415,8 +458,8 @@ def ingest_league_batter_pitches(
                 continue
 
         try:
-            with record_run(conn, f"baseball-savant/league-pitches/{season}/{player_id}") as run:
-                n = ingest_batter_pitches(conn, season, player_id)
+            with record_run(conn, f"baseball-savant/{target.source}/{season}/{player_id}") as run:
+                n = target.fetch(conn, season, player_id)
                 run["rows_written"] = n
             tally["fetched"] += 1
             tally["rows"] += n
@@ -427,7 +470,9 @@ def ingest_league_batter_pitches(
 
         if i % progress_every == 0:
             logger.info(
-                "league backfill: %d/%d processed — %d fetched, %d skipped, %d failed, %d rows",
+                "league backfill [%s]: %d/%d processed — %d fetched, %d skipped, "
+                "%d failed, %d rows",
+                target.key,
                 i,
                 len(players),
                 tally["fetched"],
@@ -437,7 +482,7 @@ def ingest_league_batter_pitches(
             )
         time.sleep(delay_seconds)
 
-    logger.info("league backfill complete: %s", tally)
+    logger.info("league backfill [%s] complete: %s", target.key, tally)
     return tally
 
 

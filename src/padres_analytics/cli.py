@@ -2582,6 +2582,11 @@ def study_show(study_id: str = typer.Argument(..., help="Study id.")) -> None:
 @ingest_app.command("league-events")
 def ingest_league_events_cmd(
     season: int = typer.Option(0, "--season", help="Season year. Defaults to current."),
+    group: str = typer.Option(
+        "batter_pitches",
+        "--group",
+        help="Which event table to fill: batter_pitches | batted_balls | all.",
+    ),
     min_pa: int = typer.Option(100, "--min-pa", help="Plate-appearance floor for 'qualified'."),
     delay: float = typer.Option(1.5, "--delay", help="Seconds between players."),
     limit: int | None = typer.Option(None, "--limit", help="Stop after N fetched (trial run)."),
@@ -2598,29 +2603,43 @@ def ingest_league_events_cmd(
     than a burst against a public service.
     """
     configure_logging()
-    from padres_analytics.ingest.statcast_events import ingest_league_batter_pitches
+    from padres_analytics.ingest.statcast_events import LEAGUE_GROUPS, ingest_league_events
     from padres_analytics.storage.db import connect
     from padres_analytics.storage.schemas import initialize
 
     ref_season = season or _la_today().year
     cutoff = None if force else (date.fromisoformat(fresh_through) if fresh_through else None)
 
-    typer.echo(f"League backfill: season {ref_season}, min {min_pa} PA, {delay}s between players.")
+    groups = list(LEAGUE_GROUPS) if group == "all" else [group]
+    unknown = [g for g in groups if g not in LEAGUE_GROUPS]
+    if unknown:
+        typer.echo(
+            f"Error: unknown group(s) {unknown}. Choose from {sorted(LEAGUE_GROUPS)} or 'all'.",
+            err=True,
+        )
+        raise typer.Exit(ERR)
+
+    typer.echo(
+        f"League backfill: season {ref_season}, groups {groups}, "
+        f"min {min_pa} PA, {delay}s between players."
+    )
     if cutoff:
         typer.echo(f"Skipping players already current through {cutoff}.")
 
     with connect() as conn:
         initialize(conn)
-        tally = ingest_league_batter_pitches(
-            conn,
-            ref_season,
-            min_pa=min_pa,
-            delay_seconds=delay,
-            fresh_through=cutoff,
-            limit=limit,
-        )
-
-    typer.echo(
-        f"\nDone. {tally['fetched']} fetched, {tally['skipped']} skipped, "
-        f"{tally['failed']} failed, {tally['rows']:,} rows written."
-    )
+        for name in groups:
+            typer.echo(f"\n[{name}] {LEAGUE_GROUPS[name].describes}")
+            tally = ingest_league_events(
+                conn,
+                ref_season,
+                name,
+                min_pa=min_pa,
+                delay_seconds=delay,
+                fresh_through=cutoff,
+                limit=limit,
+            )
+            typer.echo(
+                f"[{name}] {tally['fetched']} fetched, {tally['skipped']} skipped, "
+                f"{tally['failed']} failed, {tally['rows']:,} rows written."
+            )
