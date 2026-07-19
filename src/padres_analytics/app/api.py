@@ -20,8 +20,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from padres_analytics.app import chains, jobs
-from padres_analytics.config import CARDS_DIR, DUCKDB_PATH
+from padres_analytics.app import chains, jobs, prompts, results
+from padres_analytics.config import CARDS_DIR, DUCKDB_PATH, INBOX_DIR
 from padres_analytics.detect.candidates import ChartDataset, SpatialDataset, TablePayload
 from padres_analytics.render.cards import RenderError, render
 from padres_analytics.render.mlb_assets import (
@@ -700,6 +700,72 @@ def update_board_lead_status(lead_id: str, body: StatusUpdate) -> dict[str, str]
     finally:
         conn.close()
     return {"lead_id": lead_id, "status": body.status}
+
+
+# ── Prompt desk — the handoff to Claude ────────────────────────────────────────
+#
+# The app never calls a model. It assembles a prompt complete enough to paste
+# into Claude, and takes the deliverable back through /api/results, where the
+# same gates that have always guarded the pipeline decide its fate.
+
+
+def _prompt(builder: Callable[[duckdb.DuckDBPyConnection], prompts.PromptSpec]) -> dict[str, Any]:
+    conn = _ro()
+    try:
+        return builder(conn).as_dict()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@app.get("/api/prompts/dive/{lead_id}")
+def prompt_dive(lead_id: str) -> dict[str, Any]:
+    """Prompt to investigate a lead and, if it survives, write the post."""
+    return _prompt(lambda conn: prompts.dive_prompt(conn, lead_id))
+
+
+@app.get("/api/prompts/draft/{candidate_id}")
+def prompt_draft(candidate_id: str) -> dict[str, Any]:
+    """Prompt to turn one verified candidate into a caption."""
+    return _prompt(lambda conn: prompts.draft_prompt(conn, candidate_id))
+
+
+@app.get("/api/prompts/review/{draft_id}")
+def prompt_review(draft_id: str) -> dict[str, Any]:
+    """Prompt for the referee panel — the reasoning gate before approval."""
+    return _prompt(lambda conn: prompts.review_prompt(conn, draft_id))
+
+
+@app.get("/api/prompts/hypothesis")
+def prompt_hypothesis() -> dict[str, Any]:
+    """Prompt to propose new metric hypotheses for the scanner to test."""
+    return _prompt(prompts.hypothesis_prompt)
+
+
+class PastedResult(BaseModel):
+    """Raw text pasted back from Claude."""
+
+    text: str
+
+
+@app.post("/api/results")
+def land_result(body: PastedResult) -> dict[str, Any]:
+    """Route a pasted deliverable to its gate path and report the outcome.
+
+    The payload is data, never instructions: it is classified by shape and can
+    only enter the one path that shape allows.
+    """
+    conn = _rw()
+    try:
+        outcome = results.land(conn, body.text, inbox=INBOX_DIR, cards_dir=CARDS_DIR)
+    except results.ResultError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        conn.close()
+    return outcome.as_dict()
 
 
 # ── Actions — kick the engine from the app ──────────────────────────────────────
