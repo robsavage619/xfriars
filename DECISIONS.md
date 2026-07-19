@@ -211,3 +211,22 @@ So the node now runs the control by default and reports the net effect. On curre
 **A disabling calibration caught on the way.** With the cohort live, the detector still surfaced nothing, because `rarity_from_z` mapped z linearly and put every shift below z≈2.8 under the 0.85 emit floor. It looked conservative and was in fact dead code. Replaced with the same ECDF ranking every other lens uses — the share of the cohort whose move was smaller — keeping the cap, since "different from his own past" remains a weaker claim than "unlike anyone in baseball." Ty France's +0.136 SLG move against his own 5-season baseline now scores 0.905 and reaches the feed.
 
 **The pattern across all three ADRs in this area:** a threshold that silently admits nothing is indistinguishable from a broken detector, and both look exactly like a quiet day.
+
+## ADR-014 — The Studio is a prompt desk: zero model calls, and a door back in
+
+**Date:** 2026-07-19
+**Status:** Decided
+
+**Context:** The Studio was a passive triage gallery. The only actions were Sync and Scout; every generative step lived in a terminal, and the UI's answer at each gap was "copy this string and leave the app." Meanwhile 74 candidates sat in `stat_candidates` with no surface, and the backend already exposed a full candidate→draft→approve loop the frontend never called.
+
+**The app never calls a model.** The obvious fix — have the Studio call the API for captions and dives — was rejected outright. The app's product is *prompt assembly*: it builds a prompt complete enough to paste into Claude, and takes the JSON deliverable back through `POST /api/results`. This keeps token cost at zero, keeps the analysis step where a human can read it before it lands, and means the model is never in the request path of anything the account publishes. It also makes prompt quality the leverage point of the whole application rather than an implementation detail.
+
+**The dossier is a contract, not a summary.** `digit_audit` rejects any digit token not present in `facts_json`, so a prompt that omits a number silently guarantees a rejected draft. Each prompt therefore embeds the facts verbatim and says so in the prompt itself, alongside the coverage windows that bound a superlative, the banned voice tells, a JSON contract with a filled example, and an honest exit (`{"verdict": "no_story"}`) framed as a good outcome. `tests/test_prompts.py` asserts these are present, so drift breaks the build rather than a draft.
+
+**Paste-back is a door, not an interpreter.** Text arriving from a chat window is data, never instructions: `results.land()` parses it, classifies it by *shape*, and routes it to the one deterministic path that shape allows — `ingest_draft`, `review.store.record`, or `hypothesis.store.enqueue`. A payload carrying extra keys asking for other behavior (`"action": "approve_draft"`) is inert, and there is a test that proves it. Nothing about the gates changed; what changed is that failures now report *which* gate refused the work.
+
+**What stayed out of the app on purpose.** Posting is CLI-only — the Studio hands you `uv run pad post --live <id>` and has no post button anywhere. Referee adjudication stays with Claude; the app builds the packet and records verdicts, never judges. Approve remains server-gated on referee clearance, and because `packet_hash` ties a clearance to exact content, editing a caption marks the clearance stale in the UI rather than showing a green light the gate would refuse to honor.
+
+**A collision found on the way.** Story card PNGs were named `{prefix}_{lens_key}_{season}` — not unique per subject. Two stories surfaced by the same lens in one season overwrote each other on disk while both board rows kept pointing at the file, so Gavin Sheets' card rendered Ty France's image. `card_stem()` folds a slugged subject into the name. Cards rendered before the fix cannot be repaired; re-running regenerates them.
+
+**Verified end to end on live data:** a franchise-HR-record prompt produced a caption that cleared schema, digit audit, scope guard, render, and verification first try; referee verdicts cleared it; it approved. A caption with invented numbers was rejected at the digit audit with both tokens named.

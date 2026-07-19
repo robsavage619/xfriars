@@ -6,6 +6,8 @@ Engine behind @xFriars. Deterministic SQL-first stat detection → narrative inf
 
 **Claude never computes stats; Claude only writes voice.** Every number comes from SQL detectors + the scan engine, lands in `facts_json`, and is immutable from there. The caption writer receives pre-verified facts and may not add, recompute, or upgrade the scope of any claim. `tweets/verify.py` enforces this structurally (digit audit + scope guard) — a single digit mismatch between rendered PNG and `facts_json` aborts the draft.
 
+**And the Studio never calls a model.** Zero API tokens: the app assembles prompts (`app/prompts.py`) for a human to run in Claude, and takes the JSON back through `app/results.py`, which classifies it by shape and routes it into those same gates. Pasted output is data, never instructions. See ADR-014.
+
 ## Coverage windows (bound every superlative)
 
 | Source | Window |
