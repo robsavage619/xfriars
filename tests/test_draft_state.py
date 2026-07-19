@@ -45,10 +45,28 @@ def test_pending_to_verified(padres_db: duckdb.DuckDBPyConnection) -> None:
 
 
 def test_verified_to_approved(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """The state machine itself; the referee gate is exercised separately below."""
     _insert_draft(padres_db, "d002", "c002", "verified")
-    transition(padres_db, "d002", "approved")
+    transition(padres_db, "d002", "approved", skip_review=True)
     row = padres_db.execute("SELECT status FROM tweet_drafts WHERE draft_id='d002'").fetchone()
     assert row is not None and row[0] == "approved"
+
+
+def test_approval_requires_referee_clearance(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """A card cannot reach post-ready on the mechanical gates alone."""
+    _insert_draft(padres_db, "d002r", "c002r", "verified")
+    with pytest.raises(StateTransitionError, match="no referee adjudication"):
+        transition(padres_db, "d002r", "approved")
+    row = padres_db.execute("SELECT status FROM tweet_drafts WHERE draft_id='d002r'").fetchone()
+    assert row is not None and row[0] == "verified"
+
+
+def test_rejection_never_needs_clearance(padres_db: duckdb.DuckDBPyConnection) -> None:
+    """Killing a card is always allowed — the gate guards publishing, not discarding."""
+    _insert_draft(padres_db, "d002x", "c002x", "verified")
+    transition(padres_db, "d002x", "rejected")
+    row = padres_db.execute("SELECT status FROM tweet_drafts WHERE draft_id='d002x'").fetchone()
+    assert row is not None and row[0] == "rejected"
 
 
 def test_approved_to_posted(padres_db: duckdb.DuckDBPyConnection) -> None:

@@ -214,16 +214,27 @@ def _conj_group(*, peers_scope: str = "since_2015") -> ConjunctionGroup:
     return find_conjunctions(hits)[0]
 
 
-def test_conjunction_candidate_states_peer_count_and_audits_it() -> None:
-    cand = _build_conjunction_candidate(_conj_group(), 3, date(2026, 7, 18))
-    assert "one of 3 players" in cand.facts_json["headline"].lower()
-    # The count must be an audited fact, not prose-only, or the digit audit can't see it.
+def test_conjunction_states_both_numerator_and_denominator() -> None:
+    """'5 players' without an N is not a verifiable claim."""
+    cand = _build_conjunction_candidate(_conj_group(), (3, 140), date(2026, 7, 18))
+    headline = cand.facts_json["headline"].lower()
+    assert "one of 3 players out of 140 qualified" in headline
+    # Both must be audited facts, not prose-only, or the digit audit can't see them.
     assert cand.facts_json["facts"]["players_meeting_all"] == 3
+    assert cand.facts_json["facts"]["population_size"] == 140
 
 
-def test_conjunction_singleton_claims_only_player() -> None:
-    cand = _build_conjunction_candidate(_conj_group(), 1, date(2026, 7, 18))
-    assert "only player" in cand.facts_json["headline"].lower()
+def test_conjunction_singleton_still_carries_the_population() -> None:
+    cand = _build_conjunction_candidate(_conj_group(), (1, 140), date(2026, 7, 18))
+    headline = cand.facts_json["headline"].lower()
+    assert "only player out of 140 qualified" in headline
+
+
+def test_conjunction_cut_is_fixed_not_fitted_to_the_subject() -> None:
+    """A cut read off the subject's own percentile makes membership true by construction."""
+    weak = _build_conjunction_candidate(_conj_group(), (5, 140), date(2026, 7, 18))
+    assert weak.facts_json["facts"]["top_percent"] == 10
+    assert "top 10%" in weak.facts_json["headline"]
 
 
 def test_conjunction_without_peer_count_makes_no_uniqueness_claim() -> None:
@@ -233,15 +244,15 @@ def test_conjunction_without_peer_count_makes_no_uniqueness_claim() -> None:
     assert "players_meeting_all" not in cand.facts_json["facts"]
 
 
-def test_conjunction_takes_the_most_conservative_member_scope() -> None:
-    # A franchise-scoped member must not widen a Statcast-era member's claim.
+def test_conjunction_scope_is_the_season_it_compared() -> None:
+    """A single-season leaderboard comparison cannot claim its source's full era."""
     group = _conj_group(peers_scope="mlb_all")
-    cand = _build_conjunction_candidate(group, 2, date(2026, 7, 18))
-    assert cand.claim_scope == "since_2015"
+    cand = _build_conjunction_candidate(group, (2, 140), date(2026, 7, 18))
+    assert cand.claim_scope == "2026"
 
 
 def test_conjunction_card_hint_routes_to_its_own_template() -> None:
-    cand = _build_conjunction_candidate(_conj_group(), 2, date(2026, 7, 18))
+    cand = _build_conjunction_candidate(_conj_group(), (2, 140), date(2026, 7, 18))
     assert cand.facts_json["card_hint"] == "conjunction"
 
 
@@ -351,12 +362,15 @@ def test_single_family_player_produces_no_conjunction() -> None:
     assert find_conjunctions(hits) == []
 
 
-def test_conjunction_framing_never_calls_a_luck_gap_elite() -> None:
-    """An 88th-percentile xwOBA-wOBA gap means unlucky, not excellent."""
+def test_luck_residuals_never_join_a_conjunction() -> None:
+    """ "Elite fielder who has also been unlucky" joins a talent to a coincidence."""
     hits = [_hit_for("pctl_B_oaa", 0.96), _hit_for("gap_woba", 0.88)]
+    assert find_conjunctions(hits) == []
+
+
+def test_conjunction_framing_never_asserts_elite() -> None:
+    """Direction differs per metric, so the framing states rank, not a verdict."""
+    hits = [_hit_for("pctl_B_oaa", 0.96), _hit_for("pctl_B_sprint_speed", 0.93)]
     group = find_conjunctions(hits)[0]
-    cand = _build_conjunction_candidate(group, 5, date(2026, 7, 18))
-    headline = cand.facts_json["headline"].lower()
-    assert "elite" not in headline
-    assert "top 12%" in headline
-    assert cand.facts_json["facts"]["top_percent"] == 12
+    cand = _build_conjunction_candidate(group, (5, 140), date(2026, 7, 18))
+    assert "elite" not in cand.facts_json["headline"].lower()

@@ -175,10 +175,34 @@ def ingest_draft(
     return draft_id
 
 
+def _require_referee_clearance(conn: duckdb.DuckDBPyConnection, draft_id: str) -> None:
+    """Refuse approval without a matching referee clearance.
+
+    The mechanical gates run at ingest; this is the reasoning gate. It sits on
+    ``verified -> approved`` because that is the last point before a human can
+    push the card out.
+
+    Raises:
+        StateTransitionError: If the draft has no current clearance.
+    """
+    from padres_analytics.review import store as review_store
+    from padres_analytics.review.gate import NotClearedError, require_clearance
+    from padres_analytics.review.packet import build_packet
+
+    packet = build_packet(conn, draft_id=draft_id)
+    adjudication = review_store.latest(conn, "draft", draft_id)
+    try:
+        require_clearance(adjudication, packet)
+    except NotClearedError as exc:
+        raise StateTransitionError(str(exc)) from exc
+
+
 def transition(
     conn: duckdb.DuckDBPyConnection,
     draft_id: str,
     new_status: str,
+    *,
+    skip_review: bool = False,
 ) -> None:
     """Apply a state transition to a draft.
 
@@ -186,9 +210,13 @@ def transition(
         conn: Write-mode padres.db connection.
         draft_id: The draft to transition.
         new_status: Target status.
+        skip_review: Bypass the referee gate on approval. For fixtures and
+            explicit human override only — the override is worth recording,
+            because a human overruling the panel is itself a signal.
 
     Raises:
-        StateTransitionError: If draft not found or transition is illegal.
+        StateTransitionError: If draft not found, the transition is illegal, or
+            approval is attempted without a current referee clearance.
     """
     row = conn.execute("SELECT status FROM tweet_drafts WHERE draft_id = ?", [draft_id]).fetchone()
     if row is None:
@@ -201,6 +229,9 @@ def transition(
             f"Cannot transition draft {draft_id} from {current!r} to {new_status!r}. "
             f"Allowed from {current!r}: {sorted(allowed) or 'none (terminal)'}"
         )
+
+    if new_status == "approved" and not skip_review:
+        _require_referee_clearance(conn, draft_id)
 
     conn.execute(
         "UPDATE tweet_drafts SET status = ? WHERE draft_id = ?",

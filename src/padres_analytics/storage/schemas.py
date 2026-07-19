@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 DDL_STATEMENTS: tuple[str, ...] = (
     """
@@ -469,6 +469,25 @@ DDL_STATEMENTS: tuple[str, ...] = (
         candidate_id VARCHAR,
         reason       VARCHAR,
         created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    # Referee verdicts — the agentic reasoning gate. One row per lens per review.
+    # packet_hash ties a clearance to exact content: re-rendering or re-captioning
+    # changes the hash and invalidates the clearance, so an approval can never ride
+    # along on content the panel never saw.
+    """
+    CREATE TABLE IF NOT EXISTS review_verdicts (
+        verdict_id   VARCHAR PRIMARY KEY,
+        target_kind  VARCHAR NOT NULL,
+        target_id    VARCHAR NOT NULL,
+        packet_hash  VARCHAR NOT NULL,
+        lens         VARCHAR NOT NULL,
+        verdict      VARCHAR NOT NULL,
+        failure_mode VARCHAR,
+        evidence     VARCHAR,
+        confidence   DOUBLE,
+        outcome      VARCHAR NOT NULL,
+        reviewed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
 )

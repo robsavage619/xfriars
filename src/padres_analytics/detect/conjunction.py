@@ -264,7 +264,10 @@ class ConjunctionGroup:
 # geometric-mean rarity treats correlated marks as if they were independent.
 # One member per family, so "elite at X and Y" means two genuinely separate things.
 _METRIC_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("expected_outcome", ("xba", "xslg", "xwoba", "est_woba", "xiso", "gap_woba", "xera")),
+    # Checked before expected_outcome: a *gap* between expected and actual is a
+    # residual, not the skill proxy the expected stat itself is.
+    ("luck_residual", ("gap_woba", "gap_", "_gap", "era_fip", "woba_minus")),
+    ("expected_outcome", ("xba", "xslg", "xwoba", "est_woba", "xiso", "xera")),
     ("contact_quality", ("exit_velocity", "max_ev", "hard_hit", "barrel", "brl", "sweet_spot")),
     ("swing", ("bat_speed", "swing_length", "squared_up", "blast")),
     ("discipline", ("chase", "whiff", "k_percent", "bb_percent", "zone_contact")),
@@ -276,6 +279,23 @@ _METRIC_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 # More than this and a card stops being a story and becomes a stat dump.
 MAX_CONJUNCTION_MEMBERS = 3
+
+# Membership threshold, fixed in advance. Deriving the cut from the subject's own
+# weakest percentile makes his membership true by construction and turns the peer
+# count into an artifact of where the line was drawn — a conventional top-10% cut
+# is a claim about the player instead.
+CONJUNCTION_PERCENTILE_CUT = 0.90
+
+# Luck residuals (xwOBA-wOBA, ERA-FIP) are not skills — they are what's left after
+# skill is accounted for. "Elite fielder who has also been unlucky at the plate"
+# joins a talent to a coincidence, which is why such pairs read as noise. A
+# conjunction is a claim about a player, so its members must all be skills.
+_RESIDUAL_FAMILIES: frozenset[str] = frozenset({"luck_residual"})
+
+
+def is_skill_metric(metric_id: str) -> bool:
+    """True when a metric measures a skill rather than a luck residual."""
+    return metric_family(metric_id) not in _RESIDUAL_FAMILIES
 
 
 def metric_family(metric_id: str) -> str:
@@ -318,6 +338,8 @@ def find_conjunctions(hits: list) -> list[ConjunctionGroup]:
         # One hit per *family* (best rarity), not per metric — see _METRIC_FAMILIES.
         best_per_family: dict[str, Any] = {}
         for h in player_hits:
+            if not is_skill_metric(h.metric.id):
+                continue
             fam = metric_family(h.metric.id)
             if (
                 fam not in best_per_family
@@ -361,23 +383,26 @@ def find_conjunctions(hits: list) -> list[ConjunctionGroup]:
 def count_players_meeting_all(
     conn: duckdb.DuckDBPyConnection,
     hits: list,
-) -> int | None:
-    """Count MLB players who simultaneously meet every member hit's mark.
+    cut: float = CONJUNCTION_PERCENTILE_CUT,
+) -> tuple[int, int] | None:
+    """Count MLB players in the top ``cut`` of *every* member metric.
 
-    This is what earns a "one of N players" claim. Without it, a conjunction is
-    just two facts printed next to each other; with it, the compound itself is
-    the finding. Each member contributes a threshold at the focal player's own
-    value (``>=`` for higher-is-better metrics, ``<=`` otherwise), so the count
-    answers: how many players are at least this good at all of these at once?
+    This is what earns a "one of N players" claim. The threshold is
+    **pre-registered** (a conventional top-10% cut), not read off the focal
+    player's own value: a cut fitted to the subject makes his membership true by
+    construction and turns the count into an artifact of where the line was
+    drawn. With a fixed cut, the count is a fact about the league that the
+    subject happens to satisfy.
 
     Args:
         conn: DB connection.
-        hits: Member _Hit objects (one per distinct metric).
+        hits: Member _Hit objects (one per family).
+        cut: Percentile cut in (0, 1); 0.90 means top 10%.
 
     Returns:
-        Player count, or None when the members span tables/years that can't be
-        joined or any query fails — callers must fall back to plain conjunction
-        framing rather than asserting uniqueness.
+        ``(qualifying_players, population_size)``, or None when the members span
+        years or any query fails — callers must then fall back to framing that
+        asserts no uniqueness.
     """
     if len(hits) < 2:
         return None
@@ -390,32 +415,59 @@ def count_players_meeting_all(
 
     selects: list[str] = []
     params: list[Any] = []
-    for i, hit in enumerate(hits):
+    for hit in hits:
         metric = hit.metric
         src = resolve_table(conn, metric.table)
         value_expr = metric.derived_expr or metric.value_col
-        cmp_op = ">=" if metric.direction == "higher" else "<="
         where = f"AND ({metric.filter_sql})" if metric.filter_sql else ""
+        # The cut is a quantile of the live population, so it means the same
+        # thing across metrics on different scales.
+        quantile = cut if metric.direction == "higher" else 1.0 - cut
+        cmp_op = ">=" if metric.direction == "higher" else "<="
         selects.append(
             f"""
             SELECT {metric.id_col} AS pid
             FROM {src}
             WHERE {metric.year_col} = ?
               AND {value_expr} IS NOT NULL
-              AND {value_expr} {cmp_op} ?
+              AND {value_expr} {cmp_op} (
+                  SELECT QUANTILE_CONT({value_expr}, ?)
+                  FROM {src}
+                  WHERE {metric.year_col} = ? AND {value_expr} IS NOT NULL {where}
+              )
               {where}
             """
         )
-        params.extend([year, hit.focal_value])
-        del i
+        params.extend([year, quantile, year])
 
     joined = " INTERSECT ".join(f"({s})" for s in selects)
+
+    # The denominator is the universe the intersection was taken over: players
+    # present in every member table that season. "5 players" without an N is
+    # not a verifiable claim.
+    pop_selects = []
+    pop_params: list[Any] = []
+    for hit in hits:
+        metric = hit.metric
+        src = resolve_table(conn, metric.table)
+        value_expr = metric.derived_expr or metric.value_col
+        where = f"AND ({metric.filter_sql})" if metric.filter_sql else ""
+        pop_selects.append(
+            f"""
+            SELECT {metric.id_col} AS pid FROM {src}
+            WHERE {metric.year_col} = ? AND {value_expr} IS NOT NULL {where}
+            """
+        )
+        pop_params.append(year)
+    pop_joined = " INTERSECT ".join(f"({s})" for s in pop_selects)
+
     try:
-        row = conn.execute(f"SELECT COUNT(*) FROM ({joined})", params).fetchone()
+        hit_row = conn.execute(f"SELECT COUNT(*) FROM ({joined})", params).fetchone()
+        pop_row = conn.execute(f"SELECT COUNT(*) FROM ({pop_joined})", pop_params).fetchone()
     except Exception as exc:
         logger.debug("conjunction.count: query failed: %s", exc)
         return None
 
-    if not row or row[0] is None:
+    if not hit_row or hit_row[0] is None or not pop_row or pop_row[0] is None:
         return None
-    return int(row[0])
+    return int(hit_row[0]), int(pop_row[0])

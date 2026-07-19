@@ -118,7 +118,19 @@ combination, really?
 - A conjunction fires when one player clears the rarity floor on **two or three
   metrics that measure different things**. The count of players meeting every mark
   simultaneously is a real SQL count against the league, not an estimate, and it
-  lands in the card's facts so the digit audit covers it.
+  lands in the card's facts so the digit audit covers it — **with its denominator**.
+  "One of 6" is not a claim; "one of 6 out of 209 qualified" is.
+- **The membership threshold is fixed in advance** at the top 10%, never read off
+  the subject's own weakest percentile. A cut fitted to the player makes his
+  membership true by construction and turns the peer count into an artifact of
+  where the line was drawn — move the line and the "finding" appears or vanishes.
+- **Luck residuals never join a conjunction.** A wOBA − xwOBA gap is what's *left
+  over* after skill is accounted for, not a skill. "Elite fielder who has also been
+  unlucky at the plate" joins a talent to a coincidence, and the two have no
+  relationship worth a card.
+- Scope is the **season the comparison ran in**, not the era its source table
+  spans. A 2026 leaderboard comparison is a 2026 claim even though Statcast
+  reaches back to 2015.
 - **Correlated metrics are collapsed first.** Exit velocity, max exit velocity and
   hard-hit% are three names for one skill. Chaining them would manufacture a
   guaranteed "only player in baseball" out of a single underlying trait, so metrics
@@ -131,11 +143,54 @@ combination, really?
 - The framing states the **rank**, not a verdict: "in the top 12% in both X and Y."
   A high xwOBA − wOBA gap means *unlucky*, not excellent, so a compound claim never
   calls a member "elite" — each metric's own label carries its meaning.
-- **Scope is the most conservative member's scope.** A Statcast-era mark and a
-  franchise-history mark in the same conjunction yield a Statcast-era claim.
-
 **Gate:** combined rarity (geometric mean) must itself clear the rarity floor —
 two mediocre marks never add up to one good story.
+
+## The referee: a reasoning check before anything posts
+
+Every gate above catches a **wrong number**. None of them catches a **wrong
+argument** — an endpoint chosen after the fact, a survivorship-filtered
+population described as "the league", a cause asserted without a control, or a
+number that is genuinely rare and genuinely meaningless.
+
+So before a card can be approved, a panel of five reviewers judges it, each
+prompted to *refute* rather than approve:
+
+| Lens | Looks for |
+|---|---|
+| Statistician | arbitrary endpoints, wrong denominators, survivorship, thin samples, multiplicity, correlated conjunctions |
+| Causal skeptic | "because" / "since the change" with no control cohort; confounds |
+| Coverage auditor | scope overreach, stale sources, Padres-only data passed off as league-wide |
+| Editor | the "so what?" — trivial, tautological, or filter-artifact findings |
+| Voice | jargon left ungloss'd, register drift, the banned AI tells |
+
+**Any single BLOCK stops the card** — this is not a majority vote, because one
+sound refutation is enough. Two or more revisions send it back. When a reviewer
+is unsure, the causal and coverage lenses default to blocking and the others
+default to their stated verdict: a wrong "first ever" costs more than a missed
+post.
+
+Two limits make this safe. The referee **may never compute, correct, or add a
+number** — if it believes a figure is wrong its only option is to block and name
+the defect, because the fix belongs in a detector, not in prose. And a rewrite
+may rephrase but may not introduce a figure, since referee prose never passed the
+digit audit.
+
+Every rejection names a **failure mode** from a fixed vocabulary
+(`arbitrary_endpoint`, `survivorship_population`, `causal_no_control`,
+`scope_overreach`, `trivial`, …). Free text can't be counted; a controlled
+vocabulary can, which is what lets the engine learn which kinds of claim keep
+getting refuted. We also track the block rate of each lens, because a reviewer
+that never blocks is a rubber stamp rather than a clean bill of health.
+
+A worked example, from the first live run: a card reported that a player ranked
+top-12% in both Outs Above Average and wOBA − xwOBA gap. Every mechanical gate
+passed. The panel blocked it three ways — the 12% cut had been derived from the
+player's own weaker percentile (so his membership was guaranteed), the two
+metrics have no relationship to each other (glove and plate luck), and the scope
+field claimed the Statcast era for a single-season comparison. All three were
+real defects in the engine, and all three are now fixed. That is what this stage
+is for.
 
 ## Multiplicity: correcting for the size of the daily search
 

@@ -24,6 +24,7 @@ from padres_analytics.detect.candidates import (
     make_candidate_id,
 )
 from padres_analytics.detect.conjunction import (
+    CONJUNCTION_PERCENTILE_CUT,
     ConjunctionGroup,
     count_players_meeting_all,
     evaluate_franchise_scope,
@@ -515,7 +516,7 @@ def _build_leaderboard_candidate(
 
 def _build_conjunction_candidate(
     group: ConjunctionGroup,
-    peer_count: int | None,
+    peer_count: tuple[int, int] | None,
     as_of: date,
 ) -> StatCandidate:
     """Build a compound candidate: one player, several elite marks at once.
@@ -526,8 +527,8 @@ def _build_conjunction_candidate(
 
     Args:
         group: A conjunction group (2+ distinct metrics for one player).
-        peer_count: League players meeting every member mark, or None when the
-            count couldn't be computed (no uniqueness claim is then made).
+        peer_count: ``(qualifying, population)`` at the fixed percentile cut, or
+            None when it couldn't be computed (no uniqueness claim is then made).
         as_of: Reference date.
 
     Returns:
@@ -561,24 +562,28 @@ def _build_conjunction_candidate(
             facts[f"{metric.id}_value"] = val
         facts[f"{metric.id}_percentile"] = round(hit.lens_result.rarity * 100)
 
-    # Conservative scope: the narrowest (longest-qualified) member scope wins.
-    scopes = {h.lens_result.claim_scope for h in members}
-    claim_scope = max(scopes, key=len) if scopes else members[0].lens_result.claim_scope
+    # A conjunction over one season's leaderboards is a claim about that season,
+    # whatever era the underlying source spans. Inheriting the members' source
+    # coverage ("since_2015") would assert a scope the comparison never made.
+    claim_scope = str(year)
 
-    # "Elite" is only true for metrics where high = good. A high xwOBA-wOBA gap
-    # means unlucky, not excellent, so the framing states the *rank* and lets each
-    # metric's own label carry its meaning. Labels keep their casing (xwOBA, not xwoba).
+    # "Elite" is only true for metrics where high = good, so the framing states
+    # the *rank* and lets each metric's own label carry its meaning. Labels keep
+    # their casing (xwOBA, not xwoba). The cut is fixed in advance, never fitted
+    # to the subject.
     feats = " and ".join(h.metric.label for h in members)
-    top_pct = max(1, round((1.0 - min(h.lens_result.rarity for h in members)) * 100))
+    top_pct = round((1.0 - CONJUNCTION_PERCENTILE_CUT) * 100)
     quantifier = "both" if len(members) == 2 else "all of"
     facts["top_percent"] = top_pct
 
-    if peer_count is not None and peer_count >= 1:
-        facts["players_meeting_all"] = peer_count
+    if peer_count is not None:
+        qualifying, population = peer_count
+        facts["players_meeting_all"] = qualifying
+        facts["population_size"] = population
         subject_phrase = (
-            f"{group.player_name} is the only player in MLB"
-            if peer_count == 1
-            else f"{group.player_name} is one of {peer_count} players in MLB"
+            f"{group.player_name} is the only player out of {population} qualified"
+            if qualifying == 1
+            else f"{group.player_name} is one of {qualifying} players out of {population} qualified"
         )
         headline = f"{subject_phrase} in the top {top_pct}% in {quantifier} {feats} ({year})"
     else:

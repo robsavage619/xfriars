@@ -36,6 +36,8 @@ article_app = typer.Typer(help="Long-form deep dives — scaffold, render, list,
 app.add_typer(article_app, name="article")
 hypothesis_app = typer.Typer(help="LLM-driven discovery — context, enqueue, scan, log.")
 app.add_typer(hypothesis_app, name="hypothesize")
+review_app = typer.Typer(help="Referee — agentic reasoning review before anything posts.")
+app.add_typer(review_app, name="review")
 
 logger = logging.getLogger(__name__)
 
@@ -2147,3 +2149,169 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ── pad review ─────────────────────────────────────────────────────────────────
+
+
+@review_app.command("pack")
+def review_pack(
+    target: str = typer.Argument(..., help="Draft id (preferred) or candidate id."),
+    candidate: bool = typer.Option(
+        False, "--candidate", help="Treat the target as a candidate id, not a draft id."
+    ),
+    out: str | None = typer.Option(None, "--out", help="Write the packet to this path."),
+    briefs: bool = typer.Option(
+        False, "--briefs", help="Also print the five lens prompts for the panel."
+    ),
+) -> None:
+    """Build the review packet a referee panel reasons over."""
+    configure_logging()
+    import contextlib
+
+    from padres_analytics.review.lenses import PANEL, brief
+    from padres_analytics.review.packet import build_packet
+    from padres_analytics.storage.db import TradesDbNotFoundError, attach_trades, connect
+
+    with connect(read_only=True) as conn:
+        with contextlib.suppress(TradesDbNotFoundError):
+            attach_trades(conn)
+        try:
+            packet = (
+                build_packet(conn, candidate_id=target)
+                if candidate
+                else build_packet(conn, draft_id=target)
+            )
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+
+    text = json.dumps(packet.model_dump(mode="json"), indent=2, default=str)
+    dest = Path(out) if out else Path("inbox") / f"review_{packet.target_id}.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text)
+    typer.echo(f"Packet written to {dest} (hash {packet.packet_hash()})")
+
+    if briefs:
+        for lens in PANEL:
+            typer.echo(f"\n{'=' * 70}\n{lens.upper()}\n{'=' * 70}")
+            typer.echo(brief(lens, text))
+
+
+@review_app.command("record")
+def review_record(
+    verdicts_file: str = typer.Argument(..., help="Path to a JSON array of ReviewVerdict objects."),
+    target: str = typer.Option(..., "--target", help="Draft id (or candidate id)."),
+    candidate: bool = typer.Option(False, "--candidate", help="Target is a candidate id."),
+) -> None:
+    """Record panel verdicts and adjudicate them into one outcome."""
+    configure_logging()
+    import contextlib
+
+    from pydantic import ValidationError
+
+    from padres_analytics.review import store as review_store
+    from padres_analytics.review.gate import RefereeContractError, adjudicate
+    from padres_analytics.review.models import ReviewVerdict
+    from padres_analytics.review.packet import build_packet
+    from padres_analytics.storage.db import TradesDbNotFoundError, attach_trades, connect
+
+    raw = json.loads(Path(verdicts_file).read_text())
+    if not isinstance(raw, list):
+        typer.echo("Error: verdicts file must be a JSON array.", err=True)
+        raise typer.Exit(ERR)
+
+    try:
+        verdicts = [ReviewVerdict.model_validate(v) for v in raw]
+    except ValidationError as exc:
+        typer.echo(f"Error: invalid verdict payload:\n{exc}", err=True)
+        raise typer.Exit(ERR) from exc
+
+    kind = "candidate" if candidate else "draft"
+    with connect() as conn:
+        with contextlib.suppress(TradesDbNotFoundError):
+            attach_trades(conn)
+        packet = (
+            build_packet(conn, candidate_id=target)
+            if candidate
+            else build_packet(conn, draft_id=target)
+        )
+        try:
+            adjudication = adjudicate(packet, verdicts)
+        except RefereeContractError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(ERR) from exc
+        review_store.record(conn, kind, target, adjudication)
+
+    icon = {"cleared": "PASS", "revise": "REVISE", "blocked": "BLOCK"}[adjudication.outcome]
+    typer.echo(f"{icon}: {target} — {adjudication.rationale}")
+    if adjudication.failure_modes:
+        typer.echo(f"  failure modes: {', '.join(adjudication.failure_modes)}")
+
+
+@review_app.command("show")
+def review_show(
+    target: str = typer.Argument(..., help="Draft id (or candidate id)."),
+    candidate: bool = typer.Option(False, "--candidate", help="Target is a candidate id."),
+) -> None:
+    """Show the latest adjudication for a target."""
+    configure_logging()
+    from padres_analytics.review import store as review_store
+    from padres_analytics.storage.db import connect
+
+    kind = "candidate" if candidate else "draft"
+    with connect(read_only=True) as conn:
+        adjudication = review_store.latest(conn, kind, target)
+
+    if adjudication is None:
+        typer.echo(f"No review recorded for {kind} {target}.")
+        return
+
+    typer.echo(f"{adjudication.outcome.upper()}  packet={adjudication.packet_hash}")
+    for v in adjudication.verdicts:
+        mode = f" [{v.failure_mode}]" if v.failure_mode else ""
+        typer.echo(f"  {v.lens:<14} {v.verdict:<7} conf={v.confidence:.2f}{mode}")
+        if v.evidence:
+            typer.echo(f"    {v.evidence}")
+
+
+@review_app.command("queue")
+def review_queue() -> None:
+    """Show verified drafts awaiting review, plus per-lens block rates."""
+    configure_logging()
+    from padres_analytics.review import store as review_store
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        pending = conn.execute(
+            """
+            SELECT d.draft_id, d.candidate_id, d.status
+            FROM tweet_drafts d
+            WHERE d.status = 'verified'
+              AND NOT EXISTS (
+                  SELECT 1 FROM review_verdicts r
+                  WHERE r.target_kind = 'draft' AND r.target_id = d.draft_id
+              )
+            ORDER BY d.draft_id
+            """
+        ).fetchall()
+        rates = review_store.block_rate_by_lens(conn)
+        modes = review_store.failure_mode_counts(conn)
+
+    if pending:
+        typer.echo(f"{len(pending)} draft(s) awaiting review:")
+        for draft_id, cand_id, _ in pending:
+            typer.echo(f"  {draft_id}  candidate={cand_id}")
+    else:
+        typer.echo("No drafts awaiting review.")
+
+    if rates:
+        typer.echo("\nBlock rate by lens (a lens that never blocks is a rubber stamp):")
+        for r in rates:
+            typer.echo(
+                f"  {r['lens']:<14} {r['blocked']:>3}/{r['reviewed']:<3} ({r['block_rate']:.0%})"
+            )
+    if modes:
+        typer.echo("\nMost common failure modes:")
+        for m in modes[:8]:
+            typer.echo(f"  {m['failure_mode']:<26} {m['n']:>3}  ({m['lens']})")

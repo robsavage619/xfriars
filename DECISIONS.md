@@ -42,3 +42,22 @@
 - **Voice:** `VOICE_LONGFORM.md` governs the long-form register (companion to the tweet-tuned `VOICE.md`).
 
 **Consequences:** One manual click per publish (the Medium import), accepted in exchange for durability and canonical ownership. If Medium ever re-opens API tokens, a `publish.py` direct-to-draft path can be added without changing authoring or rendering. Requires GitHub Pages enabled on the repo (source: `main` / `docs`).
+
+## ADR-004 — The referee: an agentic reasoning gate before publication
+
+**Date:** 2026-07-18
+**Status:** Decided (Phase R shipped; learning integration follows in Phase 2)
+
+**Context:** The engine had four mechanical gates — digit audit, scope guard, coverage contract, availability filter. All four check whether the *numbers* are right. None checks whether the *argument* is any good. A card can pass every gate and still rest on an endpoint chosen after the fact, a survivorship-filtered population described as "the league", a cause asserted with no control, or a number that is rare and meaningless. That gap is the mechanism behind "the engine is going through the motions": it was structurally incapable of noticing a well-formed bad idea.
+
+**Decision:**
+- **A five-lens adversarial panel** (statistician, causal skeptic, coverage auditor, editor, voice) reviews a frozen `ReviewPacket` before a draft can move `verified → approved`. Each lens is briefed to *refute*, not approve; the briefs live in `review/lenses.py` so they version with the engine rather than drifting inside a skill file.
+- **Any single BLOCK blocks.** Not a majority vote — one sound refutation suffices. Two REVISEs send it back; a lone REVISE is a prose note. **Uncertainty (confidence < 0.6) resolves to BLOCK for the causal and coverage lenses** and to the stated verdict elsewhere. The asymmetry is deliberate: a false "first ever" costs more than a missed post.
+- **The referee may never compute.** It returns verdicts and critique only. A suggested rewrite may rephrase but may not introduce a figure, since referee prose never passed the digit audit. `assert_no_fact_mutation` and `assert_caption_digits_unchanged` enforce both structurally. If a referee believes a number is wrong, the only legal outcome is BLOCK — the fix is a detector change and a re-run.
+- **Clearances are bound to content** via `packet_hash`. Re-rendering or re-captioning invalidates the clearance, so an approval can never ride along on content the panel never saw.
+- **Rejections name a failure mode** from a controlled vocabulary. Free text cannot be counted and therefore cannot be learned from; these keys become features in the editorial prior (Phase 2) and summary stats in the hypothesis context pack (Phase 4c), closing the loop from critic back to discovery.
+- **Agent-mediated, no API key** — same posture as the hypothesis loop. `pad review pack` emits the packet, Claude Code runs the panel as parallel subagents (the `xfriars-referee` skill), `pad review record` adjudicates and stores.
+
+**Consequences:** Publishing is slower by one deliberate step, and cards will be blocked that would previously have shipped. On its first live run the panel blocked a conjunction card three ways and every finding was a genuine engine defect (a membership cut fitted to the subject, a conjunction joining a skill to a luck residual, and a claim scope asserting the Statcast era for a single-season comparison) — all since fixed. The main risk is rubber-stamping, so `pad review queue` reports block rate per lens and a lens that never blocks is treated as a defect. The secondary risk is over-blocking starving the feed; the Board shows blocked cards with reasons and Rob can override, and overrides are recorded as their own label so the priors learn from the override rather than only from the block.
+
+**Alternative rejected:** a single general-purpose reviewer. Five identical reviewers converge on the same reading; five different briefs catch failures the others are blind to. The first live run bore this out — the three blocks came from three different lenses and none of them would have been caught by the other two.
