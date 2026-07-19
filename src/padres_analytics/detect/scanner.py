@@ -710,7 +710,7 @@ def _scan_career_shifts(
         MIN_PRIOR_SEASONS,
         MIN_SEASON_PA,
         detect_career_shifts,
-        rarity_from_z,
+        rarity_from_shift,
     )
     from padres_analytics.storage.coverage import CAREER_BASELINE, audit, can_support
 
@@ -725,7 +725,7 @@ def _scan_career_shifts(
 
     out: list[StatCandidate] = []
     for shift in detect_career_shifts(conn, season, padres):
-        rarity = rarity_from_z(shift.z)
+        rarity = rarity_from_shift(shift)
         fmt = shift.value_format
         dataset = ChartDataset(
             title=shift.player_name.upper(),

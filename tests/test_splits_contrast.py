@@ -506,3 +506,54 @@ def test_off_mode_is_still_a_passthrough() -> None:
 
     hits = [_hit_family("chase_rate", 0.86, i) for i in range(5)]
     assert GenericScanner._apply_fdr(hits, ScanConfig(fdr_mode="off"), 5, 353) == hits
+
+
+# ── career-shift ranking ────────────────────────────────────────────────────
+
+
+def _shift(net: float, moves: tuple[float, ...], sd: float = 0.05):
+    from padres_analytics.detect.changepoint import CareerShift
+
+    return CareerShift(
+        player_id=1,
+        player_name="P",
+        metric="slg",
+        metric_label="SLG",
+        value_format=".3f",
+        current=0.500 + net,
+        baseline=0.500,
+        prior_seasons=5,
+        league_delta=0.0,
+        cohort_sd=sd,
+        season=2026,
+        cohort_moves=moves,
+    )
+
+
+def test_shift_rarity_ranks_against_how_players_actually_moved() -> None:
+    """The earlier fixed linear scale put every shift below z=2.8 under the floor."""
+    from padres_analytics.detect.changepoint import rarity_from_shift
+
+    # Realistic shape: most players barely move, a few move a lot.
+    cohort = tuple(i * 0.001 for i in range(100))  # 0.000 to 0.099
+    big = rarity_from_shift(_shift(0.136, cohort))  # beyond the cohort's spread
+    small = rarity_from_shift(_shift(0.010, cohort))
+    assert big > small
+    # A move bigger than nearly all of the cohort must clear the emit floor, or
+    # the detector can never surface anything at all.
+    assert big >= 0.85
+    assert small < 0.85
+
+
+def test_shift_rarity_is_capped_below_league_wide_extremes() -> None:
+    """'Different from his own past' is a weaker claim than 'unlike anyone'."""
+    from padres_analytics.detect.changepoint import rarity_from_shift
+
+    cohort = tuple(i * 0.001 for i in range(100))
+    assert rarity_from_shift(_shift(10.0, cohort)) <= 0.95
+
+
+def test_shift_rarity_falls_back_without_a_cohort() -> None:
+    from padres_analytics.detect.changepoint import rarity_from_shift
+
+    assert 0.0 < rarity_from_shift(_shift(0.100, ())) <= 0.95

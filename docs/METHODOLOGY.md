@@ -216,13 +216,19 @@ least 30 players. Below that, the spread is an accident of a handful of
 observations, and dividing by it manufactures large-looking changes out of
 nothing.
 
-**Status: currently silent, by design.** Our season-level batting table is
-ingested per team, so the cohort is about twenty Padres a season and only a
-handful carry enough prior seasons to contribute. Rather than compare a Padre
-against a three-player spread — which would also mean comparing him to his own
-teammates, the exact self-comparison the league-control rule exists to prevent —
-the detector reports why it can't run. It activates on its own once league-wide
-season data is ingested.
+**The size of the move is ranked against how much players actually moved**, using
+the same empirical distribution every other lens uses — not a fixed scale. An
+earlier version mapped the z-score onto rarity linearly, which sounded
+conservative and was in fact disabling: it placed every shift below z≈2.8 under
+the emit floor, so the detector could never surface anything.
+
+This ran silent for a while by design, because the season-level batting table
+was ingested per team — a cohort of about twenty Padres, of whom three carried
+enough prior seasons to contribute. A standard deviation from three
+observations, drawn from the subject's own teammates, is not a yardstick. With
+all thirty teams ingested the cohort is 174 players and the detector activated
+on its own. The league drift it now measures (−0.031 in OPS) is plausible; the
+Padres-only version had reported −0.171, which should have been the tell.
 
 ## Deep dives: how a study is built
 
@@ -327,16 +333,19 @@ One honest caveat: the engine ranks effect sizes over an empirical distribution,
 `1 − rarity` is a **p-value proxy, not a calibrated p-value**. BH over that proxy is
 a multiplicity *check*, not a significance test.
 
-There is a second, sharper reason it runs in advisory mode, and it's arithmetic
-rather than caution. An ECDF over `n` players cannot resolve finer than `1/n` — a
-player who beats everyone still only reaches `1 − 1/n`. So the smallest p-value the
-method can produce is `1/n`, while BH requires the best result to clear `α/m`. With
-135 players and a 46-comparison battery, that's 0.0074 against a threshold of 0.0011:
-**the best hitter in baseball could not pass.** Enforcing it wouldn't be strict, it
-would reject everything and look like a quiet day. The engine now refuses to enforce
-a gate it can prove is unachievable, and says so in the log. Widening the ingested
-population or narrowing the daily battery fixes this; lowering α does not, because
-both sides scale together.
+**Correction runs within metric families, not across the whole day.** Pooling
+every comparison into one battery was wrong twice over. BH assumes the tests it
+corrects are exchangeable, and sprint speed, chase rate and defensive range are
+not. Pooling also drove the required threshold below what the method can
+resolve: an ECDF over `n` players cannot produce a p-value proxy smaller than
+`1/n`, while BH needs the best result to clear `α/m` — with a large battery, the
+best hitter in baseball could not pass, so enforcing it would have emptied the
+feed and looked like a quiet day.
+
+Correcting within families fixes both at once. Each family is a set of genuinely
+related tests, and its smaller `m` keeps the threshold achievable — without
+asking fewer questions overall. A family still too large to correct is reported
+and passed through rather than silently emptied.
 
 What we report instead is the **expected noise floor**: at a 0.85 rarity floor over a
 46-comparison battery, roughly 7 hits are expected from chance alone. That's logged

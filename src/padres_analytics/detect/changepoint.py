@@ -75,6 +75,7 @@ class CareerShift:
     league_delta: float
     cohort_sd: float
     season: int
+    cohort_moves: tuple[float, ...] = ()
 
     @property
     def raw_delta(self) -> float:
@@ -110,12 +111,12 @@ def _season_rows(
     conn: duckdb.DuckDBPyConnection,
     metric: str,
     season: int,
-) -> tuple[dict[int, tuple[str, float]], dict[int, list[float]], float, float, int]:
+) -> tuple[dict[int, tuple[str, float]], dict[int, list[float]], float, float, int, list[float]]:
     """Fetch current-season values, per-player priors, and the league's own move.
 
     Returns:
-        ``(current, priors, league_delta, cohort_sd, cohort_n)``. ``cohort_sd``
-        is 0.0 when the cohort is too thin to estimate a spread.
+        ``(current, priors, league_delta, cohort_sd, cohort_n, cohort_deltas)``.
+        ``cohort_sd`` is 0.0 when the cohort is too thin to estimate a spread.
     """
     src = resolve_table(conn, "player_season_batting")
 
@@ -156,7 +157,7 @@ def _season_rows(
     # Spread of how much players actually move — the yardstick for "a big move".
     # Requires a real cohort; see MIN_COHORT for why a thin one is worse than none.
     cohort_sd = statistics.pstdev(deltas) if len(deltas) >= MIN_COHORT else 0.0
-    return current, priors, league_delta, cohort_sd, len(deltas)
+    return current, priors, league_delta, cohort_sd, len(deltas), deltas
 
 
 def detect_career_shifts(
@@ -178,7 +179,9 @@ def detect_career_shifts(
 
     for metric, label, value_format in _CAREER_METRICS:
         try:
-            current, priors, league_delta, cohort_sd, cohort_n = _season_rows(conn, metric, season)
+            current, priors, league_delta, cohort_sd, cohort_n, cohort_deltas = _season_rows(
+                conn, metric, season
+            )
         except Exception as exc:
             # Loud: a fetch failure here is indistinguishable from "no story
             # today" at the call site, and a silent zero is the worst outcome.
@@ -216,6 +219,7 @@ def detect_career_shifts(
                 league_delta=league_delta,
                 cohort_sd=cohort_sd,
                 season=season,
+                cohort_moves=tuple(cohort_deltas),
             )
             if abs(shift.z) >= Z_GATE:
                 out.append(shift)
@@ -225,12 +229,23 @@ def detect_career_shifts(
     return out
 
 
-def rarity_from_z(z: float) -> float:
-    """Map a cohort-relative z onto the engine's rarity scale.
+def rarity_from_shift(shift: CareerShift) -> float:
+    """Rank a shift against how much players actually moved, distribution-free.
 
-    Deliberately conservative: a shift is capped below the level reserved for
-    league-wide extremes, because "different from his own past" is a weaker
-    claim than "unlike anyone in baseball."
+    An earlier version mapped z onto rarity with a fixed linear scale. That
+    looked conservative and was in fact disabling: it put every shift below
+    z=2.8 under the emit floor, so a detector that had just been unblocked could
+    still never surface anything. Worse, the number wasn't comparable to any
+    other lens, all of which rank against an empirical distribution.
+
+    So this is the same ECDF the rest of the engine uses — the share of the
+    cohort whose year-over-year move was smaller than this one — with the cap
+    kept, because "different from his own past" remains a weaker claim than
+    "unlike anyone in baseball."
     """
-    magnitude = min(abs(z), 4.0)
-    return min(0.97, 0.5 + magnitude / 8.0)
+    if not shift.cohort_moves:
+        return min(0.95, 0.5 + min(abs(shift.z), 4.0) / 8.0)
+    magnitudes = [abs(m - shift.league_delta) for m in shift.cohort_moves]
+    focal = abs(shift.net_delta)
+    beaten = sum(1 for m in magnitudes if m < focal) / len(magnitudes)
+    return min(0.95, beaten)

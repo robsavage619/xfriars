@@ -196,3 +196,18 @@ It is also very likely an artifact, and checking took one query. Hitters carryin
 So the node now runs the control by default and reports the net effect. On current data it returns `quiet` with: *"the gap is worth +0.002, so this rebound is ordinary regression, not owed luck."* It fires only when the net effect clears 0.010, and returns `insufficient` when no control cohort exists — because without one, a rebound cannot be separated from mean regression at all.
 
 **Consequences:** This is the same league-control principle the engine already applies to short-window player changes, applied to a longitudinal claim. It deflates a story this account would otherwise be inclined to tell, which is the point of building the control rather than the reason to skip it. Scope note recorded in METHODOLOGY: this measures the *next-season* horizon; the in-season luck detectors make a shorter-horizon claim that this does not directly test.
+
+## ADR-013 — Family-wise FDR, and the league cohort that woke career baselines
+
+**Date:** 2026-07-18
+**Status:** Decided
+
+**Context:** Two gaps the engine had been reporting honestly rather than closing: FDR was arithmetically unachievable (ADR-007), and career-baseline detection was gated off for want of a cohort (ADR-008).
+
+**FDR — the fix was stratification, not a bigger population.** Growing `n` can't work: feasibility needed n≥1200 and MLB has ~700 hitters with meaningful playing time. Shrinking the battery works but means asking fewer questions, which is backwards. Correcting *within metric families* fixes it without either cost, and is the more defensible structure anyway — BH assumes exchangeability that never held between sprint speed and chase rate. On live data survivors moved from 0-of-28 to 2-of-28 with no family too large to correct, and strict mode now yields 5 candidates rather than 0. **The default stays advisory**: the p-value proxy is still a proxy, and halving the feed is Rob's judgment call, not a bug fix. A family that still cannot be corrected passes through and says so.
+
+**Career baselines — the cohort was one loop away.** `ingest_player_seasons` was already team-parameterized; only the 30-team loop was missing. The team list comes from `standings` rather than a literal list of ids, because a hardcoded list fails silently when a franchise relocates or rebrands. Result: 30 teams, 0 failed, 7,633 rows; the cohort went from 3 players to 174 and the detector activated on its own. The measured league drift (−0.031 OPS) is plausible where the Padres-only version's −0.171 should have been the tell that the cohort was broken.
+
+**A disabling calibration caught on the way.** With the cohort live, the detector still surfaced nothing, because `rarity_from_z` mapped z linearly and put every shift below z≈2.8 under the 0.85 emit floor. It looked conservative and was in fact dead code. Replaced with the same ECDF ranking every other lens uses — the share of the cohort whose move was smaller — keeping the cap, since "different from his own past" remains a weaker claim than "unlike anyone in baseball." Ty France's +0.136 SLG move against his own 5-season baseline now scores 0.905 and reaches the feed.
+
+**The pattern across all three ADRs in this area:** a threshold that silently admits nothing is indistinguishable from a broken detector, and both look exactly like a quiet day.
