@@ -26,9 +26,9 @@ Engine behind @xFriars. Deterministic SQL-first stat detection → narrative inf
 
 ## Stack & commands
 
-- Python 3.12, DuckDB (schema v14), Typer CLI, Playwright render, React 19 + Vite studio.
-- CLI: `uv run pad <verb>` — `init`, `ingest`, `detect run|list`, `scan`, `scout`, `story`, `queue`, `render`, `draft`, `review`, `learn`, `post`, spatial cards (`spray|hotcold|rolling|swingtake|batspeed`), `live now|watch|ask|card`.
-- Tests: `uv run pytest tests/` (406 tests).
+- Python 3.12, DuckDB (schema v15), Typer CLI, Playwright render, React 19 + Vite studio.
+- CLI: `uv run pad <verb>` — `init`, `ingest`, `detect run|list`, `scan`, `scout`, `story`, `queue`, `render`, `draft`, `review`, `learn`, `study`, `hypothesize`, `post`, spatial cards (`spray|hotcold|rolling|swingtake|batspeed`), `live now|watch|ask|card`.
+- Tests: `uv run pytest tests/` (449 tests).
 - Studio: `cd studio && npm run dev`.
 
 ## Where to read first
