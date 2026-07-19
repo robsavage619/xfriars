@@ -181,10 +181,20 @@ gap distribution, and shrinkage toward the mean below each metric's
 stabilization point (swing decisions stabilize much faster than contact
 quality).
 
-**One honest limit:** pitch-level data has been ingested for roughly 135 hitters,
-not all of MLB. Every split claim says so — "wider than 95% of the 135 hitters
-with pitch-level data" — because calling that group "qualified MLB hitters"
-would describe a convenience sample as if it were the league.
+**How the population is described.** Event data is ingested player by player, so
+for a long time the "league" in a split claim was really whoever had been
+ingested. The label is therefore derived from measured coverage rather than
+fixed: below 90% of the qualified population it names the shortfall out loud
+("135 of 346 qualified MLB hitters with pitch-level data — not the full
+league"), and at or above it reports league-wide coverage. It corrects itself in
+both directions as ingest fills in.
+
+At full coverage the label still avoids saying "qualified (min 100 PA)". The
+measured group is whoever cleared the metric's own pitch minimum, which is not
+the same set as the PA-qualified population it's compared against — some
+measured hitters sit below that bar. Claiming a qualification the group doesn't
+necessarily hold is the same error as calling a partial sample the league, only
+smaller.
 
 ## Career baselines: is he different from who he has been?
 

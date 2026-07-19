@@ -161,3 +161,17 @@ An ECDF over `n` players cannot resolve finer than `1/n`: a player who beats eve
 **The gap this surfaced:** `pad ingest all-events` covered batted balls and pitcher events but **not** `statcast_batter_pitches` — the table every plate-discipline rate and split contrast reads from. There was no roster-wide command for it at all, only a per-player one, so the entire Phase 3 feature set was silently pinned to whenever that table was last hand-filled (a month prior). Batters now get their faced pitches in the same pass; all three event tables are current.
 
 **A second honesty fix in the same area:** with fresh data a 21-day window contained eight players, all Padres, because event ingest is roster-scoped and recent windows fill for the roster before the rest of the league. The population gate correctly refused to run, but the ledger reported "none reached the rarity floor" — implying a league comparison that never happened. It now distinguishes a population too thin to compare from a comparison that found nothing, and says which. This is the third instance of the same class of bug in this ledger; the pattern to watch is any path where an empty result can arise from two different causes that imply opposite next moves.
+
+## ADR-011 — League-wide event backfill, and a self-correcting population label
+
+**Date:** 2026-07-18
+**Status:** Decided (backfill run; 353 hitters covered)
+
+**Context:** Every split contrast and plate-discipline percentile compares a Padre against whoever happens to be in the event table. That was ~135 players, so each claim carried "not the full league" — a caveat the referee's statistician lens had (correctly) forced after the first draft called a convenience sample "qualified MLB hitters."
+
+**Decision:**
+- **Throttled and resumable before running.** `pad ingest league-events` sources the qualified population from the season-summary table (using the table being filled would only return who's already in it), spaces requests by a configurable delay, and skips players already current so an interruption resumes rather than restarts. A single unavailable player is counted, never fatal. Run: 338 fetched, 8 skipped, 0 failed, 403,409 rows, ~24 minutes at 3.5s/player.
+- **The population label derives from measured coverage**, not a constant. Below 90% of the qualified population it names the shortfall; at or above it reports league-wide coverage. Nobody has to remember to retire the caveat, and it returns automatically if coverage regresses.
+- **At full coverage the label still refuses "qualified (min 100 PA)."** The measured group is whoever cleared the metric's pitch minimum, which is not the PA-qualified set it's compared against — coverage came out at 102%, i.e. some measured hitters sit below the PA bar. Attributing a qualification the group doesn't hold is the same error as calling a partial sample the league, one order smaller.
+
+**Consequences:** Claims now read "wider than 97% of 350 MLB hitters (league-wide pitch-level coverage)". Contrast candidates fell from 6 to 4 — against a real league, fewer gaps are rare, which is the correction doing its job rather than a regression. `statcast_batter_pitches` coverage is now OK (353 players, 707k rows); `statcast_batted_balls` remains PARTIAL at 12 players, so batted-ball hypotheses stay coverage-blocked and the study's contact-trend nodes stay honest about it. Extending the backfill to batted balls is the obvious next ingest task.
