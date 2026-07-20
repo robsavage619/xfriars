@@ -135,6 +135,63 @@ def padre_ids_roster(conn: duckdb.DuckDBPyConnection, season: int) -> set[int]:
     return set()
 
 
+def franchise_player_ids(conn: duckdb.DuckDBPyConnection) -> set[int]:
+    """Every player with at least one San Diego season, at any point in history.
+
+    This is the membership test for *franchise-scoped* claims, and it is
+    deliberately not the 40-man roster. A franchise-history claim may legitimately
+    name Nate Colbert or Dave Winfield, so gating on the current roster (44 rows)
+    rather than franchise history (~1,145 players) would block true claims while
+    catching the false ones. Use :func:`available_roster_ids` for the separate
+    question of who is healthy enough to feature today.
+
+    Args:
+        conn: DB connection.
+
+    Returns:
+        Set of MLBAM ids with a Padres season in the batting or pitching tables,
+        or an empty set when neither table is present (callers must treat empty
+        as "cannot verify", never as "nobody qualifies").
+    """
+    ids, _ = _franchise_members(conn)
+    return ids
+
+
+def franchise_player_names(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    """Every player *name* with at least one San Diego season.
+
+    The id-based check cannot see detectors that write only a name into facts —
+    ``career_chase`` is one, which is how "Aaron Judge is the Padres' all-time
+    home run leader" would slip past an id-only gate. Names are a weaker key
+    than ids, so this is the fallback, not the primary.
+
+    Args:
+        conn: DB connection.
+
+    Returns:
+        Set of player names with a Padres season, or empty when unavailable.
+    """
+    _, names = _franchise_members(conn)
+    return names
+
+
+def _franchise_members(conn: duckdb.DuckDBPyConnection) -> tuple[set[int], set[str]]:
+    """Ids and names of every player with a Padres season."""
+    ids: set[int] = set()
+    names: set[str] = set()
+    for table in ("player_season_batting", "player_season_pitching"):
+        try:
+            rows = conn.execute(
+                f"SELECT DISTINCT player_id, player_name FROM {table} WHERE team_id = ?",
+                [_SD_MLBAM],
+            ).fetchall()
+        except (duckdb.CatalogException, duckdb.BinderException):
+            continue
+        ids.update(r[0] for r in rows)
+        names.update(r[1] for r in rows if r[1])
+    return ids, names
+
+
 def available_roster_ids(conn: duckdb.DuckDBPyConnection) -> list[int]:
     """Roster player ids that are currently AVAILABLE — never feature a player who's out.
 

@@ -60,7 +60,7 @@ def _career_leaderboard(
         WHERE team_id = ?
         GROUP BY player_id
         HAVING SUM({col}) > 0
-        ORDER BY total DESC
+        ORDER BY total DESC, player_id
         """,
         [PADRES_TEAM_ID],
     ).fetchall()

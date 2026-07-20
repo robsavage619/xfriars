@@ -17,6 +17,66 @@ logger = logging.getLogger(__name__)
 
 _REGISTRY: dict[str, Detector] = {}
 
+# Scopes that assert something about San Diego specifically. A claim at one of
+# these scopes about a player who was never a Padre is not merely wrong, it is
+# structurally impossible, so it raises rather than warns.
+_FRANCHISE_SCOPES = ("franchise", "since_1969")
+
+
+class SubjectNotAPadreError(ValueError):
+    """A franchise-scoped candidate names a player with no San Diego season."""
+
+
+def _check_subject(
+    candidate: StatCandidate,
+    franchise_ids: set[int],
+    franchise_names: set[str] | None = None,
+) -> None:
+    """Reject a franchise-scoped claim whose subject never played for San Diego.
+
+    Guards the class of bug that let ``career_chase`` emit "Aaron Judge is the
+    Padres' all-time home run leader (302 HR)" — a leaderboard query missing its
+    team filter. The detector-side SQL is fixed, but the gate is what stops the
+    next unscoped query from reaching the board.
+
+    Checks the id when facts carry one and falls back to the name when they do
+    not: ``career_chase`` writes only ``player_name``, so an id-only gate would
+    miss the very claim that motivated this check.
+
+    Args:
+        candidate: The candidate about to be written.
+        franchise_ids: Every player id with a Padres season. An empty set means
+            the source tables are missing, in which case the check is skipped —
+            it must not fail every candidate when it simply cannot verify.
+        franchise_names: Names of the same players, for id-less facts.
+
+    Raises:
+        SubjectNotAPadreError: If the subject is identifiable and not a Padre.
+    """
+    if not franchise_ids:
+        return
+    if not any(s in candidate.claim_scope for s in _FRANCHISE_SCOPES):
+        return
+
+    facts = candidate.facts_json.get("facts") or {}
+    subject_id = facts.get("padre_player_id") or facts.get("player_id")
+    subject_name = facts.get("player_name") or facts.get("lead_player")
+
+    if subject_id is not None:
+        if int(subject_id) in franchise_ids:
+            return
+    elif subject_name and franchise_names is not None:
+        if subject_name in franchise_names:
+            return
+    else:
+        return  # nothing identifiable to check
+
+    raise SubjectNotAPadreError(
+        f"{candidate.detector}: claim scoped '{candidate.claim_scope}' names "
+        f"{subject_name or f'player_id={subject_id}'}, who has no San Diego season. "
+        f"The detector's query is almost certainly missing a team filter."
+    )
+
 
 @runtime_checkable
 class Detector(Protocol):
@@ -90,10 +150,16 @@ def emit(
     Returns:
         Number of new rows inserted.
     """
+    from padres_analytics.detect.sql import franchise_player_ids, franchise_player_names
+
     threshold = min_novelty_threshold()
+    franchise_ids = franchise_player_ids(conn)
+    franchise_names = franchise_player_names(conn)
     inserted = 0
 
     for c in candidates:
+        _check_subject(c, franchise_ids, franchise_names)
+
         if c.novelty_score < threshold:
             logger.info(
                 "Suppressed %s (score %.2f < threshold %.2f)",

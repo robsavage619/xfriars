@@ -53,7 +53,7 @@ class FarmPerformanceDetector:
                        TRY_CAST(ops AS DOUBLE) AS ops, TRY_CAST(avg AS DOUBLE) AS avg
                 FROM milb_batting
                 WHERE season = ? AND pa >= ? AND TRY_CAST(ops AS DOUBLE) IS NOT NULL
-                ORDER BY ops DESC
+                ORDER BY ops DESC, player_id
                 LIMIT ?
                 """,
                 [as_of.year, _MIN_PA, _TOP_N],

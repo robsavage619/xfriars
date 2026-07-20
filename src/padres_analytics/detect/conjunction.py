@@ -134,7 +134,7 @@ def _query_franchise_scope(
           AND s.{metric.year_col} < ?
           AND {value_expr} IS NOT NULL
           {where}
-        ORDER BY val {direction}
+        ORDER BY val {direction}, s.{metric.id_col}
         LIMIT 1
         """,
         [_SD_TEAM_BREF, player_id, year],
@@ -175,7 +175,7 @@ def _query_franchise_scope(
           AND {value_expr} {">="}  ?
           AND {value_expr} IS NOT NULL
           {where}
-        ORDER BY s.{metric.year_col} DESC
+        ORDER BY s.{metric.year_col} DESC, s.{metric.id_col}
         LIMIT 1
         """,
         [_SD_TEAM_BREF, player_id, year, focal_value],

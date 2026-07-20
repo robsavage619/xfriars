@@ -42,7 +42,7 @@ def _franchise_leaderboard(conn: duckdb.DuckDBPyConnection) -> list[tuple]:
         WHERE team_id = '{_SD_BREF}'
         GROUP BY mlb_id, name_common
         HAVING SUM(war) > 0
-        ORDER BY SUM(war) DESC
+        ORDER BY SUM(war) DESC, mlb_id
         LIMIT {_TABLE_ROWS}
     """).fetchall()
 

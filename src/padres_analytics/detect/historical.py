@@ -82,7 +82,7 @@ def _game_results(conn: duckdb.DuckDBPyConnection, month: int, day: int) -> list
             EXTRACT(MONTH FROM game_date) = ?
             AND EXTRACT(DAY   FROM game_date) = ?
             AND (home_team_bref = ? OR visitor_team_bref = ?)
-        ORDER BY game_date DESC
+        ORDER BY game_date DESC, home_team_bref, visitor_team_bref
         """,
         [BREF, BREF, BREF, BREF, month, day, BREF, BREF],
     ).fetchall()
@@ -133,7 +133,7 @@ def _notable_transactions(
             AND EXTRACT(YEAR  FROM date) >= ?
             AND type_code IN ({codes_placeholder})
             AND (from_team_name LIKE '%Padres%' OR to_team_name LIKE '%Padres%')
-        ORDER BY date DESC
+        ORDER BY date DESC, player_name, type_code
         LIMIT 20
         """,
         [month, day, _TRANSACTIONS_YEAR_MIN, *sorted(_NOTABLE_TX_CODES)],

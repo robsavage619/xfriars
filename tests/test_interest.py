@@ -297,3 +297,47 @@ def test_verdict_bands() -> None:
     assert Interest(score=0.55, surprise_bits=0, search_bits=0).verdict == "ok"
     assert Interest(score=0.4, surprise_bits=0, search_bits=0).verdict == "thin"
     assert Interest(score=0.1, surprise_bits=0, search_bits=0).verdict == "boring"
+
+
+# ── Candidate identity ────────────────────────────────────────────────────────
+
+
+def test_candidate_id_ignores_the_render_date() -> None:
+    """The same claim restated on a later day must collide, not mint a new id."""
+    from padres_analytics.detect.candidates import make_candidate_id
+
+    june = {
+        "as_of": "2026-06-14",
+        "subtitle": "Career WAR as a Padre · through 2026-06-14",
+        "facts": {"career_sdp_war": 26.9, "gap_war": 0.1},
+    }
+    july = {
+        "as_of": "2026-07-19",
+        "subtitle": "Career WAR as a Padre · through 2026-07-19",
+        "facts": {"career_sdp_war": 26.9, "gap_war": 0.1},
+    }
+    subject = "SDP|milestone_watch|665487|592518"
+    assert make_candidate_id("milestone_watch", subject, june) == make_candidate_id(
+        "milestone_watch", subject, july
+    )
+
+
+def test_candidate_id_separates_a_moved_measure() -> None:
+    """When the underlying number moves, it is a new claim."""
+    from padres_analytics.detect.candidates import make_candidate_id
+
+    before = {"as_of": "2026-06-14", "facts": {"career_sdp_war": 26.9, "gap_war": 0.1}}
+    after = {"as_of": "2026-07-19", "facts": {"career_sdp_war": 27.2, "gap_war": 0.0}}
+    subject = "SDP|milestone_watch|665487|592518"
+    assert make_candidate_id("milestone_watch", subject, before) != make_candidate_id(
+        "milestone_watch", subject, after
+    )
+
+
+def test_candidate_id_separates_seasons() -> None:
+    """metric_year stays in the hash: a 2025 mark and a 2026 mark differ."""
+    from padres_analytics.detect.candidates import make_candidate_id
+
+    y25 = {"as_of": "2026-01-01", "facts": {"padre_value": 90.0, "metric_year": 2025}}
+    y26 = {"as_of": "2026-01-01", "facts": {"padre_value": 90.0, "metric_year": 2026}}
+    assert make_candidate_id("scan", "s", y25) != make_candidate_id("scan", "s", y26)

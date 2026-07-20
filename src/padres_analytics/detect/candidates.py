@@ -212,8 +212,24 @@ class StatCandidate(BaseModel):
     status: str = "new"
 
 
+# Fields that describe *when the card was drawn* rather than what it claims.
+# ``as_of`` is the render date and ``subtitle`` is derived from it ("Career WAR
+# as a Padre · through 2026-07-19"), so leaving them in the hash made the id a
+# function of the calendar: an unchanged stat minted a fresh candidate every
+# run. Tatis sat 0.1 WAR from third all-time for five weeks and produced two
+# top-of-board candidates whose baseball facts were byte-identical.
+#
+# ``metric_year`` deliberately stays in the hash — a 2025 mark and a 2026 mark
+# are genuinely different claims.
+_VOLATILE_RENDER_FIELDS = ("as_of", "subtitle")
+
+
 def make_candidate_id(detector: str, subject: str | None, facts: dict) -> str:
-    """Compute a deterministic 16-char hex ID from detector + subject + facts.
+    """Compute a deterministic 16-char hex ID from detector + subject + claim.
+
+    The id identifies the *claim*, not the rendering of it, so restating an
+    unchanged stat tomorrow collides with today's id and is deduped by
+    :func:`~padres_analytics.detect.base.emit`.
 
     Args:
         detector: Detector name (e.g. "on_this_day").
@@ -223,7 +239,8 @@ def make_candidate_id(detector: str, subject: str | None, facts: dict) -> str:
     Returns:
         16-char hex string (first 8 bytes of SHA-256).
     """
-    payload = f"{detector}|{subject or ''}|{json.dumps(facts, sort_keys=True, default=str)}"
+    claim = {k: v for k, v in facts.items() if k not in _VOLATILE_RENDER_FIELDS}
+    payload = f"{detector}|{subject or ''}|{json.dumps(claim, sort_keys=True, default=str)}"
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 

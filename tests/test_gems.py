@@ -251,3 +251,125 @@ def test_active_set_excludes_other_teams() -> None:
     cands = CareerChaseDetector().run(_conn_two_teams(rows), date(2026, 6, 16))
 
     assert all("Yankee Slugger" not in (c.facts_json.get("headline") or "") for c in cands)
+
+
+# ── Subject-validity gate ─────────────────────────────────────────────────────
+
+
+def test_emit_rejects_a_non_padre_franchise_claim() -> None:
+    """A franchise-scoped claim about a player with no SD season must not land."""
+    import pytest
+
+    from padres_analytics.detect.base import SubjectNotAPadreError, _check_subject
+    from padres_analytics.detect.candidates import StatCandidate
+
+    cand = StatCandidate(
+        candidate_id="x",
+        detector="career_chase",
+        subject="SDP|hr",
+        as_of=date(2026, 6, 16),
+        payload_kind="dataset",
+        facts_json={"facts": {"padre_player_id": 592450, "player_name": "Aaron Judge"}},
+        provenance_json=[],
+        coverage_window="1969-2026",
+        claim_scope="franchise_1969",
+        novelty_score=0.9,
+    )
+    with pytest.raises(SubjectNotAPadreError, match="missing a team filter"):
+        _check_subject(cand, franchise_ids={1, 2, 3})
+
+
+def test_emit_allows_a_retired_padre() -> None:
+    """Franchise history may name a long-retired Padre — gate on history, not the roster."""
+    from padres_analytics.detect.base import _check_subject
+    from padres_analytics.detect.candidates import StatCandidate
+
+    cand = StatCandidate(
+        candidate_id="x",
+        detector="career_chase",
+        subject="SDP|hr",
+        as_of=date(2026, 6, 16),
+        payload_kind="dataset",
+        facts_json={"facts": {"padre_player_id": 42, "player_name": "Nate Colbert"}},
+        provenance_json=[],
+        coverage_window="1969-2026",
+        claim_scope="franchise_1969",
+        novelty_score=0.9,
+    )
+    _check_subject(cand, franchise_ids={42})  # not on today's roster, still a Padre
+
+
+def test_subject_check_skips_when_it_cannot_verify() -> None:
+    """No franchise source means unverifiable, which must not fail every candidate."""
+    from padres_analytics.detect.base import _check_subject
+    from padres_analytics.detect.candidates import StatCandidate
+
+    cand = StatCandidate(
+        candidate_id="x",
+        detector="career_chase",
+        subject="SDP|hr",
+        as_of=date(2026, 6, 16),
+        payload_kind="dataset",
+        facts_json={"facts": {"padre_player_id": 592450}},
+        provenance_json=[],
+        coverage_window="1969-2026",
+        claim_scope="franchise_1969",
+        novelty_score=0.9,
+    )
+    _check_subject(cand, franchise_ids=set())
+
+
+def test_subject_check_catches_a_name_only_claim() -> None:
+    """career_chase writes no player id — the name fallback must still catch it."""
+    import pytest
+
+    from padres_analytics.detect.base import SubjectNotAPadreError, _check_subject
+    from padres_analytics.detect.candidates import StatCandidate
+
+    cand = StatCandidate(
+        candidate_id="x",
+        detector="career_chase",
+        subject="SDP|hr",
+        as_of=date(2026, 6, 16),
+        payload_kind="dataset",
+        facts_json={"facts": {"player_name": "Aaron Judge", "franchise_rank": 1}},
+        provenance_json=[],
+        coverage_window="1969-2026",
+        claim_scope="franchise_1969",
+        novelty_score=0.9,
+    )
+    with pytest.raises(SubjectNotAPadreError, match="Aaron Judge"):
+        _check_subject(cand, franchise_ids={1}, franchise_names={"Manny Machado"})
+    # A real Padre with the same shape passes.
+    cand.facts_json["facts"]["player_name"] = "Manny Machado"
+    _check_subject(cand, franchise_ids={1}, franchise_names={"Manny Machado"})
+
+
+def test_career_leaderboard_breaks_ties_deterministically() -> None:
+    """Tied totals must not reorder between runs.
+
+    Adrián González and Ryan Klesko are both on 176 franchise doubles. With a
+    bare ORDER BY total DESC their row order flipped between runs, changing the
+    hashed payload, so the identical claim minted a fresh candidate_id every
+    time — an unstable sort became an infinite duplicate source.
+    """
+    from padres_analytics.detect.gems import _career_leaderboard
+
+    rows = [(900 + i, f"Padre {i}", 1990, 176, 135) for i in range(6)]  # all tied
+    conn = _conn_two_teams(rows)
+    first = _career_leaderboard(conn, "hr")
+    for _ in range(5):
+        assert _career_leaderboard(conn, "hr") == first
+
+
+def test_tied_leaderboard_yields_a_stable_candidate_id() -> None:
+    """The end-to-end consequence: same data, same id, run after run."""
+    rows = [(900 + i, f"Padre {i}", 1990, 176, 135) for i in range(10)]
+    rows.append((1, "Active Star", 2026, 300, 135))
+    conn = _conn_two_teams(rows)
+
+    ids = set()
+    for _ in range(5):
+        cands = CareerChaseDetector().run(conn, date(2026, 6, 16))
+        ids.add(next(c.candidate_id for c in cands if c.facts_json["facts"]["stat"] == "HR"))
+    assert len(ids) == 1
