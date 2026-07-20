@@ -199,3 +199,55 @@ def test_conjunction_non_exclusive_club_suppressed() -> None:
     rows.append((1, "Active Star", 2026, 130, 90))
     cands = CareerConjunctionDetector().run(_conn_hr_sb(rows), date(2026, 6, 16))
     assert not any(c.facts_json["facts"].get("club_size", 99) <= 6 for c in cands)
+
+
+# ── Team scoping ──────────────────────────────────────────────────────────────
+# Every fixture above inserts team_id=135 unconditionally, so a missing team
+# filter was invisible to them: the franchise leaderboards silently ranked all
+# 30 clubs and produced "Aaron Judge is the Padres' all-time home run leader
+# (302 HR)". These fixtures put non-Padres in the table on purpose.
+
+
+def _conn_two_teams(rows: list[tuple[int, str, int, int, int]]) -> duckdb.DuckDBPyConnection:
+    """rows = (player_id, name, season, hr, team_id)."""
+    conn = _conn([])
+    for pid, name, season, hr, team_id in rows:
+        conn.execute(
+            "INSERT INTO player_season_batting (player_id, player_name, season, team_id, hr, "
+            "hits, rbi, sb, doubles) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0)",
+            [pid, name, season, team_id, hr],
+        )
+    return conn
+
+
+def test_career_leaderboard_excludes_other_teams() -> None:
+    # A Yankee with more career HR than any Padre must not top the Padres board.
+    rows = [(900 + i, f"Padre {i}", 1990, 200 - i * 10, 135) for i in range(10)]
+    rows.append((1, "Active Padre", 2026, 210, 135))
+    rows.append((2, "Yankee Slugger", 2026, 302, 147))
+    cands = CareerChaseDetector().run(_conn_two_teams(rows), date(2026, 6, 16))
+
+    hr = next(c for c in cands if c.facts_json["facts"]["stat"] == "HR")
+    assert hr.facts_json["facts"]["player_name"] == "Active Padre"
+    assert "Yankee Slugger" not in hr.facts_json["headline"]
+    assert all(m["label"] != "Yankee Slugger" for m in hr.facts_json["highlight"])
+
+
+def test_career_total_counts_only_padres_seasons() -> None:
+    # A player's other-team seasons must not inflate his franchise total.
+    rows = [(900 + i, f"Padre {i}", 1990, 100 - i * 5, 135) for i in range(10)]
+    rows.append((1, "Traded Star", 2024, 40, 147))  # 40 HR as a Yankee
+    rows.append((1, "Traded Star", 2026, 120, 135))  # 120 HR as a Padre
+    cands = CareerChaseDetector().run(_conn_two_teams(rows), date(2026, 6, 16))
+
+    hr = next(c for c in cands if c.facts_json["facts"]["stat"] == "HR")
+    assert hr.facts_json["facts"]["career_total"] == 120
+
+
+def test_active_set_excludes_other_teams() -> None:
+    # An out-of-town player active this season is not eligible for a Padres chase.
+    rows = [(900 + i, f"Padre {i}", 1990, 300 - i * 20, 135) for i in range(10)]
+    rows.append((2, "Yankee Slugger", 2026, 295, 147))
+    cands = CareerChaseDetector().run(_conn_two_teams(rows), date(2026, 6, 16))
+
+    assert all("Yankee Slugger" not in (c.facts_json.get("headline") or "") for c in cands)

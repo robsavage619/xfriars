@@ -14,6 +14,7 @@ import logging
 from datetime import date
 from typing import TYPE_CHECKING
 
+from padres_analytics.config import PADRES_TEAM_ID
 from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
     ChartDataset,
@@ -45,27 +46,41 @@ _RANK_CEILING = 15  # only surface an active player inside the all-time top N
 def _career_leaderboard(
     conn: duckdb.DuckDBPyConnection, col: str, table: str = "player_season_batting"
 ) -> list[tuple[int, str, int, int]]:
-    """Return (player_id, name, career_total, last_season) for a stat, best-first."""
+    """Return (player_id, name, career_total, last_season) for a stat, best-first.
+
+    Scoped to Padres seasons. Without the team filter this ranks all 30 clubs
+    and labels the result a franchise leaderboard — which is how Aaron Judge
+    became "the Padres' all-time home run leader (302 HR)". Only a player's
+    San Diego seasons count toward a San Diego record.
+    """
     return conn.execute(
         f"""
         SELECT player_id, MAX(player_name) AS name, SUM({col}) AS total, MAX(season) AS last_yr
         FROM {table}
+        WHERE team_id = ?
         GROUP BY player_id
         HAVING SUM({col}) > 0
         ORDER BY total DESC
-        """
+        """,
+        [PADRES_TEAM_ID],
     ).fetchall()
 
 
 def _active_players(
     conn: duckdb.DuckDBPyConnection, season: int, table: str = "player_season_batting"
 ) -> set[int]:
-    """Player ids with a row in the given season/table (i.e., active this year)."""
+    """Padre player ids with a row in the given season (i.e., active here this year).
+
+    Team-scoped for the same reason as :func:`_career_leaderboard`: an unscoped
+    "active" set makes every hitter in the league eligible for a Padres chase
+    storyline.
+    """
     try:
         return {
             r[0]
             for r in conn.execute(
-                f"SELECT DISTINCT player_id FROM {table} WHERE season = ?", [season]
+                f"SELECT DISTINCT player_id FROM {table} WHERE season = ? AND team_id = ?",
+                [season, PADRES_TEAM_ID],
             ).fetchall()
         }
     except Exception:
@@ -285,16 +300,7 @@ class MilestoneClubDetector:
         """
         from padres_analytics.detect.sql import fmt_name
 
-        try:
-            active = {
-                r[0]
-                for r in conn.execute(
-                    "SELECT DISTINCT player_id FROM player_season_batting WHERE season = ?",
-                    [as_of.year],
-                ).fetchall()
-            }
-        except Exception:
-            return []
+        active = _active_players(conn, as_of.year)
         if not active:
             return []
 
@@ -552,25 +558,18 @@ class CareerConjunctionDetector:
         """
         from padres_analytics.detect.sql import fmt_name
 
-        try:
-            active = {
-                r[0]
-                for r in conn.execute(
-                    "SELECT DISTINCT player_id FROM player_season_batting WHERE season = ?",
-                    [as_of.year],
-                ).fetchall()
-            }
-        except Exception:
-            return []
+        active = _active_players(conn, as_of.year)
         if not active:
             return []
 
-        # Career totals for all stats we pair on, per player.
+        # Career totals for all stats we pair on, per player — Padres seasons only,
+        # so a "Padre ever" club cannot be entered on another club's production.
         cols = sorted({c for _, c, _, c2 in _CONJ_PAIRS for c in (c, c2)})
         sums = ", ".join(f"SUM({c}) AS {c}" for c in cols)
         rows = conn.execute(
             f"SELECT player_id, MAX(player_name) AS name, {sums} "
-            f"FROM player_season_batting GROUP BY player_id"
+            f"FROM player_season_batting WHERE team_id = ? GROUP BY player_id",
+            [PADRES_TEAM_ID],
         ).fetchall()
         # rows: (pid, name, <cols...>) — index cols by position
         col_idx = {c: 2 + i for i, c in enumerate(cols)}
