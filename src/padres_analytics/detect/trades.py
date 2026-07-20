@@ -16,10 +16,10 @@ from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
     Mark,
+    RarityEvidence,
     StatCandidate,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
 
 if TYPE_CHECKING:
     import duckdb
@@ -112,16 +112,9 @@ class DeadlineHistoryDetector:
                 "_no_rank": True,  # years are chronological, not a ranking
             },
         )
-        score, components = novelty_score(
-            {
-                "rarity": 0.78,
-                "magnitude": min(latest_n / 8.0, 1.0),
-                "timeliness": 0.95,  # deadline approaching
-                "rootability": 0.9,
-                "legibility": 0.92,
-            },
-            detector=self.name,
-        )
+        # Context, not rarity: a bar per deadline year is Preller's track record,
+        # and nothing here measures how unusual any one year's haul is.
+        evidence = RarityEvidence(kind="none")
         subject = f"SDP|deadline_history|{as_of.year}"
         cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
         return [
@@ -136,8 +129,8 @@ class DeadlineHistoryDetector:
                 provenance_json=[{"source_table": "trade_player_unified", "as_of": str(as_of)}],
                 coverage_window=f"2010-{as_of.year}",
                 claim_scope="since_2010",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 

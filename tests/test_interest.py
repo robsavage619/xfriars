@@ -341,3 +341,89 @@ def test_candidate_id_separates_seasons() -> None:
     y25 = {"as_of": "2026-01-01", "facts": {"padre_value": 90.0, "metric_year": 2025}}
     y26 = {"as_of": "2026-01-01", "facts": {"padre_value": 90.0, "metric_year": 2026}}
     assert make_candidate_id("scan", "s", y25) != make_candidate_id("scan", "s", y26)
+
+
+# ── Evidence contract ─────────────────────────────────────────────────────────
+
+
+def test_evidence_is_preferred_over_shape_sniffing() -> None:
+    """A supplied count wins over whatever the facts dict looks like."""
+    from padres_analytics.detect.candidates import RarityEvidence
+
+    payload = _payload(
+        "X is one of 7 of 182",
+        hint="conjunction",
+        players_meeting_all=7,
+        population_size=182,
+        n_metrics=2,
+    )
+    sniffed = score_candidate("scan", payload)
+    evidenced = score_candidate(
+        "scan",
+        payload,
+        evidence=RarityEvidence(kind="conjunction", qualifying=1, population=500, search_space=36),
+    )
+    assert evidenced.score > sniffed.score
+
+
+def test_evidence_kind_none_is_not_a_failure() -> None:
+    """A countdown genuinely has no tail; saying so must not read as unscored."""
+    from padres_analytics.detect.candidates import RarityEvidence
+
+    got = score_candidate(
+        "milestone_watch",
+        _payload("Tatis is 0.1 WAR from 3rd", gap_war=0.1),
+        evidence=RarityEvidence(kind="none"),
+    )
+    assert got.scored
+    assert got.verdict == "strong"
+
+
+def test_claim_with_nothing_measurable_is_unscored() -> None:
+    """An unscored zero means 'could not judge', which callers must not filter on."""
+    got = score_candidate("trade_war_balance", _payload("Some context card", n_eras=3))
+    assert not got.scored
+    assert got.score == 0.0
+
+
+def test_rarity_evidence_tail_from_counts() -> None:
+    from padres_analytics.detect.candidates import RarityEvidence
+
+    assert RarityEvidence(kind="rank", qualifying=5, population=200).tail() == 0.025
+    assert RarityEvidence(kind="extremeness", tail_p=0.01).tail() == 0.01
+    assert RarityEvidence(kind="none").tail() is None
+
+
+# ── Stakes and occasion ───────────────────────────────────────────────────────
+
+
+def test_franchise_rank_decays_instead_of_falling_off_a_cliff() -> None:
+    """Rewarding only rank 1 silently killed every '2nd all-time' card."""
+    first = score_candidate("career_chase", _payload("1st", franchise_rank=1))
+    second = score_candidate("career_chase", _payload("2nd", franchise_rank=2))
+    fourth = score_candidate("career_chase", _payload("4th", franchise_rank=4))
+    twentieth = score_candidate("career_chase", _payload("20th", franchise_rank=20))
+
+    assert first.score > second.score > fourth.score
+    assert fourth.verdict != "boring"
+    assert twentieth.score == 0.0  # outside the top 10 is not a standing
+
+
+def test_occasion_keeps_calendar_cards_alive() -> None:
+    """The old model's hardcoded timeliness was a floor these cards rode on."""
+    almanac = score_candidate("on_this_day", _payload("Padres are 14-14 on Jul 19"))
+    assert almanac.scored
+    assert almanac.verdict != "boring"
+
+
+def test_longer_streaks_outrank_shorter_ones() -> None:
+    short = score_candidate("cold_streak", _payload("0-for-10", skid_ab=10))
+    long = score_candidate("cold_streak", _payload("0-for-25", skid_ab=25))
+    assert long.score > short.score
+
+
+def test_a_race_scores_on_how_close_it_is() -> None:
+    close = score_candidate("nl_west_race", _payload("2 back", games_back=2.0))
+    over = score_candidate("nl_west_race", _payload("14 back", games_back=14.0))
+    assert close.verdict == "strong"
+    assert over.verdict == "boring"  # 14 games out is not a race

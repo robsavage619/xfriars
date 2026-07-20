@@ -373,3 +373,35 @@ def test_tied_leaderboard_yields_a_stable_candidate_id() -> None:
         cands = CareerChaseDetector().run(conn, date(2026, 6, 16))
         ids.add(next(c.candidate_id for c in cands if c.facts_json["facts"]["stat"] == "HR"))
     assert len(ids) == 1
+
+
+def test_emit_never_suppresses_an_unscored_candidate() -> None:
+    """Filtering on a verdict that was never reached is the fail-open bug inverted."""
+    import duckdb as _d
+
+    from padres_analytics.detect.base import emit
+    from padres_analytics.detect.candidates import StatCandidate
+
+    conn = _d.connect()
+    conn.execute("""
+        CREATE TABLE stat_candidates (
+            candidate_id VARCHAR, detector VARCHAR, subject VARCHAR, as_of DATE,
+            category VARCHAR, payload_kind VARCHAR, facts_json VARCHAR,
+            provenance_json VARCHAR, coverage_window VARCHAR, claim_scope VARCHAR,
+            novelty_score DOUBLE, novelty_components VARCHAR, status VARCHAR DEFAULT 'new',
+            ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cand = StatCandidate(
+        candidate_id="unscorable",
+        detector="trade_war_balance",
+        subject="SDP|ctx",
+        as_of=date(2026, 7, 19),
+        payload_kind="dataset",
+        facts_json={"headline": "A context card", "facts": {"n_eras": 3}},
+        provenance_json=[],
+        coverage_window="2010-2026",
+        claim_scope="since_2010",
+        novelty_score=0.9,
+    )
+    assert emit(conn, [cand]) == 1

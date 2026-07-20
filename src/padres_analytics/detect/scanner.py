@@ -11,6 +11,7 @@ Legacy detectors continue to run in parallel during P2. This scanner registers a
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
@@ -20,6 +21,7 @@ from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
     Mark,
+    RarityEvidence,
     StatCandidate,
     make_candidate_id,
 )
@@ -32,6 +34,7 @@ from padres_analytics.detect.conjunction import (
     metric_family,
 )
 from padres_analytics.detect.discovery import discover_metrics
+from padres_analytics.detect.interest import FAMILY_COUNT
 from padres_analytics.detect.lenses import (
     LensResult,
     bh_is_feasible,
@@ -43,7 +46,6 @@ from padres_analytics.detect.lenses import (
     rank_lens,
 )
 from padres_analytics.detect.registry import MetricSpec, ScanConfig, load_registry
-from padres_analytics.detect.scoring import novelty_score
 from padres_analytics.detect.sql import (
     available_padre_ids,
     fmt_name,
@@ -351,16 +353,25 @@ def _build_candidate(hit: _Hit, as_of: date) -> StatCandidate:
             },
         )
 
-    score, components = novelty_score(
-        {
-            "rarity": lr.rarity,
-            "magnitude": min(lr.rarity, 0.95),
-            "timeliness": 0.80,
-            "rootability": 0.85,
-            "legibility": 0.90,
-        },
-        detector="scan",
-    )
+    # The observation, not a verdict on it: where the player sits in the
+    # population, and how wide a net was cast to find him. One metric chosen
+    # from the family pool is a mild search, so the claim pays a small
+    # correction rather than none.
+    floor = 1.0 / max(hit.population_size, 1)
+    if lr.lens == "rank":
+        evidence = RarityEvidence(
+            kind="rank",
+            qualifying=hit.rank,
+            population=hit.population_size,
+            search_space=FAMILY_COUNT,
+        )
+    else:
+        evidence = RarityEvidence(
+            kind="extremeness",
+            tail_p=max((100.0 - ecdf_pct) / 100.0, floor),
+            population=hit.population_size,
+            search_space=FAMILY_COUNT,
+        )
 
     subject = f"SDP|{metric.id}|{hit.player_id}|{year}|{lr.lens}"
     cid = make_candidate_id("scan", subject, dataset.model_dump(mode="json"))
@@ -384,8 +395,8 @@ def _build_candidate(hit: _Hit, as_of: date) -> StatCandidate:
         ],
         coverage_window=f"{year}-{year}",
         claim_scope=lr.claim_scope,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 
@@ -492,15 +503,14 @@ def _build_leaderboard_candidate(
         },
     )
 
-    score, components = novelty_score(
-        {
-            "rarity": leader.lens_result.rarity,
-            "magnitude": min(leader.lens_result.rarity, 0.95),
-            "timeliness": 0.80,
-            "rootability": 0.85,
-            "legibility": 0.92,
-        },
-        detector="scan",
+    # The claim this card makes is "leads the Padres", so the board it ranks
+    # against is the Padres who fired this metric — not the MLB population the
+    # individual hits were drawn from.
+    evidence = RarityEvidence(
+        kind="rank",
+        qualifying=1,
+        population=len(ranked),
+        search_space=FAMILY_COUNT,
     )
     subject = f"SDP|{metric.id}|leaderboard|{year}"
     cid = make_candidate_id("scan", subject, dataset.model_dump(mode="json"))
@@ -517,8 +527,8 @@ def _build_leaderboard_candidate(
         ],
         coverage_window=f"{year}-{year}",
         claim_scope=metric.coverage,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 
@@ -661,15 +671,14 @@ def _build_contrast_candidate(
         },
     )
 
-    score, components = novelty_score(
-        {
-            "rarity": lr.rarity,
-            "magnitude": min(lr.rarity, 0.95),
-            "timeliness": 0.80,
-            "rootability": 0.88,
-            "legibility": 0.85,
-        },
-        detector="scan",
+    # lr.rarity is the shrunk percentile the framing already states ("wider than
+    # N% of ..."), so the tail is its complement — floored at one player, since
+    # no finite population can evidence a tail narrower than 1/n.
+    evidence = RarityEvidence(
+        kind="contrast",
+        tail_p=max(1.0 - lr.rarity, 1.0 / max(population_size, 1)),
+        population=population_size,
+        search_space=FAMILY_COUNT,
     )
     subject = f"SDP|contrast|{metric.id}|{split_a.key()}|{row.player_id}|{year}"
     cid = make_candidate_id("scan", subject, dataset.model_dump(mode="json"))
@@ -694,8 +703,8 @@ def _build_contrast_candidate(
         ],
         coverage_window=f"{year}-{year}",
         claim_scope=lr.claim_scope,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 
@@ -766,15 +775,16 @@ def _scan_career_shifts(
                 "metric_year": shift.season,
             },
         )
-        score, components = novelty_score(
-            {
-                "rarity": rarity,
-                "magnitude": min(rarity, 0.92),
-                "timeliness": 0.85,
-                "rootability": 0.90,
-                "legibility": 0.88,
-            },
-            detector="scan",
+        # A player against his own past. `rarity` is an ECDF over the cohort's
+        # year-to-year moves only when that cohort exists; without it the number
+        # is a z-derived stand-in with no population behind it, so no tail is
+        # reported rather than a fabricated one.
+        cohort_n = len(shift.cohort_moves)
+        evidence = RarityEvidence(
+            kind="contrast",
+            tail_p=max(1.0 - rarity, 1.0 / cohort_n) if cohort_n else None,
+            population=cohort_n or None,
+            search_space=FAMILY_COUNT,
         )
         subject = f"SDP|career_shift|{shift.metric}|{shift.player_id}|{shift.season}"
         out.append(
@@ -797,8 +807,8 @@ def _scan_career_shifts(
                 ],
                 coverage_window=f"{shift.season - shift.prior_seasons}-{shift.season}",
                 claim_scope=dataset.claim_scope,
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         )
     return out
@@ -906,18 +916,27 @@ def _build_conjunction_candidate(
         facts=facts,
     )
 
-    score, components = novelty_score(
-        {
-            "rarity": group.combined_rarity,
-            # A compound story is the point of the engine — magnitude tracks the
-            # combined mark rather than being capped like a single-metric hit.
-            "magnitude": min(group.combined_rarity + 0.05, 0.98),
-            "timeliness": 0.80,
-            "rootability": 0.90,
-            "legibility": 0.85,
-        },
-        detector="scan",
-    )
+    # count_players_meeting_all already did the honest work: how many players
+    # clear a pre-registered cut on *every* member metric, out of the universe
+    # present in all member tables. That count was written into the headline and
+    # then ignored in favour of combined_rarity — a geometric mean of values the
+    # lens had already gated to >= 0.80, which therefore cannot fall low enough
+    # to reject anything. The empirical count is the evidence.
+    #
+    # The search is the number of family subsets of this size: being top-decile
+    # in *some* two of nine families is a much weaker claim than being top-decile
+    # in two named ones, and the difference is exactly log2(C(9, k)) bits.
+    if peer_count is not None:
+        qualifying, population = peer_count
+        evidence = RarityEvidence(
+            kind="conjunction",
+            qualifying=qualifying,
+            population=population,
+            search_space=math.comb(FAMILY_COUNT, min(len(members), FAMILY_COUNT)),
+        )
+    else:
+        # No denominator means no uniqueness claim is supportable.
+        evidence = RarityEvidence(kind="conjunction", search_space=1)
 
     subject = f"SDP|conjunction|{group.player_id}|{year}"
     cid = make_candidate_id("scan", subject, dataset.model_dump(mode="json"))
@@ -941,8 +960,8 @@ def _build_conjunction_candidate(
         ],
         coverage_window=f"{year}-{year}",
         claim_scope=claim_scope,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 

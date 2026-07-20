@@ -60,6 +60,11 @@ class Interest:
     search_bits: float
     components: dict[str, float] = field(default_factory=dict)
     flags: list[str] = field(default_factory=list)
+    # False when nothing about this claim could actually be measured — no
+    # evidence supplied and no recognised shape. Callers must not suppress on
+    # an unscored verdict: a 0 there means "could not judge", and filtering on
+    # it is the same fail-open bug in reverse.
+    scored: bool = True
 
     @property
     def verdict(self) -> str:
@@ -242,6 +247,18 @@ def _stakes(detector: str, facts: dict[str, Any]) -> tuple[float, list[str]]:
     if facts.get("tier") == "franchise_record" or facts.get("franchise_rank") == 1:
         s = max(s, 0.95)
         flags.append("franchise record")
+    elif facts.get("franchise_rank") is not None:
+        # Standing on an all-time franchise list decays with rank but does not
+        # fall off a cliff after first: 4th in Padres history is a real claim.
+        # Rewarding only rank 1 silently killed every "2nd on the all-time hit
+        # list" card the moment stakes became load-bearing.
+        try:
+            rank = int(facts["franchise_rank"])
+        except (TypeError, ValueError):
+            rank = 99
+        if rank <= 10:
+            s = max(s, _clamp(0.95 - 0.08 * (rank - 1), 0.30, 0.95))
+            flags.append(f"{rank}th all-time in franchise history")
 
     # ``gap`` means "distance to a milestone" on chase cards and "percentage
     # points between two contexts" on contrast cards. Only read it as the former
@@ -273,6 +290,50 @@ def _stakes(detector: str, facts: dict[str, Any]) -> tuple[float, list[str]]:
             flags.append(f"race: {gb} back")
 
     return s, flags
+
+
+def _occasion(detector: str, facts: dict[str, Any]) -> tuple[float, list[str]]:
+    """Why this claim is worth making *today* rather than any other day.
+
+    The fourth route to being worth posting, alongside surprise, stakes and
+    tension. The old model carried this as ``timeliness``, hardcoded between
+    0.5 and 0.95 in every detector: useless for ranking, but a floor that kept
+    calendar-driven cards on the board. Removing the constants without
+    replacing the axis silently killed on_this_day, deadline_history and both
+    streak detectors — cards whose entire premise is the date.
+
+    Computed rather than asserted, so it still discriminates: a 25-at-bat skid
+    outranks a 10-at-bat one, and a deadline card matters more in late July.
+    """
+    flags: list[str] = []
+
+    streak = facts.get("streak_games") or facts.get("skid_ab")
+    if streak is not None:
+        try:
+            length = float(streak)
+        except (TypeError, ValueError):
+            length = 0.0
+        # A run is live and ongoing, which is the occasion; longer runs are both
+        # rarer and more likely to break tomorrow.
+        value = _clamp(0.35 + length / 40.0, 0.0, 0.9)
+        flags.append(f"live streak ({int(length)})")
+        return value, flags
+
+    if detector == "on_this_day":
+        # An almanac card is mildly interesting purely by being today's. Fixed
+        # and deliberately modest — enough to stay on the board, never enough
+        # to top it.
+        return 0.45, ["calendar card — interesting because it is today"]
+
+    if detector == "deadline_history":
+        return 0.55, ["deadline context"]
+
+    if detector == "farm_performance":
+        # A system-watch card: no measurable tail (the leader is selected by
+        # being the leader), but standing interest in who is coming.
+        return 0.45, ["farm watch — no measurable tail, standing interest"]
+
+    return 0.0, flags
 
 
 def _tension(facts: dict[str, Any]) -> tuple[float, list[str]]:
@@ -340,11 +401,40 @@ def _first_since_penalty(headline: str, year: int | None) -> tuple[float, list[s
     )
 
 
+def _score_evidence(evidence: Any) -> tuple[float, float, list[str]]:
+    """Surprisal from a detector-supplied :class:`RarityEvidence`.
+
+    The preferred path. Shape sniffing below is the transitional fallback for
+    detectors that have not been converted yet, and it silently scores zero for
+    shapes it does not recognise — which is precisely the failure this replaces.
+    """
+    flags: list[str] = []
+    if evidence.kind == "none":
+        return 0.0, 0.0, ["not a rarity claim — scored on stakes"]
+
+    tail = evidence.tail()
+    if tail is None:
+        return 0.0, 0.0, [f"{evidence.kind} evidence carries no tail or count"]
+
+    raw = _bits(tail)
+    search = math.log2(max(1, evidence.search_space))
+
+    if evidence.qualifying and evidence.population and evidence.qualifying > 1:
+        share = evidence.qualifying / evidence.population
+        if share > 0.02:
+            flags.append(
+                f"crowded: {evidence.qualifying} of {evidence.population} "
+                f"({share:.1%}) clear the same bar"
+            )
+    return raw, search, flags
+
+
 def score_candidate(
     detector: str,
     facts_json: dict[str, Any],
     *,
     unchanged: bool = False,
+    evidence: Any = None,
 ) -> Interest:
     """Score a candidate's editorial interest from its own stored facts.
 
@@ -359,6 +449,9 @@ def score_candidate(
         unchanged: True when the underlying measure has not moved since this
             claim was last emitted. Repeats of a stat that has not moved are
             the single largest source of board clutter.
+        evidence: Detector-supplied :class:`RarityEvidence`. The preferred
+            input; when absent the facts dict is sniffed for a known shape,
+            which is the transitional path for unconverted detectors.
 
     Returns:
         An :class:`Interest` carrying the score, the bit decomposition, and the
@@ -370,8 +463,11 @@ def score_candidate(
     year = inner.get("metric_year") or inner.get("season")
 
     flags: list[str] = []
+    shape_recognised = True
 
-    if hint == "conjunction":
+    if evidence is not None:
+        raw, search, f = _score_evidence(evidence)
+    elif hint == "conjunction":
         raw, search, f = _score_conjunction(inner)
     elif hint == "contrast":
         raw, search, f = _score_contrast(inner, headline)
@@ -385,6 +481,7 @@ def score_candidate(
         # No recognised rarity shape. Stakes and tension can still carry the
         # claim, but the surprise term is absent rather than measured — a zero
         # here means "not scored", not "not surprising".
+        shape_recognised = False
         raw, search, f = 0.0, 0.0, ["no rarity shape — scored on stakes/tension only"]
     flags += f
 
@@ -394,6 +491,8 @@ def score_candidate(
     stakes, f = _stakes(detector, inner)
     flags += f
     tension, f = _tension(inner)
+    flags += f
+    occasion, f = _occasion(detector, inner)
     flags += f
     legibility, f = _legibility(inner, headline)
     flags += f
@@ -410,7 +509,7 @@ def score_candidate(
     # whiff split identically to an 86th-percentile one: both are "a split", and
     # tension alone decided it. The runner-up therefore contributes a discounted
     # share of the headroom the leader leaves behind.
-    best, second, _ = sorted((surprise, stakes, tension), reverse=True)
+    best, second, *_ = sorted((surprise, stakes, tension, occasion), reverse=True)
     core = best + (1.0 - best) * 0.35 * second
 
     # Legibility gates rather than adds: an unreadable card is worth nothing
@@ -429,9 +528,14 @@ def score_candidate(
             "surprise": round(surprise, 3),
             "stakes": round(stakes, 3),
             "tension": round(tension, 3),
+            "occasion": round(occasion, 3),
             "legibility": round(legibility, 3),
         },
         flags=flags,
+        # Any route firing counts as a real measurement even with no rarity
+        # shape — a milestone countdown is genuinely judged. Only a claim where
+        # nothing at all could be read is unscored.
+        scored=shape_recognised or stakes > 0.0 or tension > 0.0 or occasion > 0.0,
     )
 
 

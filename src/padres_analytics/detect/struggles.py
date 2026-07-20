@@ -18,10 +18,10 @@ from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
+    RarityEvidence,
     StatCandidate,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
 from padres_analytics.detect.sql import fmt_name, ordinal, resolve_table
 
 if TYPE_CHECKING:
@@ -113,16 +113,9 @@ class ColdStreakDetector:
                 "skid_games": skid_games,
             },
         )
-        score, components = novelty_score(
-            {
-                "rarity": min(0.78 + (skid_ab - _MIN_SKID_AB) * 0.01, 0.95),
-                "magnitude": min(skid_ab / 30.0, 1.0),
-                "timeliness": 1.0,
-                "rootability": 0.85,
-                "legibility": 0.95,
-            },
-            detector=self.name,
-        )
+        # The skid length is measured, but how unusual an 0-for-N is depends on
+        # a hitter's own AB-level rate, which this detector never computes.
+        evidence = RarityEvidence(kind="streak")
         subject = f"SDP|cold_streak|{pid}|{as_of.year}"
         cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
         return [
@@ -137,8 +130,8 @@ class ColdStreakDetector:
                 provenance_json=[{"source_table": "player_game_batting", "as_of": str(as_of)}],
                 coverage_window=f"{as_of.year}-{as_of.year}",
                 claim_scope=f"{as_of.year}",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 
@@ -235,15 +228,14 @@ class WeaknessDetector:
                 "metric": label,
             },
         )
-        score, components = novelty_score(
-            {
-                "rarity": min(1.0 - pct / 100.0, 0.97),
-                "magnitude": 1.0 - pct / 100.0,
-                "timeliness": 0.8,
-                "rootability": 0.8,
-                "legibility": 0.95,
-            },
-            detector=self.name,
+        # The card is a bottom-tail claim, so the tail is the percentile itself,
+        # not its complement. ``rows`` is the league percentile table for the
+        # year, which both floors the tail and supplies an honest denominator.
+        evidence = RarityEvidence(
+            kind="extremeness",
+            tail_p=max(pct / 100.0, 1.0 / len(rows)),
+            population=len(rows),
+            search_space=len(_WEAKNESS_METRICS),
         )
         subject = f"SDP|weakness|{pid}|{as_of.year}"
         cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
@@ -261,8 +253,8 @@ class WeaknessDetector:
                 ],
                 coverage_window=f"{as_of.year}-{as_of.year}",
                 claim_scope="since_2015",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 

@@ -194,6 +194,49 @@ class StoryCard(BaseModel):
     claim_scope: str
 
 
+EvidenceKind = Literal[
+    "extremeness",  # one player far out on one metric's tail
+    "conjunction",  # one player clearing a bar on several metrics at once
+    "contrast",  # one player against himself in two contexts
+    "rank",  # a position on a finite leaderboard
+    "streak",  # a run of consecutive events
+    "none",  # not a rarity claim at all — scored on stakes (a milestone countdown)
+]
+
+
+class RarityEvidence(BaseModel):
+    """What a detector *observed*, as opposed to what it thinks that is worth.
+
+    Detectors used to self-report five opinions (``rarity: 0.93``,
+    ``legibility: 0.90``). Three of those five were hardcoded constants in every
+    detector and a fourth was usually a copy of the first, so the scorer was
+    reading vanity numbers and every candidate landed at 0.90.
+
+    This reports the observation instead — how many cleared the bar, out of how
+    many, and how many hypotheses were tried to find it — and lets
+    :mod:`padres_analytics.detect.interest` do the judging. A detector cannot
+    flatter a claim by supplying evidence, only by lying about the count.
+
+    ``kind="none"`` is a first-class answer: a milestone countdown genuinely has
+    no tail, and saying so explicitly is what distinguishes it from a detector
+    that simply forgot.
+    """
+
+    kind: EvidenceKind
+    qualifying: int | None = None
+    population: int | None = None
+    tail_p: float | None = None
+    search_space: int = 1
+
+    def tail(self) -> float | None:
+        """Tail probability, from an explicit value or a qualifying/population pair."""
+        if self.tail_p is not None:
+            return self.tail_p
+        if self.qualifying is not None and self.population:
+            return self.qualifying / self.population
+        return None
+
+
 class StatCandidate(BaseModel):
     """A detector-emitted stat with full provenance."""
 
@@ -209,6 +252,7 @@ class StatCandidate(BaseModel):
     claim_scope: str
     novelty_score: float
     novelty_components: dict | None = None
+    rarity_evidence: RarityEvidence | None = None
     status: str = "new"
 
 

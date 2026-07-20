@@ -22,11 +22,11 @@ from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
+    RarityEvidence,
     StatCandidate,
     TablePayload,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
 from padres_analytics.detect.sql import fmt_name as _fmt_name
 from padres_analytics.detect.sql import max_year as _max_year
 from padres_analytics.detect.sql import ordinal as _ordinal
@@ -168,17 +168,11 @@ def _leaderboard_candidate(
         claim_scope=claim_scope,
     )
 
-    rank_rarity = max(0.0, 1.0 - (padre_rank - 1) / top_n)
-    score, components = novelty_score(
-        {
-            "rarity": rank_rarity,
-            "magnitude": 0.75,
-            "timeliness": 0.8,
-            "rootability": 0.85,
-            "legibility": 0.9,
-        },
-        detector=detector_name,
-    )
+    # The rank is a true MLB rank — the query orders the whole league best-first
+    # and only truncates the tail — but the denominator we can see is the fetched
+    # slice, not the league. Scoring against the slice is therefore a floor on the
+    # rarity, never an inflation of it.
+    evidence = RarityEvidence(kind="rank", qualifying=padre_rank, population=len(rows))
 
     cid = make_candidate_id(
         detector_name,
@@ -202,8 +196,8 @@ def _leaderboard_candidate(
         ],
         coverage_window=coverage_window,
         claim_scope=claim_scope,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 
@@ -330,18 +324,13 @@ class StatcastProfileDetector:
                 facts=facts,
             )
 
-            # Novelty: elite profiles and high-contrast profiles are more interesting
-            rarity = max_pctile / 100.0
-            magnitude = avg_pctile / 100.0
-            score, components = novelty_score(
-                {
-                    "rarity": rarity,
-                    "magnitude": magnitude,
-                    "timeliness": 0.75,
-                    "rootability": 0.85,
-                    "legibility": 0.95,
-                },
-                detector=self.name,
+            # The card's claim is the player's best tool, so that percentile is the
+            # tail. Savant publishes rank as a percentile and nothing here exposes
+            # the size of the population it was computed over, so the floor is the
+            # measure's own resolution (1 point = 1%) rather than a guessed N.
+            evidence = RarityEvidence(
+                kind="extremeness",
+                tail_p=max((100.0 - float(max_pctile)) / 100.0, 0.01),
             )
 
             cid = make_candidate_id(
@@ -367,8 +356,8 @@ class StatcastProfileDetector:
                     ],
                     coverage_window=f"{statcast_year}-{statcast_year}",
                     claim_scope="since_2015",
-                    novelty_score=score,
-                    novelty_components=components,
+                    novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                    rarity_evidence=evidence,
                 )
             )
 
@@ -487,17 +476,10 @@ class XStatsUnluckyDetector:
             claim_scope="since_2015",
         )
 
-        rank_rarity = max(0.0, 1.0 - (padre_rank - 1) / 10)
-        score, components = novelty_score(
-            {
-                "rarity": rank_rarity,
-                "magnitude": min(abs(gap) / 0.10, 1.0),
-                "timeliness": 0.95,
-                "rootability": 0.85,
-                "legibility": 0.9,
-            },
-            detector=self.name,
-        )
+        # Expected-vs-actual: the player against his own contact quality. The size
+        # of the gap has no measured tail here, so the countable observation is his
+        # position on the fetched gap board — a floor, since the board is truncated.
+        evidence = RarityEvidence(kind="contrast", qualifying=padre_rank, population=len(rows))
 
         cid = make_candidate_id(
             self.name,
@@ -529,8 +511,8 @@ class XStatsUnluckyDetector:
                 ],
                 coverage_window=f"{season}-{season}",
                 claim_scope="since_2015",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 
@@ -775,16 +757,14 @@ class PowerClusterDetector:
             },
         )
 
-        rarity = min(0.80 + lead_brl / 100.0, 0.97)
-        score, components = novelty_score(
-            {
-                "rarity": rarity,
-                "magnitude": min(lead_brl / 25.0, 0.95),
-                "timeliness": 0.80,
-                "rootability": 0.88,
-                "legibility": 0.85,
-            },
-            detector=self.name,
+        # Every qualified hitter is plotted and the query is barrel-sorted with no
+        # LIMIT, so the lead Padre's row index is his true rank in the full
+        # population — a measured tail rather than a scaled barrel rate.
+        lead_rank = highlights[0].row_index + 1
+        evidence = RarityEvidence(
+            kind="extremeness",
+            tail_p=lead_rank / len(data_rows),
+            population=len(data_rows),
         )
         cid = make_candidate_id(
             self.name, f"SDP|power_cluster|{year}", dataset.model_dump(mode="json")
@@ -804,8 +784,8 @@ class PowerClusterDetector:
                 ],
                 coverage_window=f"{year}-{year}",
                 claim_scope="since_2015",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 

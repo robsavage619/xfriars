@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from datetime import date
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -143,6 +144,13 @@ def emit(
 ) -> int:
     """Write candidates to stat_candidates, skipping below-threshold and duplicates.
 
+    Scores every candidate through :func:`~padres_analytics.detect.interest.score_candidate`
+    and stores that as the ranking value, overwriting whatever the detector
+    self-reported. There is one scorer, not two: the detector-supplied
+    ``novelty_score`` was a weighted average of one live input and three
+    hardcoded constants, and its constant floor sat above the emission
+    threshold, so nothing was ever filtered for being dull.
+
     Args:
         conn: A write-mode connection to padres.db.
         candidates: Candidates returned by a detector.
@@ -150,22 +158,35 @@ def emit(
     Returns:
         Number of new rows inserted.
     """
+    from padres_analytics.detect.interest import score_candidate
     from padres_analytics.detect.sql import franchise_player_ids, franchise_player_names
 
     threshold = min_novelty_threshold()
     franchise_ids = franchise_player_ids(conn)
     franchise_names = franchise_player_names(conn)
     inserted = 0
+    unscored: list[str] = []
 
     for c in candidates:
         _check_subject(c, franchise_ids, franchise_names)
 
-        if c.novelty_score < threshold:
+        interest = score_candidate(c.detector, c.facts_json, evidence=c.rarity_evidence)
+        if c.rarity_evidence is None:
+            unscored.append(c.detector)
+        c.novelty_score = interest.score
+        c.novelty_components = dict(interest.components)
+
+        # Only filter on a verdict that was actually reached. An unscored
+        # candidate is one nothing could be read from, and dropping it would
+        # silently delete claims for being unrecognised rather than dull.
+        if interest.scored and interest.score < threshold:
             logger.info(
-                "Suppressed %s (score %.2f < threshold %.2f)",
+                "Suppressed %s (%s): interest %.2f < %.2f — %s",
                 c.candidate_id,
-                c.novelty_score,
+                c.detector,
+                interest.score,
                 threshold,
+                "; ".join(interest.flags) or "no reason recorded",
             )
             continue
 
@@ -203,5 +224,18 @@ def emit(
         )
         inserted += 1
         logger.info("Emitted candidate %s (%s)", c.candidate_id, c.detector)
+
+    if unscored:
+        # Loud on purpose. A detector with no evidence is scored on stakes and
+        # tension alone, and its surprise term is *absent* rather than measured —
+        # a zero there means "not scored", not "not surprising". This warning is
+        # the temporary allowance while detectors are converted; it should reach
+        # zero, at which point the allowance becomes a hard error.
+        counts = Counter(unscored)
+        logger.warning(
+            "%d candidate(s) supplied no RarityEvidence and were scored on stakes/tension only: %s",
+            len(unscored),
+            ", ".join(f"{name} x{n}" for name, n in sorted(counts.items())),
+        )
 
     return inserted

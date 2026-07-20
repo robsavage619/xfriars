@@ -16,10 +16,10 @@ from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
     Mark,
+    RarityEvidence,
     StatCandidate,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
 
 if TYPE_CHECKING:
     import duckdb
@@ -153,17 +153,10 @@ class NlWestRaceDetector:
             },
         )
 
-        race_heat = max(0.0, 1.0 - sd_gb / 12.0)
-        score, components = novelty_score(
-            {
-                "rarity": 0.55 + 0.4 * race_heat,
-                "magnitude": race_heat,
-                "timeliness": 1.0,
-                "rootability": 0.95,
-                "legibility": 0.95,
-            },
-            detector=self.name,
-        )
+        # A division position is not a statistical tail — five teams occupy five
+        # slots every day. The interest here is race heat, which interest.py reads
+        # off games_back in the facts dict.
+        evidence = RarityEvidence(kind="none")
         subject = f"SDP|nl_west_race|{year}"
         cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
 
@@ -179,8 +172,8 @@ class NlWestRaceDetector:
                 provenance_json=[{"source_table": table.replace("hist.", ""), "as_of": str(as_of)}],
                 coverage_window=f"{year}-{year}",
                 claim_scope=f"{year}",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 

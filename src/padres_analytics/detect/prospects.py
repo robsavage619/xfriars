@@ -16,10 +16,10 @@ from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
     Mark,
+    RarityEvidence,
     StatCandidate,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
 from padres_analytics.detect.sql import fmt_name
 
 if TYPE_CHECKING:
@@ -115,16 +115,13 @@ class FarmPerformanceDetector:
                 "leader_hr": int(leader[3]),
             },
         )
-        score, components = novelty_score(
-            {
-                "rarity": min(float(leader[4]) / 1.1, 0.95),
-                "magnitude": min(float(leader[4]) / 1.1, 0.95),
-                "timeliness": 0.85,
-                "rootability": 0.85,
-                "legibility": 0.92,
-            },
-            detector=self.name,
-        )
+        # Not a rarity claim, and counting the pool does not make it one: this
+        # subject was *selected by being the maximum*, so "1 of N" is true by
+        # construction — somebody tops the farm every season. The rarity would
+        # live in how a 1.054 OPS compares to qualified hitters at that level
+        # league-wide, and milb_batting holds only Padres affiliates, so that
+        # denominator does not exist here. Scored on standing interest instead.
+        evidence = RarityEvidence(kind="none")
         subject = f"SDP|farm_performance|{as_of.year}"
         cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
         return [
@@ -139,8 +136,8 @@ class FarmPerformanceDetector:
                 provenance_json=[{"source_table": "milb_batting", "as_of": str(as_of)}],
                 coverage_window=f"{as_of.year}-{as_of.year}",
                 claim_scope=f"{as_of.year}",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 

@@ -16,10 +16,11 @@ from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
     Mark,
+    RarityEvidence,
     StatCandidate,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
+from padres_analytics.detect.interest import FAMILY_COUNT
 from padres_analytics.ingest.runs import last_complete_run
 
 if TYPE_CHECKING:
@@ -226,16 +227,13 @@ def _build_leaderboard_candidate(
         facts=facts,
     )
 
-    rank_rarity = max(0.0, 1.0 - (padre_rank - 1) / 25)
-    score, components = novelty_score(
-        {
-            "rarity": rank_rarity,
-            "magnitude": 0.7,
-            "timeliness": 0.8,
-            "rootability": 0.75,
-            "legibility": 0.9,
-        },
-        detector="leaderboard",
+    # The board is only ever ingested 25 deep, so that — not the MLB player pool —
+    # is the population this rank is actually evidenced against.
+    evidence = RarityEvidence(
+        kind="rank",
+        qualifying=padre_rank,
+        population=len(rows),
+        search_space=FAMILY_COUNT,
     )
 
     cid = make_candidate_id(
@@ -255,8 +253,8 @@ def _build_leaderboard_candidate(
         ],
         coverage_window=f"{season}-{season}",
         claim_scope=claim_scope,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 

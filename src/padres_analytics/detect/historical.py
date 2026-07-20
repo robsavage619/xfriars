@@ -10,11 +10,11 @@ from zoneinfo import ZoneInfo
 from padres_analytics.config import BREF
 from padres_analytics.detect.base import register
 from padres_analytics.detect.candidates import (
+    RarityEvidence,
     StatCandidate,
     TablePayload,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
 
 if TYPE_CHECKING:
     import duckdb
@@ -251,7 +251,6 @@ def _build_game_results_candidate(
         ],
     }
 
-    win_pct = wins / total if total > 0 else 0.0
     headline = f"Padres are {wins}-{losses} on {date_label} since 1990" + (
         f", best margin +{best_margin}" if best_margin >= 5 else ""
     )
@@ -268,27 +267,9 @@ def _build_game_results_candidate(
         claim_scope=_GAMELOGS_CLAIM,
     )
 
-    # Rarity: higher if we have unusual records (lopsided W/L)
-    rarity = min(1.0, abs(win_pct - 0.5) * 4)
-    # Magnitude: based on total games (more history = more compelling)
-    magnitude = min(1.0, total / 20.0)
-    # Timeliness: always moderate for On This Day
-    timeliness = 0.5
-    # Rootability: simple table, easily shareable
-    rootability = 0.6
-    # Legibility: very clear concept
-    legibility = 0.9
-
-    score, components = novelty_score(
-        {
-            "rarity": rarity,
-            "magnitude": magnitude,
-            "timeliness": timeliness,
-            "rootability": rootability,
-            "legibility": legibility,
-        },
-        detector="on_this_day",
-    )
+    # An almanac card, not a rarity claim: every calendar date has a record, and
+    # 14-14 on July 19 has no tail to be out on.
+    evidence = RarityEvidence(kind="none")
 
     cid = make_candidate_id("on_this_day", f"SDP|{date_label}|gamelogs", facts)
 
@@ -310,8 +291,8 @@ def _build_game_results_candidate(
         ],
         coverage_window=_GAMELOGS_COVERAGE,
         claim_scope=_GAMELOGS_CLAIM,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 
@@ -415,23 +396,9 @@ def _build_transaction_candidate(
         claim_scope=_TRANSACTIONS_CLAIM,
     )
 
-    # Trades are inherently more novel
-    rarity = min(1.0, 0.3 + trade_count * 0.2)
-    magnitude = min(1.0, len(rows) / 5.0)
-    timeliness = 0.5
-    rootability = 0.7 if trade_count > 0 else 0.4
-    legibility = 0.8
-
-    score, components = novelty_score(
-        {
-            "rarity": rarity,
-            "magnitude": magnitude,
-            "timeliness": timeliness,
-            "rootability": rootability,
-            "legibility": legibility,
-        },
-        detector="on_this_day",
-    )
+    # Almanac again: transactions landing on this date is a calendar coincidence,
+    # not a measured tail — nothing establishes how unusual a July-19 trade is.
+    evidence = RarityEvidence(kind="none")
 
     cid = make_candidate_id("on_this_day", f"SDP|{date_label}|transactions", facts)
 
@@ -456,8 +423,8 @@ def _build_transaction_candidate(
         ],
         coverage_window=_TRANSACTIONS_COVERAGE,
         claim_scope=_TRANSACTIONS_CLAIM,
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 

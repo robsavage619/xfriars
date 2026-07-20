@@ -20,10 +20,10 @@ from padres_analytics.detect.candidates import (
     ChartDataset,
     Column,
     Mark,
+    RarityEvidence,
     StatCandidate,
     make_candidate_id,
 )
-from padres_analytics.detect.scoring import novelty_score
 from padres_analytics.detect.sql import ordinal
 
 if TYPE_CHECKING:
@@ -162,17 +162,10 @@ def _build_chase_card(
         },
     )
 
-    rarity = {"franchise_record": 0.95, "chase": 0.9, "rank": 0.78}[tier]
-    score, components = novelty_score(
-        {
-            "rarity": rarity,
-            "magnitude": max(0.0, 1.0 - (rank1 - 1) / _RANK_CEILING),
-            "timeliness": 0.85,
-            "rootability": 0.92,
-            "legibility": 0.95,
-        },
-        detector=detector,
-    )
+    # A franchise record or a countdown to passing a legend has no statistical
+    # tail — the stakes (tier / franchise_rank / gap) are the whole claim, and
+    # interest.py reads those off the facts dict.
+    evidence = RarityEvidence(kind="none")
     subject = f"SDP|career_{col}|{pid}|{as_of.year}"
     cid = make_candidate_id(detector, subject, dataset.model_dump(mode="json"))
     return StatCandidate(
@@ -186,8 +179,8 @@ def _build_chase_card(
         provenance_json=[{"source_table": source_table, "as_of": str(as_of)}],
         coverage_window=f"1969-{as_of.year}",
         claim_scope="franchise_1969",
-        novelty_score=score,
-        novelty_components=components,
+        novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+        rarity_evidence=evidence,
     )
 
 
@@ -363,16 +356,10 @@ class MilestoneClubDetector:
                     "stat": abbr,
                 },
             )
-            score, components = novelty_score(
-                {
-                    "rarity": min(0.86 + (5 - club_size) * 0.02, 0.96) if club_size < 5 else 0.84,
-                    "magnitude": max(0.0, 1.0 - gap / gap_max),
-                    "timeliness": 0.85,
-                    "rootability": 0.9,
-                    "legibility": 0.95,
-                },
-                detector=self.name,
-            )
+            # A countdown, not a rarity: the player has not reached the milestone
+            # yet, so there is nothing to count him among. The exclusivity of the
+            # club he would join is stakes, scored from club_size/gap in facts.
+            evidence = RarityEvidence(kind="none")
             subject = f"SDP|club_{col}|{pid}|{milestone}"
             cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
             out.append(
@@ -389,8 +376,8 @@ class MilestoneClubDetector:
                     ],
                     coverage_window=f"1969-{as_of.year}",
                     claim_scope="franchise_1969",
-                    novelty_score=score,
-                    novelty_components=components,
+                    novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                    rarity_evidence=evidence,
                 )
             )
         return out
@@ -486,16 +473,10 @@ class HitStreakDetector:
                 "streak_games": best_streak,
             },
         )
-        score, components = novelty_score(
-            {
-                "rarity": min(0.80 + (best_streak - _MIN_HIT_STREAK) * 0.02, 0.97),
-                "magnitude": min(best_streak / 30.0, 1.0),
-                "timeliness": 1.0,
-                "rootability": 0.9,
-                "legibility": 0.95,
-            },
-            detector=self.name,
-        )
+        # No tail: the run length is known but nothing here establishes how often
+        # a streak this long occurs, and a per-game hit probability would be
+        # assumed rather than measured.
+        evidence = RarityEvidence(kind="streak")
         subject = f"SDP|hit_streak|{best_pid}|{as_of.year}"
         cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
         return [
@@ -510,8 +491,8 @@ class HitStreakDetector:
                 provenance_json=[{"source_table": "player_game_batting", "as_of": str(as_of)}],
                 coverage_window=f"{as_of.year}-{as_of.year}",
                 claim_scope=f"{as_of.year}",
-                novelty_score=score,
-                novelty_components=components,
+                novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                rarity_evidence=evidence,
             )
         ]
 
@@ -633,15 +614,14 @@ class CareerConjunctionDetector:
                     "threshold_b": t_b,
                 },
             )
-            score, components = novelty_score(
-                {
-                    "rarity": min(0.97, 0.99 - (club - 1) * 0.03),
-                    "magnitude": 0.85,
-                    "timeliness": 0.8,
-                    "rootability": 0.92,
-                    "legibility": 0.92,
-                },
-                detector=self.name,
+            # ``club`` is counted over ``totals``, so the denominator is every
+            # player with a Padres batting season — the same pool the club is
+            # drawn from. The search is the stat pairs that were tried.
+            evidence = RarityEvidence(
+                kind="conjunction",
+                qualifying=club,
+                population=len(totals),
+                search_space=len(_CONJ_PAIRS),
             )
             subject = f"SDP|conj_{col_a}_{col_b}|{pid}"
             cid = make_candidate_id(self.name, subject, dataset.model_dump(mode="json"))
@@ -659,8 +639,8 @@ class CareerConjunctionDetector:
                     ],
                     coverage_window=f"1969-{as_of.year}",
                     claim_scope="franchise_1969",
-                    novelty_score=score,
-                    novelty_components=components,
+                    novelty_score=0.0,  # overwritten by emit() from rarity_evidence
+                    rarity_evidence=evidence,
                 )
             )
         return out
