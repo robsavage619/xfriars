@@ -260,6 +260,77 @@ def draft_ingest(
     typer.echo(f"Run 'pad queue' to review, then 'pad draft approve {draft_id}'.")
 
 
+# ── pad boring ────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def boring(
+    limit: int = typer.Option(12, "--limit", help="Board size."),
+    show_all: bool = typer.Option(False, "--all", help="Include the rejects, with reasons."),
+) -> None:
+    """Rank the candidate board by editorial interest and explain the rejects.
+
+    Scores each candidate from its own stored facts rather than from the
+    self-reported components detectors hand to novelty_score, so a detector
+    cannot flatter its own ranking.
+    """
+    configure_logging()
+    import json
+
+    from padres_analytics.detect.interest import rank_board, score_candidate
+    from padres_analytics.storage.db import connect
+
+    with connect(read_only=True) as conn:
+        raw = conn.execute(
+            """
+            SELECT candidate_id, detector, novelty_score, facts_json
+            FROM stat_candidates
+            WHERE status = 'new'
+            ORDER BY as_of
+            """
+        ).fetchall()
+
+    if not raw:
+        typer.echo("No candidates on the board.")
+        return
+
+    rows = []
+    novelty = {}
+    for cid, detector, nov, facts_json in raw:
+        payload = json.loads(facts_json)
+        payload["_detector"] = detector
+        rows.append((cid, payload))
+        novelty[cid] = nov
+
+    board = rank_board(rows, limit=limit)
+    picked = {cid for cid, _ in board}
+    by_id = dict(rows)
+
+    typer.echo(f"\n  {len(rows)} candidates → {len(board)} worth a card\n")
+    for cid, interest in board:
+        payload = by_id[cid]
+        head = (payload.get("headline") or "")[:74]
+        typer.echo(f"  {interest.score:.2f} {interest.verdict:6s} {head}")
+        typer.echo(
+            f"       {payload['_detector']}  ·  was novelty {novelty[cid]:.2f}"
+            f"  ·  {interest.surprise_bits:.1f} bits less {interest.search_bits:.1f} search"
+        )
+        for flag in interest.flags:
+            typer.echo(f"       └ {flag}")
+
+    if not show_all:
+        typer.echo(f"\n  {len(rows) - len(board)} cut. Run with --all to see why.\n")
+        return
+
+    typer.echo(f"\n{'─' * 70}\n  CUT\n")
+    cuts = [(cid, score_candidate(p["_detector"], p)) for cid, p in rows if cid not in picked]
+    for cid, interest in sorted(cuts, key=lambda r: r[1].score, reverse=True):
+        head = (by_id[cid].get("headline") or "")[:74]
+        typer.echo(f"  {interest.score:.2f} {interest.verdict:6s} {head}")
+        for flag in interest.flags:
+            typer.echo(f"       └ {flag}")
+
+
 # ── pad queue ─────────────────────────────────────────────────────────────────
 
 
