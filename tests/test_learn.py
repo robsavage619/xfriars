@@ -169,7 +169,8 @@ def test_candidate_features_are_coarse_enough_to_accumulate() -> None:
     assert "metric:pctl_B_max_ev" not in feats
     assert "star_tier:star" in feats
     assert "shape:conjunction" in feats
-    assert "rarity_band:90-95" in feats
+    # Bands follow interest.py's verdict bands; 0.93 is "strong".
+    assert "interest_band:strong" in feats
 
 
 def test_candidate_features_deduplicate() -> None:
@@ -259,3 +260,21 @@ def test_referee_blocks_are_learned_with_their_reason(padres_db) -> None:
     result = learn(padres_db, _TODAY)
     assert result.feature_stats["failure_mode:trivial"].multiplier < 1.0
     assert result.feature_stats["referee_lens:statistician"].multiplier > 1.0
+
+
+def test_interest_bands_span_the_whole_scale() -> None:
+    """The old bins were all >= 0.85, built for a score confined to [0.85, 0.95].
+
+    On the interest scale a 0.05 and a 0.89 both fell into "85-90", so a prior
+    learned on that band meant nothing. Every band must now be reachable.
+    """
+    from padres_analytics.learn.features import _rarity_band
+
+    bands = {_rarity_band(s) for s in (0.05, 0.40, 0.60, 0.95)}
+    assert bands == {
+        "interest_band:boring",
+        "interest_band:thin",
+        "interest_band:ok",
+        "interest_band:strong",
+    }
+    assert _rarity_band(None) is None

@@ -278,6 +278,9 @@ def boring(
     import json
 
     from padres_analytics.detect.interest import rank_board, score_candidate
+    from padres_analytics.learn.apply import latest_stats
+    from padres_analytics.learn.features import _star_ids, candidate_features
+    from padres_analytics.learn.priors import combine
     from padres_analytics.storage.db import connect
 
     with connect(read_only=True) as conn:
@@ -289,6 +292,8 @@ def boring(
             ORDER BY as_of
             """
         ).fetchall()
+        stats = latest_stats(conn)
+        stars = _star_ids(conn) if stats else frozenset()
 
     if not raw:
         typer.echo("No candidates on the board.")
@@ -302,11 +307,17 @@ def boring(
         rows.append((cid, payload))
         novelty[cid] = nov
 
-    board = rank_board(rows, limit=limit)
+    def _prior(detector: str, payload: dict) -> float:
+        """Learned editorial multiplier for this shape; 1.0 when nothing is known."""
+        feats = candidate_features(detector, payload, [], 0.0, stars)
+        return combine(stats, feats)
+
+    board = rank_board(rows, limit=limit, prior=_prior if stats else None)
     picked = {cid for cid, _ in board}
     by_id = dict(rows)
 
-    typer.echo(f"\n  {len(rows)} candidates → {len(board)} worth a card\n")
+    learned = " · learned prior applied" if stats else ""
+    typer.echo(f"\n  {len(rows)} candidates → {len(board)} worth a card{learned}\n")
     for cid, interest in board:
         payload = by_id[cid]
         head = (payload.get("headline") or "")[:74]

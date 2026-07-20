@@ -1163,38 +1163,50 @@ class GenericScanner:
         exploration floor is the guard against the obvious failure mode: rank by
         what got approved before and the engine converges on a house style,
         stops surfacing anything unfamiliar, and quietly gets more boring. A
-        fixed number of slots always go to the best candidates by *raw* novelty,
+        fixed number of slots always go to the best candidates by *raw* interest,
         so something unproven reaches the Board every day.
+
+        Ranks on the interest score computed here rather than on the candidate's
+        ``novelty_score`` field: detectors now leave that at 0.0 for emit() to
+        fill in, so sorting on it would sort every candidate by the same
+        constant and make top-K selection arbitrary.
         """
+        from padres_analytics.detect.interest import score_candidate
         from padres_analytics.learn.apply import apply_priors, latest_stats
         from padres_analytics.learn.features import _star_ids, candidate_features
 
-        by_raw = sorted(candidates, key=lambda c: c.novelty_score, reverse=True)
+        raw_interest = {
+            id(c): score_candidate(c.detector, c.facts_json, evidence=c.rarity_evidence).score
+            for c in candidates
+        }
+        by_raw = sorted(candidates, key=lambda c: raw_interest[id(c)], reverse=True)
 
         stats = latest_stats(conn)
         if not stats:
             return by_raw[: scan_cfg.top_k]
 
         stars = _star_ids(conn)
-        adjusted: list[StatCandidate] = []
+        # Priors move rank order only, so the adjustment lives in a local sort key
+        # rather than on the candidate. Writing it to novelty_score would be
+        # discarded anyway — emit() recomputes that field from the evidence — and
+        # a prior must never reach a value the gates read.
+        ranked: list[tuple[float, StatCandidate]] = []
         for cand in candidates:
+            base = raw_interest[id(cand)]
             feats = candidate_features(
-                cand.detector, cand.facts_json, cand.provenance_json, cand.novelty_score, stars
+                cand.detector, cand.facts_json, cand.provenance_json, base, stars
             )
-            score, components = apply_priors(stats, cand.novelty_score, feats)
+            score, components = apply_priors(stats, base, feats)
             if components:
-                adjusted.append(
-                    cand.model_copy(
-                        update={
-                            "novelty_score": score,
-                            "novelty_components": {**(cand.novelty_components or {}), **components},
-                        }
-                    )
+                cand = cand.model_copy(
+                    update={
+                        "novelty_components": {**(cand.novelty_components or {}), **components},
+                    }
                 )
-            else:
-                adjusted.append(cand)
+            ranked.append((score, cand))
 
-        adjusted.sort(key=lambda c: c.novelty_score, reverse=True)
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        adjusted = [c for _, c in ranked]
 
         reserved = min(scan_cfg.exploration_slots, scan_cfg.top_k)
         if reserved <= 0:

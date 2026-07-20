@@ -427,3 +427,70 @@ def test_a_race_scores_on_how_close_it_is() -> None:
     over = score_candidate("nl_west_race", _payload("14 back", games_back=14.0))
     assert close.verdict == "strong"
     assert over.verdict == "boring"  # 14 games out is not a race
+
+
+# ── Learned priors (ranking only) ─────────────────────────────────────────────
+
+
+def _board_rows() -> list[tuple[str, dict]]:
+    return [
+        ("a", _payload("A leads all-time", detector="det_a", player_name="A", franchise_rank=2)),
+        ("b", _payload("B leads all-time", detector="det_b", player_name="B", franchise_rank=2)),
+        ("c", _payload("C leads all-time", detector="det_c", player_name="C", franchise_rank=2)),
+    ]
+
+
+def test_prior_reorders_the_board() -> None:
+    rows = _board_rows()
+    neutral = [cid for cid, _ in rank_board(rows, limit=3, exploration_slots=0)]
+    favoured = [
+        cid
+        for cid, _ in rank_board(
+            rows,
+            limit=3,
+            exploration_slots=0,
+            prior=lambda d, p: 1.4 if d == "det_c" else 0.8,
+        )
+    ]
+    assert set(neutral) == set(favoured)
+    assert favoured[0] == "c"  # the prior moved it to the front
+
+
+def test_prior_never_changes_the_score_the_gates_read() -> None:
+    """A prior that could move Interest.score could relax a gate."""
+    rows = _board_rows()
+    plain = {cid: i.score for cid, i in rank_board(rows, limit=3, exploration_slots=0)}
+    primed = {
+        cid: i.score
+        for cid, i in rank_board(rows, limit=3, exploration_slots=0, prior=lambda d, p: 1.4)
+    }
+    assert plain == primed
+
+
+def test_prior_cannot_resurrect_a_boring_candidate() -> None:
+    rows = [
+        ("dull", _payload("X leads the Padres in Sprint Speed", detector="scan", n_padres=26)),
+        (
+            "good",
+            _payload(
+                "Y is 2nd all-time", detector="career_chase", player_name="Y", franchise_rank=2
+            ),
+        ),
+    ]
+    board = rank_board(rows, limit=5, prior=lambda d, p: 1.4)
+    assert [cid for cid, _ in board] == ["good"]
+
+
+def test_exploration_slots_survive_a_hostile_prior() -> None:
+    """Ranking purely on what was approved before converges on a house style."""
+    rows = _board_rows()
+    board = rank_board(
+        rows,
+        limit=2,
+        exploration_slots=1,
+        max_per_detector=1,
+        # Punish whatever would otherwise rank first.
+        prior=lambda d, p: 0.1 if d == "det_a" else 1.4,
+    )
+    picked = [cid for cid, _ in board]
+    assert "a" in picked  # reserved slot is blind to the prior

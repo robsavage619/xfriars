@@ -55,13 +55,27 @@ def _as_date(value: Any) -> date:
 
 
 def _rarity_band(score: float | None) -> str | None:
+    """Bin a candidate's interest score into a learnable band.
+
+    Bands follow the verdict bands in :mod:`padres_analytics.detect.interest`,
+    so a learned prior on a band means the same thing the scorer means.
+
+    The key is deliberately ``interest_band``, not the old ``rarity_band``. The
+    previous bins were 95+/90-95/85-90 — built around the old novelty score,
+    which was structurally confined to roughly [0.85, 0.95]. On the interest
+    scale, which genuinely spans [0, 1], every one of those bins would collapse:
+    a 0.05 and a 0.89 both fell into "85-90". Reusing the key would silently
+    average evidence gathered under two different meanings.
+    """
     if score is None:
         return None
-    if score >= 0.95:
-        return "rarity_band:95+"
-    if score >= 0.90:
-        return "rarity_band:90-95"
-    return "rarity_band:85-90"
+    if score >= 0.70:
+        return "interest_band:strong"
+    if score >= 0.50:
+        return "interest_band:ok"
+    if score >= 0.35:
+        return "interest_band:thin"
+    return "interest_band:boring"
 
 
 def candidate_features(

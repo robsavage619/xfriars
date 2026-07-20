@@ -27,6 +27,7 @@ of the search that found the claim. A top-10% mark is 3.3 bits; if you searched
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -573,6 +574,8 @@ def rank_board(
     limit: int = 12,
     max_per_detector: int = 3,
     max_per_subject: int = 2,
+    prior: Callable[[str, dict[str, Any]], float] | None = None,
+    exploration_slots: int = 2,
 ) -> list[tuple[str, Interest]]:
     """Rank candidates by interest, collapsing repeats and enforcing variety.
 
@@ -586,12 +589,20 @@ def rank_board(
         limit: Maximum candidates to return.
         max_per_detector: Cap on cards from a single detector.
         max_per_subject: Cap on cards about a single player.
+        prior: Optional learned multiplier, ``(detector, payload) -> float``.
+            Applied to **rank order only** — never to ``Interest.score``, which
+            is what the gates read. A prior that could relax a gate would let
+            editorial history overrule the statistics.
+        exploration_slots: Slots reserved for the best candidates by *unadjusted*
+            interest. Ranking purely by what got approved before converges on a
+            house style and quietly stops surfacing anything unfamiliar, so some
+            unproven work reaches the board regardless of its history.
 
     Returns:
         ``(candidate_id, Interest)`` pairs, best first.
     """
     seen_claims: set[tuple[str, str, str]] = set()
-    scored: list[tuple[str, Interest, str, str]] = []
+    scored: list[tuple[str, Interest, str, str, float]] = []
 
     for cid, payload in rows:
         detector = str(payload.get("_detector") or "")
@@ -600,17 +611,29 @@ def rank_board(
         seen_claims.add(key)
 
         interest = score_candidate(detector, payload, unchanged=unchanged)
+        rank_value = interest.score * (prior(detector, payload) if prior else 1.0)
         subject = key[1]
-        scored.append((cid, interest, detector, subject))
+        scored.append((cid, interest, detector, subject, rank_value))
 
-    scored.sort(key=lambda r: r[1].score, reverse=True)
+    eligible = [r for r in scored if r[1].verdict != "boring"]
+
+    # Exploration first, by unadjusted interest, so the reserved slots are
+    # genuinely blind to the learned prior.
+    explore_ids: set[str] = set()
+    if prior is not None and exploration_slots > 0:
+        by_raw = sorted(eligible, key=lambda r: r[1].score, reverse=True)
+        explore_ids = {r[0] for r in by_raw[:exploration_slots]}
+
+    scored = sorted(
+        eligible,
+        key=lambda r: (r[0] in explore_ids, r[4]),
+        reverse=True,
+    )
 
     out: list[tuple[str, Interest]] = []
     per_detector: dict[str, int] = {}
     per_subject: dict[str, int] = {}
-    for cid, interest, detector, subject in scored:
-        if interest.verdict == "boring":
-            continue
+    for cid, interest, detector, subject, _rank_value in scored:
         if per_detector.get(detector, 0) >= max_per_detector:
             continue
         if subject and per_subject.get(subject, 0) >= max_per_subject:
